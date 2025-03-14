@@ -1,0 +1,6 @@
+{
+  "version": 3,
+  "sources": [],
+  "sections": [
+    {"offset": {"line": 7, "column": 0}, "map": {"version":3,"sources":["file:///home/lfg/Git/Madtrips/src/components/home/BitcoinMap.tsx"],"sourcesContent":["'use client'\n\nimport Link from 'next/link'\n\nexport function BitcoinMap() {\n  return (\n    <div className=\"max-w-7xl mx-auto px-4 sm:px-6 lg:px-8\">\n      {/* Map Widget */}\n      <div className=\"w-full h-[400px] rounded-lg overflow-hidden border border-sand/20 shadow-lg\">\n        <div className=\"w-full h-full bg-ocean/5 flex items-center justify-center\">\n          <div className=\"text-center space-y-2\">\n            <div className=\"text-bitcoin text-2xl\" aria-hidden=\"true\">🗺️</div>\n            <p className=\"text-forest/60\">Bitcoin-friendly businesses in Madeira</p>\n          </div>\n        </div>\n      </div>\n    </div>\n  )\n} "],"names":[],"mappings":";;;;AAAA;;AAIO,SAAS;IACd,qBACE,6LAAC;QAAI,WAAU;kBAEb,cAAA,6LAAC;YAAI,WAAU;sBACb,cAAA,6LAAC;gBAAI,WAAU;0BACb,cAAA,6LAAC;oBAAI,WAAU;;sCACb,6LAAC;4BAAI,WAAU;4BAAwB,eAAY;sCAAO;;;;;;sCAC1D,6LAAC;4BAAE,WAAU;sCAAiB;;;;;;;;;;;;;;;;;;;;;;;;;;;AAM1C;KAdgB","debugId":null}}]
+}

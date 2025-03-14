@@ -1,0 +1,15 @@
+1️⃣ Discovery (Homepage → Browsing)
+
+User lands on the homepage
+Sees a featured packages and btc Maps/Bitcoin businesses
+Clicks “View Packages”
+2️⃣ Choosing a Package (Packages Page → Checkout)
+User explores travel options
+Selects a package → Clicks “Book with Bitcoin”
+3️⃣ Payment (Bitcoin Checkout)
+User pays via Lightning (LNURL) or on-chain BTC
+Payment confirmed via Nostr or email
+Receives trip details & itinerary
+4️⃣ Experience (Arrives in Madeira, Uses Bitcoin)
+Uses MadTrips’ Bitcoin Map to find places to eat, shop, and explore
+Checks into locations & shares experiences on Nostr

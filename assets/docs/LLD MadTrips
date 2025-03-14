@@ -1,0 +1,91 @@
+
+# **Low-Level Design (LLD) for MadTrips**  
+
+## **1. Tech Stack & Dependencies**  
+
+### **Frontend (Next.js + Tailwind)**  
+- **Framework:** Next.js (App Router)  
+- **Styling:** Tailwind CSS + shadcn/ui  
+- **Auth:** Nostr (NIP-07, NIP-98)  
+- **State Management:** Zustand (lightweight global state)  
+- **API Calls:** Fetch Blossom/Nostr relays  
+
+### **Backend (Bun + Node.js + Blossom)**  
+- **Runtime:** Bun (fast execution, native ESM support)  
+- **Framework:** Express.js (lightweight REST API)  
+- **Database:** Nostr relays (no traditional DB, fully decentralized)  
+- **Dynamic Content:** Blossom (for event-driven updates)  
+- **Payments:** LNURL-pay via BTCPay or LNBits  
+
+---
+
+## **2. Component Breakdown & Functionality**  
+
+### **🟢 Frontend (Next.js + Tailwind)**  
+
+#### **1️⃣ Homepage (`/`)**  
+✅ Hero section (Welcome to MadTrips)  
+✅ Featured Bitcoin-friendly businesses  
+✅ Call-to-action: Explore, Book a Trip  
+
+#### **2️⃣ Travel Packages (`/packages`)**  
+✅ Fetches from Blossom backend  
+✅ Categories: Team-building, Couples, Adventure  
+✅ User selects & proceeds to payment  
+
+#### **3️⃣ Bitcoin Business Map (`/map`)**  
+✅ Uses Blossom for dynamic updates  
+✅ Nostr-authenticated submissions  
+
+#### **4️⃣ Booking & Payments (`/checkout`)**  
+✅ User selects package → Generates LNURL invoice  
+✅ Blossom listens for payment event  
+✅ Confirms booking via Nostr DM  
+
+#### **5️⃣ Nostr-powered Social Features (`/community`)**  
+✅ User check-ins via NIP-23 (long-form notes)  
+✅ Businesses post real-time updates  
+
+---
+
+### **🟠 Backend (Bun + Node.js + Blossom)**  
+
+#### **1️⃣ API Routes (Bun + Express.js)**  
+📌 **`GET /packages`** → Fetches travel packages from Blossom  
+📌 **`POST /book`** → Creates booking, generates LNURL invoice  
+📌 **`GET /businesses`** → Fetches Bitcoin-accepting businesses  
+📌 **`POST /checkin`** → Posts check-in event via Nostr  
+
+#### **2️⃣ Payment Processing (LNURL & BTC Pay Server)**  
+✅ Generates **LNURL invoice**  
+✅ Listens for **Blossom payment event**  
+✅ Sends **booking confirmation via Nostr DM**  
+
+#### **3️⃣ Nostr Integration**  
+✅ Users authenticate via **NIP-07**  
+✅ Business listings verified via **pubkeys**  
+✅ Real-time updates via **Blossom relays**  
+
+---
+
+## **3. Deployment Plan**  
+
+### **Phase 1: MVP (Static Listings & Bitcoin Payments)**
+- [ ] Set up **Next.js + Tailwind** UI  
+- [ ] Build **Bun + Node.js API** (static data)  
+- [ ] Integrate **LNURL-pay checkout**  
+- [ ] Deploy frontend via **nsite**  
+
+### **Phase 2: Nostr & Blossom Integration**  
+- [ ] Fetch packages dynamically from Blossom  
+- [ ] Enable **Nostr-authenticated bookings**  
+- [ ] Build Bitcoin business map (real-time updates)  
+
+### **Phase 3: Social Features & Full Automation**  
+- [ ] User check-ins & reviews (NIP-23)  
+- [ ] Automated booking confirmations via Nostr DM  
+
+---
+
+🚀 **Next Step:**  
+Should I start coding the **Bun + Next.js boilerplate**? 💻
