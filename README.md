@@ -1,36 +1,65 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+MadTrips - Bitcoin-Powered Travel in Madeira
 
-## Getting Started
+Overview
 
-First, run the development server:
+MadTrips is an all-in-one travel solution for Bitcoiners living on a Bitcoin standard, offering curated travel experiences, Bitcoin-friendly business connections, and full-service trip planning in Madeira.
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+Features
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Bitcoin-Only Travel Packages: Adventure, luxury, and business retreats with full Bitcoin payment integration.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Bitcoin Business Directory & Map: Explore over 130+ Bitcoin-accepting businesses in Madeira.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Custom Tours & Airport Transfers: Bitcoin-accepted taxi and guided experiences.
 
-## Learn More
+Bitcoin Circular Economy: Experience a 100% BTC-based lifestyle.
 
-To learn more about Next.js, take a look at the following resources:
+Nostr Integration: Decentralized authentication, community engagement, and live updates.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Services
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Travel Packages
 
-## Deploy on Vercel
+Bitcoin & Business Teambuilding Retreats
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+Ultimate Madeira Adventure
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Couples Escape
+
+Bitcoin Pioneer Tour (100% BTC Lifestyle)
+
+VIP Experience (Luxury & Custom Trips)
+
+Additional Services
+
+Guided Bitcoin Economy Tours
+
+BTC-to-Fiat Exchange Facilitation
+
+Tech Stack
+
+Frontend: Next.js + TailwindCSS
+
+Backend: Bun + Node.js + Express
+
+Authentication & Data: Nostr (nsite & Blossom)
+
+Payments: Lightning Network (LNURL, BTCPay, LNBits)
+
+Getting Started
+
+Book Your Trip: Select from pre-designed packages or build your own.
+
+Pay in Bitcoin: Secure transactions via LNURL or On-Chain BTC.
+
+Enjoy Madeira: Use Bitcoin to pay for food, transport, and experiences.
+
+Contact & Community
+
+Website: https://mad-trips.npub.pro/ [nsite comming soon]
+
+Nostr: npub1dxd02kcjhgpkyrx60qnkd6j42kmc72u5lum0rp2ud8x5zfhnk4zscjj6hh
+
+Community: Join NOSTR! 
+
+🚀 MadTrips – Experience the Future of Travel with Bitcoin!
