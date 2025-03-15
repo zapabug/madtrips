@@ -33,56 +33,14 @@ function createCachedResponse(data: any, status: number = 200, cacheTime: number
 // GET handler for retrieving social graph data
 export async function GET(request: Request) {
   try {
-    // Ensure data directory exists
-    await ensureDataDir();
+    const data = await getSocialGraphData();
+    console.log('API returning data:', data); // Debug log
     
-    // Get URL params
-    const url = new URL(request.url);
-    const dataType = url.searchParams.get('type') || 'graph';
-    const forceUpdate = url.searchParams.get('update') === 'true';
-    const format = url.searchParams.get('format') || 'vis';
-    
-    if (forceUpdate) {
-      // Force an update of the social graph data
-      console.log('Forcing social graph update...');
-      const result = await forceSocialGraphUpdate();
-      return createCachedResponse({
-        message: 'Social graph updated successfully', 
-        timestamp: Date.now(),
-        nodeCount: result.nodes.length,
-        linkCount: result.links.length
-      }, 200, 60); // Short cache for update requests
-    }
-    
-    if (dataType === 'npubs') {
-      // Return known npubs data
-      console.log('Returning known npubs data...');
-      const knownNpubs = await getKnownNpubsData();
-      return createCachedResponse(knownNpubs, 200, 3600);
-    } else if (dataType === 'raw' && format === 'raw') {
-      // Return raw social graph data (for debugging)
-      console.log('Returning raw social graph data...');
-      const rawData = await getRawSocialGraphData();
-      return createCachedResponse(rawData, 200, 3600);
-    } else {
-      // Return visualization-ready social graph data
-      console.log('Returning visualization graph data...');
-      const graphData = await getSocialGraphData();
-      
-      // Check if we have data
-      if (!graphData.nodes || graphData.nodes.length === 0) {
-        console.log('No nodes in graph data, triggering update...');
-        // If no nodes, trigger an update and return what we have (may still be empty)
-        forceSocialGraphUpdate().catch(e => console.error('Background update failed:', e));
-        return createCachedResponse(graphData, 200, 60);
-      }
-      
-      return createCachedResponse(graphData, 200, 3600);
-    }
+    return NextResponse.json(data);
   } catch (error) {
-    console.error('Error in social graph API:', error);
+    console.error('API error:', error);
     return NextResponse.json(
-      { error: 'Failed to retrieve social graph data' }, 
+      { error: 'Failed to fetch social graph' },
       { status: 500 }
     );
   }
