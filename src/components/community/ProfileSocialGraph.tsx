@@ -56,6 +56,9 @@ export const ProfileSocialGraph: React.FC<ProfileSocialGraphProps> = ({ data }) 
   const [showLabels, setShowLabels] = useState(true);
   const [highlightCoreNodes, setHighlightCoreNodes] = useState(true);
   const simulationRef = useRef<any>(null);
+  // Track processed nodes and links for display in UI
+  const [processedNodeCount, setProcessedNodeCount] = useState(0);
+  const [processedLinkCount, setProcessedLinkCount] = useState(0);
 
   // Helper to shorten npub for display
   const shortenNpub = (npub: string) => {
@@ -115,8 +118,26 @@ export const ProfileSocialGraph: React.FC<ProfileSocialGraphProps> = ({ data }) 
     };
 
     updateDimensions();
+    // Add a small delay to ensure accurate dimensions after layout calculations
+    const timeoutId = setTimeout(updateDimensions, 300);
     window.addEventListener('resize', updateDimensions);
-    return () => window.removeEventListener('resize', updateDimensions);
+    return () => {
+      window.removeEventListener('resize', updateDimensions);
+      clearTimeout(timeoutId);
+    };
+  }, []);
+
+  // Detect if the device is mobile
+  const [isMobile, setIsMobile] = useState(false);
+  
+  useEffect(() => {
+    const checkIfMobile = () => {
+      setIsMobile(window.innerWidth < 768);
+    };
+    
+    checkIfMobile();
+    window.addEventListener('resize', checkIfMobile);
+    return () => window.removeEventListener('resize', checkIfMobile);
   }, []);
 
   // Just before the useEffect for main visualization, add this diagnostic renderer
@@ -180,14 +201,78 @@ export const ProfileSocialGraph: React.FC<ProfileSocialGraphProps> = ({ data }) 
     try {
       console.log("Rendering social graph with data:", { 
         nodeCount: data.nodes.length, 
-        linkCount: data.links.length 
+        linkCount: data.links.length,
+        isMobile
       });
       
       // Clear previous visualization
       d3.select(svgRef.current).selectAll("*").remove();
       
+      // Mobile optimization: Limit the number of displayed nodes on mobile
+      const maxNodesForMobile = 50;
+      let processedNodes = data.nodes;
+      let processedLinks = data.links;
+      
+      if (isMobile && data.nodes.length > maxNodesForMobile) {
+        console.log(`Mobile device detected. Limiting display to ${maxNodesForMobile} nodes for better performance.`);
+        
+        // Get all core nodes
+        const coreNodes = data.nodes.filter(node => CORE_NPUBS.includes(node.npub));
+        
+        // If we have core nodes, prioritize them and their direct connections
+        if (coreNodes.length > 0) {
+          // Get all nodes directly connected to core nodes
+          const coreNodeIds = coreNodes.map(node => node.id);
+          const connectedNodeIds = new Set<string>();
+          
+          data.links.forEach(link => {
+            const sourceId = typeof link.source === 'object' && link.source ? (link.source as {id: string}).id : link.source;
+            const targetId = typeof link.target === 'object' && link.target ? (link.target as {id: string}).id : link.target;
+            
+            if (coreNodeIds.includes(sourceId as string)) {
+              connectedNodeIds.add(targetId as string);
+            } else if (coreNodeIds.includes(targetId as string)) {
+              connectedNodeIds.add(sourceId as string);
+            }
+          });
+          
+          // Create a list of prioritized nodes (core nodes + their connections)
+          const prioritizedNodeIds = [...coreNodeIds, ...Array.from(connectedNodeIds)];
+          
+          // Get top nodes up to the maximum, prioritizing core nodes and their connections
+          const topNodeIds = new Set(prioritizedNodeIds.slice(0, maxNodesForMobile));
+          
+          // If we still have room, add other nodes
+          if (topNodeIds.size < maxNodesForMobile) {
+            data.nodes.forEach(node => {
+              if (!topNodeIds.has(node.id) && topNodeIds.size < maxNodesForMobile) {
+                topNodeIds.add(node.id);
+              }
+            });
+          }
+          
+          // Filter nodes and links
+          processedNodes = data.nodes.filter(node => topNodeIds.has(node.id));
+          processedLinks = data.links.filter(link => {
+            const sourceId = typeof link.source === 'object' && link.source ? (link.source as {id: string}).id : link.source;
+            const targetId = typeof link.target === 'object' && link.target ? (link.target as {id: string}).id : link.target;
+            return topNodeIds.has(sourceId as string) && topNodeIds.has(targetId as string);
+          });
+        } else {
+          // No core nodes, just take the first maxNodesForMobile nodes
+          processedNodes = data.nodes.slice(0, maxNodesForMobile);
+          const topNodeIds = new Set(processedNodes.map(node => node.id));
+          
+          processedLinks = data.links.filter(link => {
+            const sourceId = typeof link.source === 'object' && link.source ? (link.source as {id: string}).id : link.source;
+            const targetId = typeof link.target === 'object' && link.target ? (link.target as {id: string}).id : link.target;
+            return topNodeIds.has(sourceId as string) && topNodeIds.has(targetId as string);
+          });
+        }
+      }
+      
       // Process data - make sure all nodes have properly formatted data
-      const processedNodes = data.nodes.map((node) => ({
+      processedNodes = processedNodes.map((node) => ({
         ...node,
         isCoreNode: CORE_NPUBS.includes(node.npub),
         // Ensure nodes have a profile picture (even if it's a placeholder)
@@ -240,7 +325,7 @@ export const ProfileSocialGraph: React.FC<ProfileSocialGraphProps> = ({ data }) 
         .attr("stroke", COLORS.link)
         .attr("stroke-opacity", 0.4)
         .selectAll("line")
-        .data(data.links)
+        .data(processedLinks)
         .join("line")
         .attr("stroke-width", (d: any) => Math.sqrt(d.value || 1) * 1.5);
       
@@ -289,11 +374,11 @@ export const ProfileSocialGraph: React.FC<ProfileSocialGraphProps> = ({ data }) 
       
       // Set up the simulation
       const simulation = d3.forceSimulation(processedNodes as any)
-        .force("link", d3.forceLink(data.links).id((d: any) => d.id).distance(100))
-        .force("charge", d3.forceManyBody().strength(-300))
-        .force("x", d3.forceX(dimensions.width / 2).strength(0.05))
-        .force("y", d3.forceY(dimensions.height / 2).strength(0.05))
-        .force("collide", d3.forceCollide().radius((d: any) => d.isCoreNode ? 40 : 30).strength(0.8));
+        .force("link", d3.forceLink(processedLinks).id((d: any) => d.id).distance(isMobile ? 80 : 100))
+        .force("charge", d3.forceManyBody().strength(isMobile ? -200 : -300))
+        .force("x", d3.forceX(dimensions.width / 2).strength(0.15))
+        .force("y", d3.forceY(dimensions.height / 2).strength(0.15))
+        .force("collide", d3.forceCollide().radius((d: any) => d.isCoreNode ? (isMobile ? 35 : 40) : (isMobile ? 25 : 30)).strength(0.8));
       
       // Store reference to the simulation
       simulationRef.current = simulation;
@@ -442,6 +527,10 @@ export const ProfileSocialGraph: React.FC<ProfileSocialGraphProps> = ({ data }) 
         .attr("fill", "#333")
         .attr("font-size", "10px");
       
+      // Update the state with counts for display
+      setProcessedNodeCount(processedNodes.length);
+      setProcessedLinkCount(processedLinks.length);
+      
       // Clean up
       return () => {
         try {
@@ -459,11 +548,11 @@ export const ProfileSocialGraph: React.FC<ProfileSocialGraphProps> = ({ data }) 
       console.error("Error rendering social graph:", err);
       setError(err instanceof Error ? err.message : "Unknown error rendering graph");
     }
-  }, [data, dimensions, selectedNode, showLabels, highlightCoreNodes]);
+  }, [data, dimensions, selectedNode, showLabels, highlightCoreNodes, isMobile]);
 
   // Control panel
   const controls = (
-    <div className="absolute top-4 left-4 bg-gray-50 dark:bg-gray-800 p-3 rounded-md shadow-sm border border-gray-200 dark:border-gray-700 z-10 backdrop-blur-sm bg-opacity-90 dark:bg-opacity-80">
+    <div className={`absolute ${isMobile ? 'bottom-16 left-4 right-4' : 'top-4 left-4'} bg-gray-50 dark:bg-gray-800 p-3 rounded-md shadow-sm border border-gray-200 dark:border-gray-700 z-10 backdrop-blur-sm bg-opacity-90 dark:bg-opacity-80`}>
       <h3 className="text-sm font-semibold mb-2 text-gray-700 dark:text-gray-300">Graph Controls</h3>
       
       <div className="flex items-center mb-2">
@@ -488,13 +577,19 @@ export const ProfileSocialGraph: React.FC<ProfileSocialGraphProps> = ({ data }) 
         <label htmlFor="highlight-core" className="text-xs text-gray-600 dark:text-gray-400">Highlight Core Nodes</label>
       </div>
       
-      <div className="text-xs mt-2">
+      <div className="text-xs mt-2 flex justify-between">
         <button
           onClick={() => setSelectedNode(null)}
           className="bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600 px-2 py-1 rounded text-gray-700 dark:text-gray-300 transition-colors"
         >
           Clear Selection
         </button>
+        
+        {isMobile && data && (
+          <div className="text-gray-500 text-xs ml-2">
+            {processedNodeCount}/{data.nodes.length} nodes shown
+          </div>
+        )}
       </div>
     </div>
   );
@@ -538,7 +633,7 @@ export const ProfileSocialGraph: React.FC<ProfileSocialGraphProps> = ({ data }) 
       />
       
       {selectedNode && (
-        <div className="absolute bottom-4 right-4 bg-white dark:bg-gray-800 p-4 rounded-md shadow-md max-w-xs">
+        <div className={`absolute ${isMobile ? 'bottom-36 left-4 right-4' : 'bottom-4 right-4'} bg-white dark:bg-gray-800 p-4 rounded-md shadow-md ${isMobile ? 'max-w-full' : 'max-w-xs'}`}>
           <div className="flex items-center mb-2">
             <Image
               src={selectedNode.picture || getDefaultProfilePic(selectedNode.npub)}
@@ -563,9 +658,13 @@ export const ProfileSocialGraph: React.FC<ProfileSocialGraphProps> = ({ data }) 
         </div>
       )}
       
-      <div className="absolute bottom-2 left-2 text-xs text-gray-500 bg-gray-50 dark:bg-gray-800 px-2 py-1 rounded-md border border-gray-200 dark:border-gray-700 opacity-80">
-        {data.nodes.length} nodes / {data.links.length} links / {coreNodeCount} core nodes
-        {dimensions.width > 0 && ` • Canvas: ${dimensions.width}×${dimensions.height}`}
+      <div className={`absolute bottom-2 left-2 text-xs text-gray-500 bg-gray-50 dark:bg-gray-800 px-2 py-1 rounded-md border border-gray-200 dark:border-gray-700 opacity-80 ${isMobile ? 'max-w-[calc(100%-80px)]' : ''}`}>
+        {data && data.nodes.length > 0 ? (
+          <>
+            {processedNodeCount} nodes / {processedLinkCount} links / {data.nodes.filter(node => CORE_NPUBS.includes(node.npub)).length} core nodes
+            {dimensions.width > 0 && !isMobile && ` • Canvas: ${dimensions.width}×${dimensions.height}`}
+          </>
+        ) : 'No nodes available'}
       </div>
 
       {/* Debug button */}

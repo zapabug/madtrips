@@ -20,6 +20,17 @@ export default function CommunityPage() {
   const [error, setError] = useState<string | null>(null);
   const [isForceUpdating, setIsForceUpdating] = useState(false);
   const [debugInfo, setDebugInfo] = useState<string | null>(null);
+  const [isMobile, setIsMobile] = useState(false);
+
+  useEffect(() => {
+    const checkIfMobile = () => {
+      setIsMobile(window.innerWidth < 768);
+    };
+    
+    checkIfMobile();
+    window.addEventListener('resize', checkIfMobile);
+    return () => window.removeEventListener('resize', checkIfMobile);
+  }, []);
 
   useEffect(() => {
     async function fetchData() {
@@ -115,16 +126,23 @@ export default function CommunityPage() {
               </button>
             </div>
           ) : (
-            <ProfileSocialGraph data={data} />
+            <>
+              {isMobile && (
+                <div className="absolute top-4 right-4 left-4 z-10 bg-gray-50 dark:bg-gray-800 text-xs p-2 rounded border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400">
+                  <strong className="text-[#F7931A]">Mobile View:</strong> Graph optimized for performance. Showing core nodes and immediate connections.
+                </div>
+              )}
+              <ProfileSocialGraph data={data} />
+            </>
           )}
         </div>
       </section>
 
       <section className="mb-12">
         <h2 className="text-2xl font-bold mb-6 text-[#F7931A]">Key Community Members</h2>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
           {/* Free Madeira */}
-          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-4 sm:p-6">
             <NostrProfileImage 
               npub="npub1etgqcj9gc6yaxttuwu9eqgs3ynt2dzaudvwnrssrn2zdt2useaasfj8n6e"
               width={80}
@@ -148,7 +166,7 @@ export default function CommunityPage() {
           </div>
           
           {/* Bitcoin Madeira */}
-          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-4 sm:p-6">
             <NostrProfileImage 
               npub="npub1s0veng2gvfwr62acrxhnqexq76sj6ldg3a5t935jy8e6w3shr5vsnwrmq5"
               width={80}
@@ -172,7 +190,7 @@ export default function CommunityPage() {
           </div>
           
           {/* Madtrips */}
-          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-4 sm:p-6">
             <NostrProfileImage 
               npub="npub1dxd02kcjhgpkyrx60qnkd6j42kmc72u5lum0rp2ud8x5zfhnk4zscjj6hh"
               width={80}
@@ -196,7 +214,7 @@ export default function CommunityPage() {
           </div>
           
           {/* Funchal */}
-          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-4 sm:p-6">
             <NostrProfileImage 
               npub="npub1funchalx8v747rsee6ahsuyrcd2s3rnxlyrtumfex9lecpmgwars6hq8kc"
               width={80}
