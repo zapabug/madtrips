@@ -138,8 +138,8 @@ export const NostrLoginButton: React.FC<NostrLoginButtonProps> = ({
     if (typeof window !== 'undefined') {
       setIsLoading(true);
       
-      // Dispatch the nlLaunch event to trigger the login flow
-      document.dispatchEvent(new CustomEvent('nlLaunch', { detail: 'welcome' }));
+      // Dispatch the nlLaunch event to directly trigger the login screen
+      document.dispatchEvent(new CustomEvent('nlLaunch', { detail: 'login' }));
       
       setIsOpen(false); // Close the menu
     }

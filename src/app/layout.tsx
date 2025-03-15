@@ -127,6 +127,11 @@ export default function RootLayout({
           data-perms="sign_event:1,sign_event:0"
           data-theme="ocean"
           data-show-banner="false"
+          data-no-button="true"
+          data-no-banner="true"
+          data-no-embed-info="true"
+          data-custom-login-button-id="nl-custom-trigger"
+          data-start-screen="login"
           strategy="afterInteractive"
         />
         
@@ -149,6 +154,16 @@ export default function RootLayout({
                 // We already have event listeners in our React component,
                 // this just ensures the scripts work well together
                 console.log('Nostr Login integration initialized');
+                
+                // Modify the login flow to skip intermediate screens
+                const originalLaunch = window.NostrLogin && window.NostrLogin.launch;
+                if (window.NostrLogin && originalLaunch) {
+                  window.NostrLogin.launch = function(opts) {
+                    // Always direct to login screen with options
+                    const newOpts = { ...opts, startScreen: 'login' };
+                    return originalLaunch(newOpts);
+                  };
+                }
                 
                 // Track Nostr login events to enhance profile data handling
                 document.addEventListener('nlAuth', function(e) {
@@ -195,6 +210,19 @@ export default function RootLayout({
         <style jsx global>{`
           .nl-banner {
             display: none !important;
+          }
+          .nl-button-container {
+            display: none !important;
+          }
+          .nl-login-prompt {
+            display: none !important;
+          }
+          /* Keep our custom trigger visible */
+          #nl-custom-trigger {
+            display: flex !important;
+          }
+          #custom-nostr-login {
+            display: block !important;
           }
         `}</style>
       </body>
