@@ -192,34 +192,73 @@ export default function RootLayout({
                           const newEvent = new CustomEvent('nlAuth', { detail: newDetail });
                           setTimeout(() => document.dispatchEvent(newEvent), 0);
                         } else {
-                          // Try the avatar service instead of Primal API
-                          console.log('Trying to use avatar.nostr.build service');
+                          // Try multiple avatar services with fallbacks
+                          console.log('Trying multiple avatar services');
                           
-                          // Create an avatar URL using the npub
-                          const avatarUrl = 'https://avatar.nostr.build/' + e.detail.npub + '.png';
+                          // Function to check if an image exists
+                          const checkImageExists = (url) => {
+                            return new Promise((resolve) => {
+                              const img = document.createElement('img');
+                              img.onload = () => resolve(true);
+                              img.onerror = () => resolve(false);
+                              img.crossOrigin = 'anonymous';
+                              // Set timeout to avoid waiting forever
+                              setTimeout(() => resolve(false), 3000);
+                              img.src = url;
+                            });
+                          };
                           
-                          // Use Image to check if the avatar exists
-                          const img = document.createElement('img');
-                          img.onload = function() {
-                            console.log('Found avatar from nostr.build');
+                          // Try multiple sources in sequence
+                          const tryAvatarSources = async () => {
+                            // 1. Try avatar.nostr.build
+                            const avatarUrl = 'https://avatar.nostr.build/' + e.detail.npub + '.png';
+                            try {
+                              const avatarExists = await checkImageExists(avatarUrl);
+                              if (avatarExists) {
+                                console.log('Found avatar from nostr.build');
+                                return avatarUrl;
+                              }
+                            } catch (err) {
+                              console.warn('Error checking avatar.nostr.build:', err);
+                            }
                             
-                            // Create enhanced profile data with the avatar
-                            const enhancedProfile = Object.assign({}, 
-                              e.detail.profile || {},
-                              { picture: avatarUrl }
-                            );
+                            // 2. Try iris.to
+                            const irisUrl = 'https://iris.to/api/pfp/' + e.detail.npub;
+                            try {
+                              const irisExists = await checkImageExists(irisUrl);
+                              if (irisExists) {
+                                console.log('Found avatar from iris.to');
+                                return irisUrl;
+                              }
+                            } catch (err) {
+                              console.warn('Error checking iris.to:', err);
+                            }
                             
-                            // Clone the event with enhanced data
-                            const newDetail = Object.assign({}, e.detail, { profile: enhancedProfile });
-                            
-                            // Create and dispatch enhanced event
-                            const newEvent = new CustomEvent('nlAuth', { detail: newDetail });
-                            setTimeout(() => document.dispatchEvent(newEvent), 0);
+                            // 3. Use robohash as a final fallback
+                            const robohashUrl = 'https://robohash.org/' + e.detail.npub + '?set=set4';
+                            console.log('Using robohash as fallback avatar');
+                            return robohashUrl;
                           };
-                          img.onerror = function() {
-                            console.log('No avatar found for this npub');
-                          };
-                          img.src = avatarUrl;
+                          
+                          // Execute the avatar sources check
+                          tryAvatarSources().then(pictureUrl => {
+                            if (pictureUrl) {
+                              // Create enhanced profile data with the avatar
+                              const enhancedProfile = Object.assign({}, 
+                                e.detail.profile || {},
+                                { picture: pictureUrl }
+                              );
+                              
+                              // Clone the event with enhanced data
+                              const newDetail = Object.assign({}, e.detail, { profile: enhancedProfile });
+                              
+                              // Create and dispatch enhanced event
+                              const newEvent = new CustomEvent('nlAuth', { detail: newDetail });
+                              setTimeout(() => document.dispatchEvent(newEvent), 0);
+                            }
+                          }).catch(err => {
+                            console.error('Avatar sources check failed:', err);
+                          });
                         }
                       }
                     }
