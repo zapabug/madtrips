@@ -294,17 +294,30 @@ export function NostrSocialGraph({ npub, maxConnections = 30 }: NostrSocialGraph
                 // Image (only for the center node)
                 if (img && node.isCenter) {
                   const size = 2 * node.val
-                  const image = new Image()
-                  image.src = img
                   
-                  // Only draw if image is loaded
-                  if (image.complete) {
-                    ctx.save()
-                    ctx.beginPath()
-                    ctx.arc(node.x, node.y, size * 0.9, 0, 2 * Math.PI)
-                    ctx.clip()
-                    ctx.drawImage(image, node.x - size * 0.9, node.y - size * 0.9, size * 1.8, size * 1.8)
-                    ctx.restore()
+                  // Create a new offscreen canvas for the image processing
+                  const imageSize = size * 1.8
+                  const offscreenCanvas = document.createElement('canvas')
+                  offscreenCanvas.width = imageSize
+                  offscreenCanvas.height = imageSize
+                  const offCtx = offscreenCanvas.getContext('2d')
+                  
+                  if (offCtx) {
+                    // Draw to offscreen canvas first to avoid WebGL warnings
+                    const image = new window.Image()
+                    image.src = img
+                    
+                    // Only draw if image is loaded
+                    if (image.complete) {
+                      // Create circular mask
+                      offCtx.beginPath()
+                      offCtx.arc(imageSize/2, imageSize/2, size * 0.9, 0, 2 * Math.PI)
+                      offCtx.clip()
+                      offCtx.drawImage(image, 0, 0, imageSize, imageSize)
+                      
+                      // Draw the processed image to main canvas
+                      ctx.drawImage(offscreenCanvas, node.x - size * 0.9, node.y - size * 0.9, imageSize, imageSize)
+                    }
                   }
                 }
                 

@@ -2,18 +2,25 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import QRCode from 'qrcode';
-import { generatePrivateKey, getPublicKey } from 'nostr-tools';
+import { v4 as uuidv4 } from 'uuid';
+import * as lightning from './services/lightning.js';
+import * as nostr from './services/nostr.js';
 
 // Load environment variables
 dotenv.config();
 
+console.log('Starting MadTrips API server...');
+
 // Create Express app
 const app = express();
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 8080;
+
+console.log(`Using port: ${PORT}`);
 
 // Middleware
 app.use(cors());
 app.use(express.json());
+app.use(express.static('public'));
 
 // Static data for MVP phase
 const TRAVEL_PACKAGES = [
@@ -21,7 +28,7 @@ const TRAVEL_PACKAGES = [
     id: 'pkg-001',
     title: 'Bitcoin Beach Day',
     description: 'Enjoy a full day at the beach with Bitcoin-friendly restaurants and activities.',
-    price: 100000, // sats
+    price: 1, // sats (updated for demo)
     duration: '1 day',
     includes: ['Lunch at Bitcoin-accepting restaurant', 'Beach activities', 'Transportation'],
     image: '/assets/packages/beach-day.jpg'
@@ -30,7 +37,7 @@ const TRAVEL_PACKAGES = [
     id: 'pkg-002',
     title: 'Madeira Mountains Adventure',
     description: 'Explore the beautiful mountains of Madeira with Bitcoin enthusiasts.',
-    price: 250000, // sats
+    price: 2, // sats (updated for demo)
     duration: '2 days',
     includes: ['Hiking guide', 'Overnight stay', 'Meals', 'Transportation'],
     image: '/assets/packages/mountains.jpg'
@@ -39,10 +46,46 @@ const TRAVEL_PACKAGES = [
     id: 'pkg-003',
     title: 'Bitcoin Conference Package',
     description: 'All-inclusive package for the next Bitcoin conference in Madeira.',
-    price: 500000, // sats
+    price: 3, // sats (updated for demo)
     duration: '3 days',
     includes: ['Conference tickets', 'Accommodation', 'Meals', 'Networking events'],
     image: '/assets/packages/conference.jpg'
+  },
+  {
+    id: 'pkg-004',
+    title: 'Porto Santo Island Getaway',
+    description: 'Explore the beautiful golden sand beaches of Porto Santo island with Bitcoin payments.',
+    price: 4, // sats (updated for demo)
+    duration: '2 days',
+    includes: ['Ferry tickets', 'Accommodation', 'Beach equipment', 'Guided tour'],
+    image: '/assets/packages/porto-santo.jpg'
+  },
+  {
+    id: 'pkg-005',
+    title: 'Madeira Food & Wine Tour',
+    description: 'Experience the best of Madeira\'s cuisine and famous wines while paying with Bitcoin.',
+    price: 5, // sats (updated for demo)
+    duration: '1 day',
+    includes: ['Wine tasting', 'Traditional lunch', 'Transportation', 'Professional guide'],
+    image: '/assets/packages/food-tour.jpg'
+  },
+  {
+    id: 'pkg-006',
+    title: 'Levada Hiking Adventure',
+    description: 'Hike Madeira\'s famous levada trails and waterfalls with Bitcoin enthusiasts.',
+    price: 6, // sats (updated for demo)
+    duration: '1 day',
+    includes: ['Hiking guide', 'Lunch pack', 'Transportation', 'Safety equipment'],
+    image: '/assets/packages/hiking.jpg'
+  },
+  {
+    id: 'pkg-007',
+    title: 'Bitcoin Art Gallery Tour',
+    description: 'Visit Madeira\'s exclusive art galleries that accept Bitcoin payments.',
+    price: 7, // sats (updated for demo)
+    duration: '1 day',
+    includes: ['Gallery admissions', 'Expert guide', 'Lunch', 'Transportation'],
+    image: '/assets/packages/porto-santo.jpg'
   }
 ];
 
@@ -76,11 +119,20 @@ const BITCOIN_BUSINESSES = [
   }
 ];
 
+// Simple in-memory storage for MVP
+const bookings = [];
+const payments = [];
+
 // API Routes
 
 // Health check
 app.get('/', (req, res) => {
   res.send('MadTrips API is running!');
+});
+
+// API health check endpoint
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
 // Get all travel packages
@@ -102,59 +154,202 @@ app.get('/api/businesses', (req, res) => {
   res.json({ businesses: BITCOIN_BUSINESSES });
 });
 
-// Mock payment - generate a "Lightning invoice" (just a demo QR code for MVP)
-app.post('/api/pay', async (req, res) => {
-  const { amount, memo } = req.body;
-  
-  if (!amount) {
-    return res.status(400).json({ error: 'Amount is required' });
-  }
-  
-  // Generate a dummy invoice (for MVP demonstration)
-  const dummyInvoice = `lnbc${amount}n1pjq53s9pp5ennyd3cx5ezlpzd35h0g8xk0g5tippaqh7dlcz5h2an9g6nfq3fsdqqcqzzsxqyz5vqsp54h0zuxwg98w0kslrp6a77jvkz6g88klf85x6lge79l52jph8v5lq9qyyssqnfz47tq0jeapcxky3c0hfeg9g5azsrqknnkw5p08wf07jy3kyl7ppn3mmj4n5ewk3yqyt9zlj9g04s5te7wrmwkgms7lhwn7gjhwrycp9ygl7l`;
-  
+// Create a lightning payment invoice
+app.post('/api/payments', async (req, res) => {
   try {
-    // Generate QR code for the dummy invoice
-    const qrCode = await QRCode.toDataURL(dummyInvoice);
+    const { amount, description } = req.body;
     
-    // For MVP, we'll just return a success response with the QR code
-    // In a real implementation, this would integrate with LNBits or BTCPay
-    res.json({
-      success: true,
-      invoice: dummyInvoice,
-      qrCode,
+    if (!amount || !description) {
+      return res.status(400).json({ error: 'Amount and description are required' });
+    }
+    
+    // Create a Lightning invoice using LNBits
+    const invoiceData = await lightning.createInvoice(amount, description);
+    
+    // Generate QR code for the invoice
+    const qrCodeDataUrl = await QRCode.toDataURL(invoiceData.invoice);
+    
+    // Store payment in our simple database
+    const newPayment = {
+      id: invoiceData.id,
+      invoice: invoiceData.invoice,
       amount,
-      memo: memo || 'MadTrips Booking',
-      expiry: Date.now() + 15 * 60 * 1000 // 15 minutes from now
+      description,
+      qrCode: qrCodeDataUrl,
+      status: 'pending',
+      expiry: Date.now() + 15 * 60 * 1000, // 15 minutes
+      createdAt: new Date().toISOString()
+    };
+    
+    payments.push(newPayment);
+    
+    res.json({
+      id: invoiceData.id,
+      invoice: invoiceData.invoice,
+      qrCode: qrCodeDataUrl,
+      expiry: newPayment.expiry
     });
   } catch (error) {
-    console.error('QR code generation error:', error);
-    res.status(500).json({ error: 'Failed to generate invoice' });
+    console.error('Payment creation error:', error);
+    res.status(500).json({ error: 'Failed to create payment' });
   }
 });
 
-// Simulate booking completion
-app.post('/api/bookings', (req, res) => {
-  const { packageId, name, email, invoice } = req.body;
-  
-  if (!packageId || !name) {
-    return res.status(400).json({ error: 'Package ID and name are required' });
+// Check payment status
+app.get('/api/payments/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    // Find payment in our database
+    const payment = payments.find(p => p.id === id);
+    if (!payment) {
+      return res.status(404).json({ error: 'Payment not found' });
+    }
+    
+    // Check payment status with LNBits
+    const paymentStatus = await lightning.checkPayment(id);
+    
+    // Update payment status in our database
+    if (paymentStatus.paid && payment.status !== 'paid') {
+      payment.status = 'paid';
+      payment.paidAt = new Date().toISOString();
+    }
+    
+    res.json({
+      id: payment.id,
+      status: payment.status,
+      paid: payment.status === 'paid',
+      paidAt: payment.paidAt || null
+    });
+  } catch (error) {
+    console.error('Payment status check error:', error);
+    res.status(500).json({ error: 'Failed to check payment status' });
   }
-  
-  // For MVP, we'll just return a success response
-  // In a real implementation, this would store the booking in Blossom
-  res.json({
-    success: true,
-    bookingId: `booking-${Date.now()}`,
-    packageId,
-    name,
-    email,
-    status: 'confirmed',
-    createdAt: new Date().toISOString()
-  });
+});
+
+// Create a booking
+app.post('/api/bookings', async (req, res) => {
+  try {
+    const { packageId, nostrPubkey, invoice } = req.body;
+    
+    if (!packageId || !nostrPubkey || !invoice) {
+      return res.status(400).json({ error: 'Missing required booking information' });
+    }
+    
+    // Check if the package exists
+    const packageItem = TRAVEL_PACKAGES.find(p => p.id === packageId);
+    if (!packageItem) {
+      return res.status(404).json({ error: 'Package not found' });
+    }
+    
+    // Check if the payment exists
+    const payment = payments.find(p => p.invoice === invoice);
+    if (!payment) {
+      return res.status(404).json({ error: 'Payment not found' });
+    }
+    
+    // Check payment status with LNBits
+    const paymentStatus = await lightning.checkPayment(payment.id);
+    
+    // Update payment status in our database
+    if (paymentStatus.paid) {
+      payment.status = 'paid';
+      payment.paidAt = new Date().toISOString();
+    } else {
+      // For demo purposes, we'll accept unpaid bookings with a warning
+      console.warn(`Creating booking with unpaid invoice: ${payment.id}. In production, this would require payment.`);
+    }
+    
+    // Create booking
+    const bookingId = uuidv4();
+    const newBooking = {
+      id: bookingId,
+      packageId,
+      packageTitle: packageItem.title,
+      nostrPubkey,
+      paymentId: payment.id,
+      amount: payment.amount,
+      status: paymentStatus.paid ? 'confirmed' : 'pending_payment',
+      createdAt: new Date().toISOString()
+    };
+    
+    bookings.push(newBooking);
+    
+    // Generate Nostr proof of booking
+    const nostrProof = nostr.generateNostrProof(bookingId);
+    
+    // Send booking confirmation via Nostr DM
+    if (newBooking.status === 'confirmed') {
+      await nostr.sendBookingConfirmation(newBooking, payment);
+    }
+    
+    res.json({
+      bookingId,
+      status: newBooking.status,
+      message: paymentStatus.paid 
+        ? 'Your booking has been confirmed! Check your Nostr client for details.' 
+        : 'Booking created. Waiting for payment confirmation.',
+      nostrProof
+    });
+  } catch (error) {
+    console.error('Booking creation error:', error);
+    res.status(500).json({ error: 'Failed to create booking' });
+  }
+});
+
+// Get all bookings (admin endpoint, would need auth in real app)
+app.get('/api/bookings', (req, res) => {
+  res.json({ bookings });
+});
+
+// TESTING ONLY: Simulate a payment being completed
+app.post('/api/simulate-payment/:id', (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    // Find payment in our database
+    const payment = payments.find(p => p.id === id);
+    if (!payment) {
+      return res.status(404).json({ error: 'Payment not found' });
+    }
+    
+    // Mark the payment as paid
+    payment.status = 'paid';
+    payment.paidAt = new Date().toISOString();
+    
+    // Find any bookings with this payment and update them
+    const relatedBookings = bookings.filter(b => b.paymentId === id);
+    for (const booking of relatedBookings) {
+      booking.status = 'confirmed';
+      
+      // Send booking confirmation via Nostr DM
+      nostr.sendBookingConfirmation(booking, payment)
+        .catch(err => console.error('Error sending Nostr confirmation:', err));
+    }
+    
+    res.json({
+      success: true,
+      payment: {
+        id: payment.id,
+        status: payment.status,
+        paidAt: payment.paidAt
+      },
+      updatedBookings: relatedBookings.map(b => ({
+        id: b.id,
+        status: b.status
+      }))
+    });
+  } catch (error) {
+    console.error('Payment simulation error:', error);
+    res.status(500).json({ error: 'Failed to simulate payment' });
+  }
 });
 
 // Start the server
-app.listen(PORT, () => {
-  console.log(`MadTrips API running on http://localhost:${PORT}`);
-}); 
+try {
+  app.listen(PORT, () => {
+    console.log(`MadTrips API running on http://localhost:${PORT}`);
+  });
+} catch (error) {
+  console.error('Failed to start server:', error);
+} 

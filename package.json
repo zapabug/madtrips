@@ -5,6 +5,8 @@
   "scripts": {
     "dev": "next dev",
     "dev:network": "next dev --hostname 0.0.0.0",
+    "api": "cd api && bun --watch index.js",
+    "dev:all": "concurrently \"npm run dev\" \"npm run api\"",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
@@ -44,6 +46,7 @@
     "eslint-config-next": "15.2.2",
     "postcss": "8.4.31",
     "tailwindcss": "3.3.0",
-    "typescript": "^5"
+    "typescript": "^5",
+    "concurrently": "^8.2.2"
   }
 }

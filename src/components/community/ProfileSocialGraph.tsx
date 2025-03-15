@@ -308,16 +308,31 @@ export const ProfileSocialGraph: React.FC<ProfileSocialGraphProps> = ({ data }) 
       // Create pattern definitions for the profile pictures
       const defs = svg.append("defs");
       processedNodes.forEach((node) => {
-        defs.append("pattern")
+        const pattern = defs.append("pattern")
           .attr("id", `profile-pic-${node.id}`)
           .attr("width", 1)
           .attr("height", 1)
-          .attr("patternUnits", "objectBoundingBox")
-          .append("image")
-          .attr("href", node.picture || getDefaultProfilePic(node.npub))
-          .attr("width", 50)
-          .attr("height", 50)
-          .attr("preserveAspectRatio", "xMidYMid slice");
+          .attr("patternUnits", "objectBoundingBox");
+        
+        // Use a more compatible approach for image loading
+        const img = new window.Image();
+        img.src = node.picture || getDefaultProfilePic(node.npub);
+        
+        // Wait for image to load to prevent WebGL warnings
+        if (img.complete) {
+          pattern.append("image")
+            .attr("href", img.src)
+            .attr("width", 50)
+            .attr("height", 50)
+            .attr("preserveAspectRatio", "xMidYMid slice");
+        } else {
+          // Fallback if image is not loaded
+          pattern.append("image")
+            .attr("href", getDefaultProfilePic(node.npub))
+            .attr("width", 50)
+            .attr("height", 50)
+            .attr("preserveAspectRatio", "xMidYMid slice");
+        }
       });
       
       // Create links first so they appear behind nodes

@@ -1,3 +1,5 @@
+'use client';
+
 import type { Metadata, Viewport } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
@@ -14,17 +16,8 @@ const inter = Inter({
   display: "swap", // Use 'swap' instead of preloading
 });
 
-export const metadata: Metadata = {
-  title: "MadTrips - Bitcoin-Friendly Travel",
-  description: "Discover and book Bitcoin-friendly travel experiences",
-};
-
-export const viewport: Viewport = {
-  width: "device-width",
-  initialScale: 1,
-  maximumScale: 1,
-  themeColor: "#F7931A", // Bitcoin orange
-};
+// Metadata is now imported from metadata.ts
+// import { metadata, viewport } from './metadata';
 
 export default function RootLayout({
   children,
@@ -124,17 +117,86 @@ export default function RootLayout({
             </div>
           </footer>
           
-          {/* Floating Nostr Login Button */}
+          {/* Floating Nostr Login Button - This will be our custom UI for Nostr Login */}
           <NostrLoginButton />
         </ThemeProvider>
         
-        {/* Nostr Login Script */}
+        {/* Nostr Login Script - Now hidden but still providing functionality */}
         <Script
           src="https://www.unpkg.com/nostr-login@latest/dist/unpkg.js"
           data-perms="sign_event:1,sign_event:0"
           data-theme="ocean"
+          data-show-banner="false"
           strategy="afterInteractive"
         />
+        
+        {/* Custom script to ensure proper integration */}
+        <Script id="nostr-login-custom-integration" strategy="afterInteractive">
+          {`
+            // Add TypeScript declaration for window.NostrLogin
+            declare global {
+              interface Window {
+                NostrLogin?: {
+                  getProfile?: (npub: string) => { picture?: string, name?: string, [key: string]: any } | null;
+                  [key: string]: any;
+                };
+              }
+            }
+            
+            document.addEventListener('DOMContentLoaded', function() {
+              // Make sure the Nostr Login library is fully loaded
+              setTimeout(() => {
+                // We already have event listeners in our React component,
+                // this just ensures the scripts work well together
+                console.log('Nostr Login integration initialized');
+                
+                // Track Nostr login events to enhance profile data handling
+                document.addEventListener('nlAuth', function(e) {
+                  try {
+                    console.log('Nostr Login auth event captured:', e.detail);
+                    
+                    // If event doesn't have profile picture but we can get it elsewhere
+                    if (e.detail && e.detail.npub && (!e.detail.profile || !e.detail.profile.picture)) {
+                      // Try to get profile data from nostr-login's cache
+                      if (window.NostrLogin && window.NostrLogin.getProfile) {
+                        const profile = window.NostrLogin.getProfile(e.detail.npub);
+                        if (profile && profile.picture) {
+                          console.log('Found profile picture from NostrLogin cache');
+                          // Clone the event and add profile data
+                          const newEvent = new CustomEvent('nlAuth', {
+                            detail: {
+                              ...e.detail,
+                              profile: {
+                                ...e.detail.profile,
+                                picture: profile.picture
+                              }
+                            }
+                          });
+                          // Dispatch the enhanced event
+                          setTimeout(() => document.dispatchEvent(newEvent), 0);
+                        }
+                      }
+                    }
+                  } catch (err) {
+                    console.error('Error handling Nostr auth event:', err);
+                  }
+                });
+                
+                // Ensure nlLaunch events are properly captured
+                document.addEventListener('nlLaunch', function(e) {
+                  console.log('Nostr Login launch event captured', e.detail);
+                });
+              }, 1000);
+            });
+          `}
+        </Script>
+        
+        {/* Add custom CSS to hide any remaining Nostr Login elements */}
+        <style jsx global>{`
+          .nl-banner {
+            display: none !important;
+          }
+        `}</style>
       </body>
     </html>
   );
