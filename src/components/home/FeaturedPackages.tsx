@@ -50,11 +50,11 @@ const packages = [
 
 export function FeaturedPackages() {
   return (
-    <div className="bg-white py-12 sm:py-16 md:py-24">
+    <div className="bg-white dark:bg-gray-900 py-12 sm:py-16 md:py-24">
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
         <div className="mx-auto max-w-2xl text-center">
-          <h2 className="text-3xl font-bold tracking-tight text-ocean sm:text-4xl md:text-5xl">Featured Packages</h2>
-          <p className="mt-2 text-lg leading-8 text-forest/80">
+          <h2 className="text-3xl font-bold tracking-tight text-ocean dark:text-white sm:text-4xl md:text-5xl">Featured Packages</h2>
+          <p className="mt-2 text-lg leading-8 text-forest/80 dark:text-gray-400">
             Discover our curated Bitcoin-friendly travel experiences
           </p>
         </div>
@@ -67,25 +67,36 @@ export function FeaturedPackages() {
               <div className="max-w-xl w-full">
                 <div className="mt-6 flex items-center gap-x-4 text-xs">
                   <span className="text-bitcoin font-semibold">{pkg.price}</span>
-                  <span className="text-forest/50">•</span>
-                  <span className="text-forest/70">{pkg.duration}</span>
+                  <span className="text-forest/50 dark:text-gray-400">•</span>
+                  <span className="text-forest/70 dark:text-gray-400">{pkg.duration}</span>
                 </div>
                 <div className="group relative">
-                  <h3 className="mt-3 text-lg font-semibold leading-6 text-ocean group-hover:text-bitcoin transition-colors">
-                    <Link href={`/packages/${pkg.id}`}>
-                      <span className="absolute inset-0" />
+                  <h3 className="mt-3 text-lg font-semibold leading-6 text-ocean dark:text-white group-hover:text-bitcoin transition-colors">
+                    <Link href={`/packages/${pkg.id}`} aria-label={`View details for ${pkg.title}`} className="focus:outline-none focus:ring-2 focus:ring-bitcoin focus:ring-offset-2 rounded-sm">
                       {pkg.title}
                     </Link>
                   </h3>
-                  <p className="mt-5 text-sm leading-6 text-forest/80">{pkg.description}</p>
-                  <ul className="mt-4 space-y-2">
+                  <p className="mt-5 text-sm leading-6 text-forest/80 dark:text-gray-300">{pkg.description}</p>
+                  <ul className="mt-4 space-y-2" aria-label={`Features of ${pkg.title}`}>
                     {pkg.features.map((feature, index) => (
-                      <li key={index} className="text-sm text-forest/60 flex items-center">
-                        <span className="text-bitcoin mr-2">•</span>
+                      <li key={index} className="text-sm text-forest/60 dark:text-gray-400 flex items-center">
+                        <span className="text-bitcoin mr-2" aria-hidden="true">•</span>
                         {feature}
                       </li>
                     ))}
                   </ul>
+                  <div className="mt-6">
+                    <Link 
+                      href={`/packages/${pkg.id}`}
+                      className="text-sm font-medium text-bitcoin hover:text-bitcoin/80 transition-colors flex items-center"
+                      aria-label={`Book ${pkg.title} package`}
+                    >
+                      Book this package
+                      <svg className="ml-1 h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                      </svg>
+                    </Link>
+                  </div>
                 </div>
               </div>
             </article>

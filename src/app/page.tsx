@@ -12,9 +12,15 @@ export const metadata: Metadata = {
 export default function HomePage() {
   return (
     <main>
-      <Hero />
-      <FeaturedPackages />
-      <FunchalMap />
+      <section id="home">
+        <Hero />
+      </section>
+      <section id="packages">
+        <FeaturedPackages />
+      </section>
+      <section id="map">
+        <FunchalMap />
+      </section>
       <CallToAction />
     </main>
   )
