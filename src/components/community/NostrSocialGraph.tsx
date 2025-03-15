@@ -278,8 +278,8 @@ export function NostrSocialGraph({ npub, maxConnections = 30 }: NostrSocialGraph
               linkDirectionalArrowLength={3}
               linkDirectionalArrowRelPos={1}
               backgroundColor={document.documentElement.classList.contains('dark') ? '#1f2937' : '#ffffff'}
-              onNodeClick={handleNodeClick}
-              nodeCanvasObject={(node: any, ctx, globalScale) => {
+              onNodeClick={(node: any) => handleNodeClick(node as GraphNode)}
+              nodeCanvasObject={(node: any, ctx: CanvasRenderingContext2D, globalScale: number) => {
                 const size = node.val
                 const label = node.name
                 const fontSize = 12/globalScale

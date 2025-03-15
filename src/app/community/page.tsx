@@ -4,6 +4,8 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { NostrProfileImage } from '@/components/community/NostrProfileImage'
 import { ProfileSocialGraph } from '@/components/community/ProfileSocialGraph'
+import { useNostrAuth } from '@/lib/nostr/NostrAuthProvider';
+import { TrustBadge } from '@/components/NostrLoginButton';
 
 // Define types for our state
 interface SocialGraphData {
@@ -11,6 +13,14 @@ interface SocialGraphData {
   links: any[];
   // Add other properties that exist in your actual data
 }
+
+// Core NPUBs for the community
+const CORE_NPUBS = [
+  "npub1etgqcj9gc6yaxttuwu9eqgs3ynt2dzaudvwnrssrn2zdt2useaasfj8n6e", // Free Madeira
+  "npub1s0veng2gvfwr62acrxhnqexq76sj6ldg3a5t935jy8e6w3shr5vsnwrmq5", // Bitcoin Madeira
+  "npub1dxd02kcjhgpkyrx60qnkd6j42kmc72u5lum0rp2ud8x5zfhnk4zscjj6hh", // Madtrips
+  "npub1funchalx8v747rsee6ahsuyrcd2s3rnxlyrtumfex9lecpmgwars6hq8kc", // Funchal
+];
 
 // Note: Next.js metadata must be in a separate layout.tsx file since this is a client component
 
@@ -21,6 +31,9 @@ export default function CommunityPage() {
   const [isForceUpdating, setIsForceUpdating] = useState(false);
   const [debugInfo, setDebugInfo] = useState<string | null>(null);
   const [isMobile, setIsMobile] = useState(false);
+  const [webOfTrust, setWebOfTrust] = useState<{ [key: string]: number }>({});
+  
+  const { isConnected, getWebOfTrust, pubkey } = useNostrAuth();
 
   useEffect(() => {
     const checkIfMobile = () => {
@@ -31,6 +44,36 @@ export default function CommunityPage() {
     window.addEventListener('resize', checkIfMobile);
     return () => window.removeEventListener('resize', checkIfMobile);
   }, []);
+
+  // Fetch web of trust data when user is authenticated
+  useEffect(() => {
+    const fetchWebOfTrust = async () => {
+      if (!isConnected || !pubkey) return;
+      
+      try {
+        const trustData = await getWebOfTrust();
+        
+        // Count how many connections each core member has
+        const trustScores: { [key: string]: number } = {};
+        
+        // Add direct connections
+        for (const connection of trustData.directConnections) {
+          trustScores[connection] = (trustScores[connection] || 0) + 3;
+        }
+        
+        // Add second-degree connections with a lower weight
+        for (const connection of trustData.secondDegreeConnections) {
+          trustScores[connection] = (trustScores[connection] || 0) + 1;
+        }
+        
+        setWebOfTrust(trustScores);
+      } catch (err) {
+        console.error('Error fetching web of trust:', err);
+      }
+    };
+    
+    fetchWebOfTrust();
+  }, [isConnected, pubkey, getWebOfTrust]);
 
   useEffect(() => {
     async function fetchData() {
@@ -83,25 +126,43 @@ export default function CommunityPage() {
     }
   };
 
+  // Function to check if a node is in the user's web of trust
+  const getWebOfTrustScore = (npub: string) => {
+    if (!isConnected || !pubkey) return 0;
+    return webOfTrust[npub] || 0;
+  };
+
   return (
     <main className="container mx-auto px-4 py-8">
       <section className="mb-12">
         <div className="flex justify-between items-center mb-6">
           <h1 className="text-3xl font-bold text-[#F7931A]">Bitcoin Community in Madeira</h1>
-          <button
-            onClick={forceRefreshData}
-            disabled={isLoading || isForceUpdating}
-            className={`px-4 py-2 rounded-md ${
-              isLoading || isForceUpdating 
-                ? 'bg-gray-400 cursor-not-allowed text-white' 
-                : 'bg-gray-100 hover:bg-gray-200 text-gray-700 dark:bg-gray-700 dark:hover:bg-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-700'
-            } transition-colors`}
-          >
-            {isForceUpdating ? 'Updating...' : 'Force Update'}
-          </button>
+          <div className="flex items-center gap-4">
+            {isConnected && (
+              <div className="text-xs text-gray-600 dark:text-gray-400 bg-gray-50 dark:bg-gray-800 px-3 py-1 rounded-full border border-gray-200 dark:border-gray-700">
+                Web of Trust Enabled
+              </div>
+            )}
+            <button
+              onClick={forceRefreshData}
+              disabled={isLoading || isForceUpdating}
+              className={`px-4 py-2 rounded-md ${
+                isLoading || isForceUpdating 
+                  ? 'bg-gray-400 cursor-not-allowed text-white' 
+                  : 'bg-gray-100 hover:bg-gray-200 text-gray-700 dark:bg-gray-700 dark:hover:bg-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-700'
+              } transition-colors`}
+            >
+              {isForceUpdating ? 'Updating...' : 'Force Update'}
+            </button>
+          </div>
         </div>
         <p className="text-lg text-gray-700 dark:text-gray-300 mb-8">
           Explore the network of Bitcoin enthusiasts and businesses in Madeira Island.
+          {!isConnected && (
+            <span className="block mt-2 text-sm text-gray-500 dark:text-gray-400">
+              <Link href="#join" className="text-[#F7931A] hover:underline">Connect with Nostr</Link> to see trust relationships and personalized data.
+            </span>
+          )}
         </p>
         
         {debugInfo && (
@@ -132,7 +193,11 @@ export default function CommunityPage() {
                   <strong className="text-[#F7931A]">Mobile View:</strong> Graph optimized for performance. Showing core nodes and immediate connections.
                 </div>
               )}
-              <ProfileSocialGraph data={data} />
+              <ProfileSocialGraph 
+                data={data} 
+                webOfTrust={webOfTrust}
+                isUserConnected={isConnected}
+              />
             </>
           )}
         </div>
@@ -143,12 +208,19 @@ export default function CommunityPage() {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
           {/* Free Madeira */}
           <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-4 sm:p-6">
-            <NostrProfileImage 
-              npub="npub1etgqcj9gc6yaxttuwu9eqgs3ynt2dzaudvwnrssrn2zdt2useaasfj8n6e"
-              width={80}
-              height={80}
-              className="mx-auto mb-4"
-            />
+            <div className="flex justify-center">
+              <div className="relative">
+                <NostrProfileImage 
+                  npub="npub1etgqcj9gc6yaxttuwu9eqgs3ynt2dzaudvwnrssrn2zdt2useaasfj8n6e"
+                  width={80}
+                  height={80}
+                  className="mx-auto mb-4"
+                />
+                <div className="absolute -bottom-2 -right-2">
+                  <TrustBadge npub="npub1etgqcj9gc6yaxttuwu9eqgs3ynt2dzaudvwnrssrn2zdt2useaasfj8n6e" />
+                </div>
+              </div>
+            </div>
             <h3 className="text-xl font-semibold text-center text-[#F7931A]">Free Madeira</h3>
             <p className="text-center text-gray-600 dark:text-gray-400">
               Core community organizers
@@ -167,12 +239,19 @@ export default function CommunityPage() {
           
           {/* Bitcoin Madeira */}
           <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-4 sm:p-6">
-            <NostrProfileImage 
-              npub="npub1s0veng2gvfwr62acrxhnqexq76sj6ldg3a5t935jy8e6w3shr5vsnwrmq5"
-              width={80}
-              height={80}
-              className="mx-auto mb-4"
-            />
+            <div className="flex justify-center">
+              <div className="relative">
+                <NostrProfileImage 
+                  npub="npub1s0veng2gvfwr62acrxhnqexq76sj6ldg3a5t935jy8e6w3shr5vsnwrmq5"
+                  width={80}
+                  height={80}
+                  className="mx-auto mb-4"
+                />
+                <div className="absolute -bottom-2 -right-2">
+                  <TrustBadge npub="npub1s0veng2gvfwr62acrxhnqexq76sj6ldg3a5t935jy8e6w3shr5vsnwrmq5" />
+                </div>
+              </div>
+            </div>
             <h3 className="text-xl font-semibold text-center text-[#F7931A]">Sovereign Engineering</h3>
             <p className="text-center text-gray-600 dark:text-gray-400">
               Bitcoin education and Builders Guild
@@ -191,12 +270,19 @@ export default function CommunityPage() {
           
           {/* Madtrips */}
           <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-4 sm:p-6">
-            <NostrProfileImage 
-              npub="npub1dxd02kcjhgpkyrx60qnkd6j42kmc72u5lum0rp2ud8x5zfhnk4zscjj6hh"
-              width={80}
-              height={80}
-              className="mx-auto mb-4"
-            />
+            <div className="flex justify-center">
+              <div className="relative">
+                <NostrProfileImage 
+                  npub="npub1dxd02kcjhgpkyrx60qnkd6j42kmc72u5lum0rp2ud8x5zfhnk4zscjj6hh"
+                  width={80}
+                  height={80}
+                  className="mx-auto mb-4"
+                />
+                <div className="absolute -bottom-2 -right-2">
+                  <TrustBadge npub="npub1dxd02kcjhgpkyrx60qnkd6j42kmc72u5lum0rp2ud8x5zfhnk4zscjj6hh" />
+                </div>
+              </div>
+            </div>
             <h3 className="text-xl font-semibold text-center text-[#F7931A]">Mad⚡Trips</h3>
             <p className="text-center text-gray-600 dark:text-gray-400">
               Madeira Pleb Travel Solutions
@@ -215,12 +301,19 @@ export default function CommunityPage() {
           
           {/* Funchal */}
           <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-4 sm:p-6">
-            <NostrProfileImage 
-              npub="npub1funchalx8v747rsee6ahsuyrcd2s3rnxlyrtumfex9lecpmgwars6hq8kc"
-              width={80}
-              height={80}
-              className="mx-auto mb-4"
-            />
+            <div className="flex justify-center">
+              <div className="relative">
+                <NostrProfileImage 
+                  npub="npub1funchalx8v747rsee6ahsuyrcd2s3rnxlyrtumfex9lecpmgwars6hq8kc"
+                  width={80}
+                  height={80}
+                  className="mx-auto mb-4"
+                />
+                <div className="absolute -bottom-2 -right-2">
+                  <TrustBadge npub="npub1funchalx8v747rsee6ahsuyrcd2s3rnxlyrtumfex9lecpmgwars6hq8kc" />
+                </div>
+              </div>
+            </div>
             <h3 className="text-xl font-semibold text-center text-[#F7931A]">Funchal</h3>
             <p className="text-center text-gray-600 dark:text-gray-400">
               Decentralized Community Ads
@@ -239,7 +332,7 @@ export default function CommunityPage() {
         </div>
       </section>
       
-      <section>
+      <section id="join">
         <h2 className="text-2xl font-bold mb-6 text-[#F7931A]">Join the Community</h2>
         <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-8">
           <p className="mb-6 text-gray-600 dark:text-gray-400">

@@ -11,6 +11,7 @@ interface Node {
   displayName?: string;
   group?: number;
   isCoreNode?: boolean;
+  trustScore?: number;
 }
 
 interface Link {
@@ -18,6 +19,7 @@ interface Link {
   target: string;
   value?: number;
   type?: string;
+  isTrusted?: boolean;
 }
 
 interface SocialGraphData {
@@ -27,6 +29,8 @@ interface SocialGraphData {
 
 interface ProfileSocialGraphProps {
   data: SocialGraphData | null;
+  webOfTrust?: { [key: string]: number };
+  isUserConnected?: boolean;
 }
 
 // Core NPUBs we want to highlight
@@ -43,11 +47,17 @@ const COLORS = {
   selected: "#F7931A", // Bitcoin Orange - was Blue-500
   regular: "#9ca3af", // Gray-400
   highlighted: "#F7931A", // Bitcoin Orange - was Emerald-500
+  trusted: "#10b981", // Emerald-500 for trusted nodes
   link: "#d1d5db", // Gray-300
   highlightedLink: "#F7931A", // Bitcoin Orange - was Gray-500
+  trustedLink: "#10b981", // Emerald-500 for trusted links
 };
 
-export const ProfileSocialGraph: React.FC<ProfileSocialGraphProps> = ({ data }) => {
+export const ProfileSocialGraph: React.FC<ProfileSocialGraphProps> = ({ 
+  data, 
+  webOfTrust = {},
+  isUserConnected = false
+}) => {
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
@@ -59,11 +69,23 @@ export const ProfileSocialGraph: React.FC<ProfileSocialGraphProps> = ({ data }) 
   // Track processed nodes and links for display in UI
   const [processedNodeCount, setProcessedNodeCount] = useState(0);
   const [processedLinkCount, setProcessedLinkCount] = useState(0);
+  const [showWebOfTrust, setShowWebOfTrust] = useState(true);
+  const [isDebugVisible, setIsDebugVisible] = useState(false);
 
   // Helper to shorten npub for display
   const shortenNpub = (npub: string) => {
     if (!npub) return "";
     return npub.substring(0, 6) + "..." + npub.substring(npub.length - 4);
+  };
+
+  // Helper function to get a node's trust score
+  const getTrustScore = (npub: string): number => {
+    return webOfTrust[npub] || 0;
+  };
+
+  // Function to clear the current selection
+  const clearSelection = () => {
+    setSelectedNode(null);
   };
 
   // Helper function to get a default profile picture
@@ -279,8 +301,11 @@ export const ProfileSocialGraph: React.FC<ProfileSocialGraphProps> = ({ data }) 
         picture: node.picture || getDefaultProfilePic(node.npub),
         // Ensure nodes have a display name
         displayName: node.name || shortenNpub(node.npub),
+        // Add trust score
+        trustScore: getTrustScore(node.npub)
       }));
       
+      // Process links - add trusted property
       // Set up the SVG
       const svg = d3.select(svgRef.current)
         .attr("width", dimensions.width)
