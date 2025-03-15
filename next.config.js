@@ -4,7 +4,6 @@ const nextConfig = {
   // Removing this option as it's causing warnings
   reactStrictMode: true,
   images: {
-    domains: [''],
     remotePatterns: [
       {
         protocol: 'https',

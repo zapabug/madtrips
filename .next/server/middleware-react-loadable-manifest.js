@@ -1,1 +1,1 @@
-self.__REACT_LOADABLE_MANIFEST="{}"
+self.__REACT_LOADABLE_MANIFEST="{\"app/community/SocialGraph.tsx -> @/components/community/SocialGraphVisualization\":{\"id\":\"app/community/SocialGraph.tsx -> @/components/community/SocialGraphVisualization\",\"files\":[\"static/chunks/_app-pages-browser_src_components_community_SocialGraphVisualization_tsx.js\"]}}"

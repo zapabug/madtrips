@@ -1,5 +1,7 @@
 import { Metadata } from 'next'
-import { NostrSocialGraph } from '@/components/community/NostrSocialGraph'
+import Link from 'next/link'
+import { NostrProfileImage } from '@/components/community/NostrProfileImage'
+import SocialGraph from './SocialGraph'
 
 export const metadata: Metadata = {
   title: 'Bitcoin Community | MadTrips',
@@ -15,41 +17,54 @@ export default function Community() {
             Bitcoin Community in Madeira
           </h1>
           <p className="text-lg text-forest/80 dark:text-gray-300">
-            Explore the Bitcoin community social graphs and connections in Madeira.
+            Explore the Bitcoin community connections in Madeira.
           </p>
         </div>
         
         <div className="mb-12">
-          <h2 className="text-2xl font-semibold text-forest dark:text-white mb-4">
-            Free Madeira Community
-          </h2>
-          <p className="text-forest/70 dark:text-gray-400 mb-6">
-            The Free Madeira organization works to promote Bitcoin adoption and education in Madeira.
-            Below is a visualization of their social connections on Nostr.
-          </p>
-          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-lg overflow-hidden">
-            <NostrSocialGraph 
-              npub="npub1dxd02kcjhgpkyrx60qnkd6j42kmc72u5lum0rp2ud8x5zfhnk4zscjj6hh" 
-              maxConnections={30}
-            />
-          </div>
-        </div>
-        
-        <div className="mb-12">
-          <h2 className="text-2xl font-semibold text-forest dark:text-white mb-4">
-            Bitcoin Madeira Explorer
-          </h2>
-          <p className="text-forest/70 dark:text-gray-400 mb-6">
-            The Bitcoin Madeira Explorer focuses on showcasing Bitcoin businesses and opportunities throughout the island.
-            Explore their network connections below.
-          </p>
-          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-lg overflow-hidden">
-            <NostrSocialGraph 
+          <div className="flex flex-col md:flex-row items-center md:items-start gap-6 mb-6">
+            <NostrProfileImage 
               npub="npub1etgqcj9gc6yaxttuwu9eqgs3ynt2dzaudvwnrssrn2zdt2useaasfj8n6e" 
-              maxConnections={25}
+              width={120} 
+              height={120} 
+              alt="Free Madeira" 
+              className="flex-shrink-0"
             />
+            <div>
+              <h2 className="text-2xl font-semibold text-forest dark:text-white mb-2">
+                Free Madeira Community
+              </h2>
+              <p className="text-forest/70 dark:text-gray-400 mb-4">
+                The Free Madeira organization works to promote Bitcoin adoption and education in Madeira.
+              </p>
+              <div className="flex flex-wrap gap-3">
+                <Link 
+                  href="https://freemadeira.com" 
+                  target="_blank"
+                  className="text-sm px-3 py-1 bg-bitcoin text-white rounded-full hover:bg-bitcoin/90 transition-colors"
+                >
+                  Visit Website
+                </Link>
+                <Link 
+                  href="https://iris.to/npub1etgqcj9gc6yaxttuwu9eqgs3ynt2dzaudvwnrssrn2zdt2useaasfj8n6e" 
+                  target="_blank" 
+                  className="text-sm px-3 py-1 bg-purple-500 text-white rounded-full hover:bg-purple-600 transition-colors"
+                >
+                  Follow on Nostr
+                </Link>
+                <span className="text-sm px-3 py-1 bg-ocean/80 text-white rounded-full">
+                  42 Followers
+                </span>
+                <span className="text-sm px-3 py-1 bg-forest/80 text-white rounded-full">
+                  28 Following
+                </span>
+              </div>
+            </div>
           </div>
         </div>
+        
+        {/* Social Graph Visualization (Client Component) */}
+        <SocialGraph />
         
         <div className="text-center mt-16">
           <h2 className="text-2xl font-semibold text-forest dark:text-white mb-4">
@@ -76,6 +91,23 @@ export default function Community() {
             >
               Mad Bitcoin
             </a>
+            <a 
+              href="https://iris.to/npub1etgqcj9gc6yaxttuwu9eqgs3ynt2dzaudvwnrssrn2zdt2useaasfj8n6e" 
+              target="_blank" 
+              rel="noreferrer"
+              className="px-6 py-3 bg-purple-500 text-white rounded-md hover:bg-purple-600 transition-colors"
+            >
+              Connect on Nostr
+            </a>
+          </div>
+          
+          <div className="mt-12 text-center">
+            <Link 
+              href="/admin/socialgraph" 
+              className="text-sm text-gray-500 hover:text-purple-500 transition-colors"
+            >
+              Manage Social Graph
+            </Link>
           </div>
         </div>
       </div>

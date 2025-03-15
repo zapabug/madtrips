@@ -1,0 +1,84 @@
+Here's a **Low-Level Design (LLD)** for your **Nostr social graph data collection** system. This design ensures that you continuously **track connections between the Free Madeira community and your travel agency** while keeping a list of **known npubs**.
+
+---
+
+## **1. Objective**
+- Collect **follower relationships and interactions** from Nostr relays.
+- Maintain a **stored list of known npubs** (Free Madeira members and your agency).
+- Provide a structured dataset that can be used for visualization or further analysis.
+
+---
+
+## **2. System Components**
+### **(A) Data Collection**
+1. **Nostr Relays Querying**  
+   - Fetch **kind:3 (follows)** events from Free Madeira members.
+   - Fetch **kind:1 (notes), kind:6 (reposts), kind:7 (likes), kind:9735 (zaps)** related to your agency.
+   
+2. **Primal API Enrichment**  
+   - Fetch additional profile metadata.
+
+### **(B) Data Storage**
+- Store **collected pubkeys** in a **JSON/SQLite database**.
+- Maintain **a list of known Free Madeira pubkeys** for future updates.
+- Structure **relationships and interactions** in a retrievable format.
+
+### **(C) API Exposure**
+- Provide endpoints to retrieve:
+  - **Follower connections** between Free Madeira and your agency.
+  - **Mentions, zaps, and other interactions**.
+  - **Updated lists of known pubkeys**.
+
+---
+
+## **3. Data Flow**
+### **(Step 1) Query Nostr Relays**
+1. Connect to **Nostr relays** (`wss://relay.damus.io`, etc.).
+2. Fetch **kind:3 events** (follows) from **Free Madeira members**.
+3. Fetch **kind:1, kind:6, kind:7, kind:9735 events** (notes, reposts, likes, zaps) involving your agency.
+
+### **(Step 2) Process & Store Data**
+1. **Extract relevant pubkeys** (who follows whom, who interacted).
+2. **Update a JSON/SQLite file** with collected relationships.
+3. **Ensure deduplication** of known npubs.
+
+### **(Step 3) Serve Data to Your Website**
+1. Provide **an API or JSON export** with:
+   - **Social graph data** (who follows whom).
+   - **List of users who interacted with your agency**.
+   - **Raw event details** if needed.
+
+---
+
+## **4. System Design**
+### **(A) Database Structure (JSON or SQLite)**
+| Field | Type | Description |
+|-------|------|-------------|
+| `npub` | String | User’s public key |
+| `follows` | List | List of followed npubs |
+| `mentions` | List | List of mentioned npubs |
+| `zaps` | List | List of zap transactions |
+| `last_updated` | Timestamp | Last data sync |
+
+---
+
+## **5. API Endpoints**
+| **Endpoint** | **Method** | **Function** |
+|-------------|-----------|-------------|
+| `/graph/free-madeira` | `GET` | Get Free Madeira social graph |
+| `/graph/travel-agency-links` | `GET` | Get links between Free Madeira & your agency |
+| `/graph/npubs` | `GET` | Get the list of stored npubs |
+
+---
+
+## **6. Implementation Steps**
+✅ **Step 1**: Fetch `kind:3` (follows) for Free Madeira members.  
+✅ **Step 2**: Fetch `kind:1,6,7,9735` (notes, reposts, likes, zaps) related to your agency.  
+✅ **Step 3**: Store relationships & npubs in JSON/SQLite.  
+✅ **Step 4**: Provide API access for data retrieval.  
+
+---
+
+This ensures that **Free Madeira members & interactions are continuously tracked** while keeping a **historical record of npubs**.
+
+Would you like me to refine the script for database integration? 🚀
