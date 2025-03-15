@@ -1,3 +1,8 @@
 {
-  "/page": "app/page.js"
+  "/api/socialgraph/route": "app/api/socialgraph/route.js",
+  "/page": "app/page.js",
+  "/diagnosis/page": "app/diagnosis/page.js",
+  "/admin/socialgraph/page": "app/admin/socialgraph/page.js",
+  "/packages/page": "app/packages/page.js",
+  "/community/page": "app/community/page.js"
 }

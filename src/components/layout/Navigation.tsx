@@ -2,8 +2,11 @@
 
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback, useMemo } from 'react'
 import { NostrProfileHeader } from '@/components/community/NostrProfileHeader'
+
+// Extracted constants and reusable styles
+const MADTRIPS_NPUB = "npub1dxd02kcjhgpkyrx60qnkd6j42kmc72u5lum0rp2ud8x5zfhnk4zscjj6hh"
 
 const navigation = [
   { name: 'Home', href: '/', sectionId: 'home' },
@@ -20,8 +23,15 @@ const navigation = [
   { name: 'Community', href: '/community', sectionId: 'community' },
 ]
 
-// Madtrips agency npub
-const MADTRIPS_NPUB = "npub1dxd02kcjhgpkyrx60qnkd6j42kmc72u5lum0rp2ud8x5zfhnk4zscjj6hh"
+// Common styles extracted for reuse and consistency
+const styles = {
+  activeDesktopLink: 'border-bitcoin text-ocean dark:text-white',
+  inactiveDesktopLink: 'border-transparent text-forest dark:text-gray-300 hover:border-bitcoin/50 hover:text-bitcoin dark:hover:text-bitcoin',
+  activeMobileLink: 'bg-bitcoin/10 dark:bg-bitcoin/20 text-bitcoin',
+  inactiveMobileLink: 'text-forest dark:text-gray-300 hover:bg-sand/10 dark:hover:bg-gray-700 hover:text-bitcoin',
+  desktopLinkBase: 'inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium transition-colors',
+  mobileLinkBase: 'block py-3 px-4 text-base font-medium',
+}
 
 export function Navigation() {
   const pathname = usePathname()
@@ -31,18 +41,21 @@ export function Navigation() {
   const [openSubmenu, setOpenSubmenu] = useState<string | null>(null)
   const [activeSection, setActiveSection] = useState<string | null>(null)
 
+  // Memoize section IDs to avoid recreating on each render
+  const sectionIds = useMemo(() => navigation.map(item => item.sectionId), [])
+
   useEffect(() => {
     setMounted(true)
   }, [])
 
   // Implement intersection observer to track active sections
   useEffect(() => {
-    const sectionIds = navigation.map(item => item.sectionId)
+    if (!mounted) return
     
     const observerOptions = {
-      root: null, // viewport
-      rootMargin: '-80px 0px -20% 0px', // slightly biased towards the top
-      threshold: 0.2 // 20% of the element must be visible
+      root: null,
+      rootMargin: '-80px 0px -20% 0px',
+      threshold: 0.2
     }
     
     const observerCallback = (entries: IntersectionObserverEntry[]) => {
@@ -63,22 +76,16 @@ export function Navigation() {
     })
     
     return () => observer.disconnect()
-  }, [mounted])
+  }, [mounted, sectionIds])
 
   // Set active section based on the pathname when navigation happens
   useEffect(() => {
-    // Default to home
+    // Use path-based logic to determine active section
     if (pathname === '/') {
       setActiveSection('home')
-    }
-    
-    // Check if we're on the packages page
-    if (pathname.includes('/packages')) {
+    } else if (pathname.includes('/packages')) {
       setActiveSection('packages')
-    }
-    
-    // Check if we're on the community page
-    if (pathname.includes('/community')) {
+    } else if (pathname.includes('/community')) {
       setActiveSection('community')
     }
     
@@ -87,64 +94,60 @@ export function Navigation() {
     setOpenSubmenu(null)
   }, [pathname])
 
-  const toggleSubmenu = (name: string) => {
+  // Memoized handlers to prevent recreating on each render
+  const toggleSubmenu = useCallback((name: string) => {
     setOpenSubmenu(prev => prev === name ? null : name)
-  }
+  }, [])
 
-  const handleSectionNavigation = (e: React.MouseEvent, sectionId: string) => {
+  const handleSectionNavigation = useCallback((e: React.MouseEvent, sectionId: string) => {
     e.preventDefault()
     
-    // If already on home page, just scroll to the section
     if (pathname === '/') {
       const section = document.getElementById(sectionId)
       if (section) {
         section.scrollIntoView({ behavior: 'smooth' })
       }
     } else {
-      // Navigate to home page with the section hash
       router.push(`/#${sectionId}`)
     }
-  }
+  }, [pathname, router])
 
-  const isActive = (item: typeof navigation[0]) => {
+  // Memoized check for active state to avoid recalculating
+  const isActive = useCallback((item: typeof navigation[0]) => {
     if (item.sectionId === activeSection) return true
     if (item.name === 'Packages' && pathname.includes('/packages')) return true
     if (item.name === 'Community' && pathname.includes('/community')) return true
     return false
-  }
+  }, [activeSection, pathname])
 
   return (
     <nav className="bg-white dark:bg-gray-800 shadow-md border-b border-sand dark:border-gray-700 fixed top-0 left-0 right-0 z-30">
       <div className="container mx-auto px-4">
-        <div className="flex justify-between h-auto py-2">
-          <div className="flex-1 flex justify-between items-center">
-            <div className="flex-shrink-0">
+        <div className="flex h-auto py-2">
+          <div className="flex items-center justify-between w-full">
+            {/* Logo/Profile section with fixed width on mobile */}
+            <div className="w-[80%] sm:w-auto overflow-hidden">
               <Link href="/" className="flex items-center text-xl font-bold text-ocean dark:text-bitcoin hover:text-bitcoin transition-colors group">
                 <NostrProfileHeader 
                   npub={MADTRIPS_NPUB} 
                   showImage={true}
-                  className="text-xl text-ocean dark:text-bitcoin group-hover:text-bitcoin" 
+                  className="text-xl text-ocean dark:text-bitcoin group-hover:text-bitcoin truncate" 
                 />
               </Link>
             </div>
 
+            {/* Desktop navigation */}
             <div className="hidden sm:ml-6 sm:flex sm:space-x-8 sm:items-center">
               {navigation.map((item) => (
                 <div key={item.name} className="relative group">
                   {item.submenu ? (
                     <>
                       <button
-                        className={`inline-flex items-center px-1 pt-1 pb-1 border-b-2 text-sm font-medium ${
-                          isActive(item)
-                            ? 'border-bitcoin text-ocean dark:text-white'
-                            : 'border-transparent text-forest dark:text-gray-300 hover:border-bitcoin/50 hover:text-bitcoin dark:hover:text-bitcoin'
-                        } transition-colors`}
+                        className={`${styles.desktopLinkBase} ${isActive(item) ? styles.activeDesktopLink : styles.inactiveDesktopLink}`}
                         onClick={(e) => {
                           if (pathname === '/') {
-                            // If on home page, scroll to packages section
                             handleSectionNavigation(e, item.sectionId)
                           } else {
-                            // Go to home page packages section
                             router.push('/#packages')
                           }
                         }}
@@ -164,8 +167,8 @@ export function Navigation() {
                                 href={subitem.href}
                                 className={`block px-4 py-2 text-sm ${
                                   mounted && pathname === subitem.href
-                                    ? 'bg-bitcoin/10 dark:bg-bitcoin/20 text-bitcoin'
-                                    : 'text-forest dark:text-gray-300 hover:bg-sand/10 dark:hover:bg-gray-700 hover:text-bitcoin'
+                                    ? styles.activeMobileLink
+                                    : styles.inactiveMobileLink
                                 }`}
                               >
                                 {subitem.name}
@@ -179,22 +182,14 @@ export function Navigation() {
                     <a
                       href={item.href}
                       onClick={(e) => handleSectionNavigation(e, item.sectionId)}
-                      className={`inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium transition-colors ${
-                        isActive(item)
-                          ? 'border-bitcoin text-ocean dark:text-white'
-                          : 'border-transparent text-forest dark:text-gray-300 hover:border-bitcoin/50 hover:text-bitcoin dark:hover:text-bitcoin'
-                      }`}
+                      className={`${styles.desktopLinkBase} ${isActive(item) ? styles.activeDesktopLink : styles.inactiveDesktopLink}`}
                     >
                       {item.name}
                     </a>
                   ) : (
                     <Link
                       href={item.href}
-                      className={`inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium transition-colors ${
-                        isActive(item)
-                          ? 'border-bitcoin text-ocean dark:text-white'
-                          : 'border-transparent text-forest dark:text-gray-300 hover:border-bitcoin/50 hover:text-bitcoin dark:hover:text-bitcoin'
-                      }`}
+                      className={`${styles.desktopLinkBase} ${isActive(item) ? styles.activeDesktopLink : styles.inactiveDesktopLink}`}
                     >
                       {item.name}
                     </Link>
@@ -203,10 +198,11 @@ export function Navigation() {
               ))}
             </div>
 
-            <div className="sm:hidden">
+            {/* Hamburger menu button with fixed width */}
+            <div className="sm:hidden w-[40px] flex-shrink-0">
               <button
                 type="button"
-                className="inline-flex items-center justify-center p-2 rounded-md text-forest dark:text-gray-300 hover:text-bitcoin dark:hover:text-bitcoin hover:bg-sand/20 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-bitcoin"
+                className="p-2 rounded-md text-forest dark:text-gray-300"
                 aria-controls="mobile-menu"
                 aria-expanded={mobileMenuOpen}
                 onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
@@ -238,6 +234,7 @@ export function Navigation() {
         </div>
       </div>
 
+      {/* Mobile menu */}
       {mobileMenuOpen && (
         <div className="sm:hidden border-t border-sand/20 dark:border-gray-700" id="mobile-menu">
           <div className="py-2 space-y-1 bg-white dark:bg-gray-800">
@@ -247,9 +244,7 @@ export function Navigation() {
                   <>
                     <button
                       className={`w-full flex justify-between items-center py-3 px-4 text-base font-medium ${
-                        isActive(item)
-                          ? 'bg-bitcoin/10 dark:bg-bitcoin/20 text-bitcoin'
-                          : 'text-forest dark:text-gray-300 hover:bg-sand/10 dark:hover:bg-gray-700 hover:text-bitcoin'
+                        isActive(item) ? styles.activeMobileLink : styles.inactiveMobileLink
                       }`}
                       onClick={() => toggleSubmenu(item.name)}
                     >
@@ -272,8 +267,8 @@ export function Navigation() {
                             href={subitem.href}
                             className={`block py-3 px-8 text-base font-medium ${
                               pathname === subitem.href
-                                ? 'bg-bitcoin/10 dark:bg-bitcoin/20 text-bitcoin'
-                                : 'text-forest dark:text-gray-300 hover:bg-sand/10 dark:hover:bg-gray-700 hover:text-bitcoin'
+                                ? styles.activeMobileLink
+                                : styles.inactiveMobileLink
                             }`}
                             onClick={() => setMobileMenuOpen(false)}
                           >
@@ -286,11 +281,7 @@ export function Navigation() {
                 ) : (
                   <Link
                     href={item.href}
-                    className={`block py-3 px-4 text-base font-medium ${
-                      isActive(item)
-                        ? 'bg-bitcoin/10 dark:bg-bitcoin/20 text-bitcoin'
-                        : 'text-forest dark:text-gray-300 hover:bg-sand/10 dark:hover:bg-gray-700 hover:text-bitcoin'
-                    }`}
+                    className={`${styles.mobileLinkBase} ${isActive(item) ? styles.activeMobileLink : styles.inactiveMobileLink}`}
                     onClick={() => {
                       if (item.name === 'Map') {
                         handleSectionNavigation({ preventDefault: () => {} } as React.MouseEvent, item.sectionId)

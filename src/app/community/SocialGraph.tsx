@@ -2,6 +2,8 @@
 
 import { useEffect, useRef, useState } from 'react'
 import * as d3 from 'd3'
+import { SocialGraphVisualization } from '@/components/community/SocialGraphVisualization'
+import dynamic from 'next/dynamic'
 
 interface Node {
   id: string;
@@ -21,169 +23,64 @@ interface Link {
 export function SocialGraph() {
   const containerRef = useRef<HTMLDivElement>(null)
   const [isLoading, setIsLoading] = useState(true)
-  const [data, setData] = useState<{ nodes: Node[]; links: Link[] } | null>(null)
+  const [data, setData] = useState<any>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [containerSize, setContainerSize] = useState({ width: 0, height: 0 })
 
   // Debug log for mounting
   console.log('SocialGraph mounting')
 
+  // Fetch data
   useEffect(() => {
     async function fetchData() {
       try {
         const response = await fetch('/api/socialgraph')
+        if (!response.ok) {
+          throw new Error(`API returned ${response.status}`)
+        }
         const json = await response.json()
-        console.log('Fetched data:', json)
+        console.log('Fetched graph data:', json)
         setData(json)
-      } catch (error) {
-        console.error('Failed to fetch social graph:', error)
+      } catch (err) {
+        console.error('Error fetching graph data:', err)
+        setError(err.message || 'Failed to load graph data')
       } finally {
         setIsLoading(false)
       }
     }
+    
     fetchData()
   }, [])
 
-  // Separate useEffect for D3 visualization
+  // Update dimensions
   useEffect(() => {
-    if (!data || !containerRef.current) {
-      console.log('No data or container yet')
-      return
-    }
-
-    console.log('Creating visualization')
+    if (!containerRef.current) return
     
-    // Get container dimensions
-    const container = containerRef.current
-    const width = container.clientWidth || 800
-    const height = container.clientHeight || 600
-
-    console.log('Container dimensions:', { width, height })
-
-    try {
-      // Clear any existing SVG
-      d3.select(container).selectAll('svg').remove()
-
-      // Create new SVG with explicit dimensions
-      const svg = d3.select(container)
-        .append('svg')
-        .attr('width', width)
-        .attr('height', height)
-        .attr('viewBox', [0, 0, width, height])
-        .style('border', '1px solid red') // Debug border
-        .style('background', '#f0f0f0') // Debug background
-
-      console.log('SVG created:', svg.node())
-
-      // Add zoom behavior
-      const g = svg.append('g')
-      svg.call(d3.zoom()
-        .extent([[0, 0], [width, height]])
-        .scaleExtent([0.1, 4])
-        .on('zoom', (event) => g.attr('transform', event.transform)))
-
-      // Prepare the data
-      const links = data.links.map(d => ({
-        source: data.nodes.find(n => n.id === d.source) || d.source,
-        target: data.nodes.find(n => n.id === d.target) || d.target
-      }))
-
-      // Create simulation
-      const simulation = d3.forceSimulation(data.nodes)
-        .force('link', d3.forceLink(links).id((d: any) => d.id).distance(100))
-        .force('charge', d3.forceManyBody().strength(-400))
-        .force('center', d3.forceCenter(width / 2, height / 2))
-        .force('collision', d3.forceCollide().radius(30))
-
-      // Create links
-      const link = g.append('g')
-        .attr('class', 'links')
-        .selectAll('line')
-        .data(links)
-        .join('line')
-        .attr('stroke', '#999')
-        .attr('stroke-opacity', 0.6)
-        .attr('stroke-width', 1)
-
-      // Create nodes
-      const node = g.append('g')
-        .attr('class', 'nodes')
-        .selectAll('g')
-        .data(data.nodes)
-        .join('g')
-        .call(d3.drag()
-          .on('start', dragstarted)
-          .on('drag', dragged)
-          .on('end', dragended))
-
-      // Add circles to nodes
-      node.append('circle')
-        .attr('r', 8)
-        .attr('fill', getNodeColor)
-        .attr('stroke', '#fff')
-        .attr('stroke-width', 1.5)
-
-      // Add labels
-      node.append('text')
-        .text(d => d.name || d.id.slice(0, 8))
-        .attr('x', 12)
-        .attr('y', 4)
-        .attr('font-size', '12px')
-        .attr('fill', 'currentColor')
-
-      // Update positions on tick
-      simulation.on('tick', () => {
-        link
-          .attr('x1', d => (d.source as any).x)
-          .attr('y1', d => (d.source as any).y)
-          .attr('x2', d => (d.target as any).x)
-          .attr('y2', d => (d.target as any).y)
-
-        node.attr('transform', d => `translate(${d.x},${d.y})`)
-      })
-
-      // Drag functions
-      function dragstarted(event: any) {
-        if (!event.active) simulation.alphaTarget(0.3).restart()
-        event.subject.fx = event.subject.x
-        event.subject.fy = event.subject.y
+    function updateSize() {
+      if (containerRef.current) {
+        const rect = containerRef.current.getBoundingClientRect()
+        console.log('Container size updated:', rect.width, rect.height)
+        setContainerSize({ 
+          width: Math.max(rect.width, 100), 
+          height: Math.max(rect.height, 400) 
+        })
       }
-
-      function dragged(event: any) {
-        event.subject.fx = event.x
-        event.subject.fy = event.y
-      }
-
-      function dragended(event: any) {
-        if (!event.active) simulation.alphaTarget(0)
-        event.subject.fx = null
-        event.subject.fy = null
-      }
-
-      console.log('Visualization complete')
-
-      return () => {
-        console.log('Cleaning up visualization')
-        simulation.stop()
-        svg.remove()
-      }
-    } catch (error) {
-      console.error('Error creating visualization:', error)
     }
-  }, [data])
-
-  function getNodeColor(node: Node) {
-    switch (node.type) {
-      case 'core':
-        return '#FFC107' // Amber
-      case 'following':
-        return '#2196F3' // Blue
-      case 'freeMadeira':
-        return '#4CAF50' // Green
-      case 'agency':
-        return '#9C27B0' // Purple
-      default:
-        return '#E91E63' // Pink
+    
+    // Initial update
+    updateSize()
+    
+    // Update on resize
+    window.addEventListener('resize', updateSize)
+    
+    // Set a timeout to double-check sizing after component has fully rendered
+    const timeoutId = setTimeout(updateSize, 500)
+    
+    return () => {
+      window.removeEventListener('resize', updateSize)
+      clearTimeout(timeoutId)
     }
-  }
+  }, [])
 
   if (isLoading) {
     return (
@@ -193,21 +90,61 @@ export function SocialGraph() {
     )
   }
 
+  if (error) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full gap-4">
+        <div className="text-red-500">Error: {error}</div>
+        <button
+          className="px-4 py-2 bg-primary text-white rounded"
+          onClick={() => window.location.reload()}
+        >
+          Retry
+        </button>
+      </div>
+    )
+  }
+
+  if (!data || !data.nodes || !data.nodes.length) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full gap-4">
+        <p>No graph data available</p>
+        <a 
+          href="/api/socialgraph?update=true"
+          className="px-4 py-2 bg-primary text-white rounded" 
+        >
+          Update Graph
+        </a>
+      </div>
+    )
+  }
+
   return (
     <div 
       ref={containerRef} 
-      className="w-full h-full relative bg-white" // Added bg-white for visibility
-      style={{ 
-        minHeight: '500px',
-        border: '1px solid blue' // Debug border
-      }}
+      className="w-full h-full border rounded-lg overflow-hidden relative bg-white"
+      style={{ minHeight: '500px', height: '100%' }}
     >
-      {/* Debug info */}
-      <div className="absolute top-2 left-2 bg-white/80 px-2 py-1 rounded text-sm">
-        Container size: {containerRef.current?.clientWidth}x{containerRef.current?.clientHeight}
+      <div className="absolute top-2 right-2 z-10 bg-white/80 px-2 py-1 rounded text-sm">
+        Nodes: {data.nodes.length} | Links: {data.links.length}
       </div>
-      <div className="absolute top-2 right-2 bg-white/80 px-2 py-1 rounded text-sm">
-        Nodes: {data?.nodes?.length || 0} | Links: {data?.links?.length || 0}
+      
+      {/* Only render when container has dimensions */}
+      {containerSize.width > 0 && containerSize.height > 0 && (
+        <SocialGraphVisualization 
+          data={data} 
+          width={containerSize.width} 
+          height={containerSize.height} 
+        />
+      )}
+      
+      {/* Fallback when SVG isn't rendering */}
+      <div className="absolute bottom-2 left-2 z-10">
+        <button
+          className="px-3 py-1 bg-blue-500 text-white rounded text-xs"
+          onClick={() => window.location.href = '/api/socialgraph?update=true'}
+        >
+          Force Update
+        </button>
       </div>
     </div>
   )

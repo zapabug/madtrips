@@ -9,7 +9,7 @@ import Image from "next/image";
 
 const inter = Inter({
   subsets: ["latin"],
-  display: "swap", // Improves perceived loading performance
+  display: "swap", // Use 'swap' instead of preloading
 });
 
 export const metadata: Metadata = {
@@ -31,6 +31,9 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" suppressHydrationWarning>
+      <head>
+        {/* Remove any manual preload tags for fonts */}
+      </head>
       <body className={`${inter.className} min-h-screen flex flex-col`}>
         <ThemeProvider
           attribute="class"
