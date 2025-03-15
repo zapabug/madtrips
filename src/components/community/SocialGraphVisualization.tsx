@@ -1,3 +1,5 @@
+'use client';
+
 import React, { useEffect, useRef, useState } from 'react';
 import * as d3 from 'd3';
 import { NodeType, VISUALIZATION_CONFIG } from '@/lib/nostr/config';
@@ -34,9 +36,12 @@ interface ProcessedGraphData {
 }
 
 interface SocialGraphVisualizationProps {
-  width?: number;
-  height?: number;
-  className?: string;
+  data: {
+    nodes: any[];
+    links: any[];
+  };
+  width: number;
+  height: number;
 }
 
 // Function to convert raw social graph data to the format needed for D3
@@ -125,290 +130,142 @@ function processGraphData(rawData: any): ProcessedGraphData {
   return { nodes, links };
 }
 
-export function SocialGraphVisualization({
-  width = 800,
-  height = 600,
-  className = '',
-}: SocialGraphVisualizationProps) {
-  const svgRef = useRef<SVGSVGElement>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [data, setData] = useState<ProcessedGraphData | null>(null);
-  const [profileImages, setProfileImages] = useState<Map<string, string>>(new Map());
-
-  // Fetch profile images for nodes
-  async function fetchProfileImages(nodes: Node[]) {
-    const imageMap = new Map<string, string>();
-    const defaultImage = '/bitcoin-icon.svg'; // Fallback image
-    
-    // For each node, attempt to get the profile image
-    const fetchPromises = nodes.map(async (node) => {
-      try {
-        // Try to fetch from primal.net first (they have good profile pics)
-        const primalUrl = `https://primal.net/api/profile/picture/${node.npub}`;
-        const response = await fetch(primalUrl, {
-          method: 'GET',
-          headers: {
-            'Accept': 'image/webp,image/png,image/jpeg,*/*',
-          },
-          cache: 'force-cache',
-        });
-        
-        if (response.ok) {
-          imageMap.set(node.id, primalUrl);
-          return;
-        }
-        
-        // Try iris.to as fallback
-        const irisUrl = `https://iris.to/api/images/nostr/picture/${node.npub}`;
-        const irisResponse = await fetch(irisUrl, {
-          method: 'HEAD',
-          cache: 'force-cache',
-        });
-        
-        if (irisResponse.ok) {
-          imageMap.set(node.id, irisUrl);
-          return;
-        }
-        
-        // Use default image if both fail
-        imageMap.set(node.id, defaultImage);
-      } catch (error) {
-        console.error(`Error fetching profile image for ${node.npub}:`, error);
-        imageMap.set(node.id, defaultImage);
-      }
-    });
-    
-    // Wait for all fetches to complete
-    await Promise.allSettled(fetchPromises);
-    return imageMap;
+// Add debug log helper
+const DEBUG = true;
+function debugLog(...args: any[]) {
+  if (DEBUG) {
+    console.log('[SocialGraphViz]', ...args);
   }
+}
 
-  // Fetch social graph data
+export function SocialGraphVisualization({ data, width, height }: SocialGraphVisualizationProps) {
+  const svgRef = useRef<SVGSVGElement>(null);
+
   useEffect(() => {
-    async function fetchData() {
-      try {
-        setLoading(true);
-        const response = await fetch('/api/socialgraph');
-        if (!response.ok) {
-          throw new Error('Failed to fetch social graph data');
-        }
-        const rawData = await response.json();
-        
-        // Process the raw data into the format needed for D3
-        const processedData = processGraphData(rawData);
-        setData(processedData);
-        
-        // Fetch profile images for the nodes
-        if (processedData.nodes.length > 0) {
-          const imageMap = await fetchProfileImages(processedData.nodes);
-          setProfileImages(imageMap);
-        }
-        
-        setError(null);
-      } catch (err) {
-        console.error('Error fetching social graph:', err);
-        setError(err instanceof Error ? err.message : 'Unknown error');
-      } finally {
-        setLoading(false);
-      }
-    }
+    if (!svgRef.current || !data.nodes.length) return;
 
-    fetchData();
-  }, []);
-
-  // Create or update visualization when data changes
-  useEffect(() => {
-    if (!data || !svgRef.current || data.nodes.length === 0) return;
-
-    // Clear previous visualization
+    // Clear existing SVG content
     d3.select(svgRef.current).selectAll('*').remove();
 
-    const svg = d3.select(svgRef.current)
-      .attr('viewBox', `0 0 ${width} ${height}`)
-      .attr('width', '100%')
-      .attr('height', '100%');
+    // Create SVG
+    const svg = d3.select(svgRef.current);
 
-    // Create a container group
+    // Add zoom behavior
+    const zoom = d3.zoom()
+      .extent([[0, 0], [width, height]])
+      .scaleExtent([0.1, 4])
+      .on('zoom', (event) => g.attr('transform', event.transform));
+
+    svg.call(zoom as any);
+
+    // Create main group for zoom
     const g = svg.append('g');
-    
-    // Create defs for image patterns
-    const defs = svg.append('defs');
-    
-    // Create patterns for each node's profile image
-    data.nodes.forEach(node => {
-      const imageUrl = profileImages.get(node.id) || '/bitcoin-icon.svg';
-      
-      defs.append('pattern')
-        .attr('id', `image-${node.id}`)
-        .attr('width', 1)
-        .attr('height', 1)
-        .attr('patternUnits', 'objectBoundingBox')
-        .append('image')
-        .attr('href', imageUrl)
-        .attr('width', node.type === NodeType.CORE ? 
-          VISUALIZATION_CONFIG.coreNodeSize * 2 : 
-          VISUALIZATION_CONFIG.defaultNodeSize * 2)
-        .attr('height', node.type === NodeType.CORE ? 
-          VISUALIZATION_CONFIG.coreNodeSize * 2 : 
-          VISUALIZATION_CONFIG.defaultNodeSize * 2)
-        .attr('preserveAspectRatio', 'xMidYMid slice');
-    });
 
-    // Define forces
-    const simulation = d3.forceSimulation(data.nodes as d3.SimulationNodeDatum[])
+    // Create the force simulation
+    const simulation = d3.forceSimulation(data.nodes)
       .force('link', d3.forceLink(data.links)
         .id((d: any) => d.id)
-        .distance(VISUALIZATION_CONFIG.linkDistance)
-        .strength(VISUALIZATION_CONFIG.linkStrength))
-      .force('charge', d3.forceManyBody().strength(-100))
+        .distance(100))
+      .force('charge', d3.forceManyBody()
+        .strength(-300))
       .force('center', d3.forceCenter(width / 2, height / 2))
       .force('collision', d3.forceCollide().radius(30));
 
-    // Add zoom functionality
-    const zoom = d3.zoom<SVGSVGElement, unknown>()
-      .scaleExtent([0.1, 4])
-      .on('zoom', (event) => {
-        g.attr('transform', event.transform);
-      });
-
-    svg.call(zoom);
-
     // Create links
-    const link = g.append('g')
-      .attr('class', 'links')
+    const links = g.append('g')
       .selectAll('line')
       .data(data.links)
-      .enter().append('line')
-      .attr('stroke-width', d => Math.sqrt(d.value))
+      .join('line')
       .attr('stroke', '#999')
-      .attr('stroke-opacity', 0.6);
+      .attr('stroke-opacity', 0.6)
+      .attr('stroke-width', 1);
 
-    // Create node groups
-    const node = g.append('g')
-      .attr('class', 'nodes')
-      .selectAll('.node')
+    // Create nodes
+    const nodes = g.append('g')
+      .selectAll('g')
       .data(data.nodes)
-      .enter().append('g')
+      .join('g')
       .attr('class', 'node')
-      .call(d3.drag<any, any>()
+      .call(d3.drag()
         .on('start', dragstarted)
         .on('drag', dragged)
         .on('end', dragended));
 
-    // Add circles to nodes with profile images
-    node.append('circle')
-      .attr('r', d => d.type === NodeType.CORE ? 
-        VISUALIZATION_CONFIG.coreNodeSize : 
-        VISUALIZATION_CONFIG.defaultNodeSize)
-      .attr('fill', d => `url(#image-${d.id})`) // Use image pattern
-      .attr('stroke', d => {
-        // Color border based on node type
-        switch(d.type) {
-          case NodeType.CORE:
-            return VISUALIZATION_CONFIG.coreNodeColor;
-          case NodeType.FOLLOWER:
-            return VISUALIZATION_CONFIG.followerNodeColor;
-          case NodeType.FOLLOWING:
-            return VISUALIZATION_CONFIG.followingNodeColor;
-          case NodeType.MUTUAL:
-            return VISUALIZATION_CONFIG.mutualNodeColor;
-          default:
-            return '#999';
-        }
-      })
-      .attr('stroke-width', 2);
+    // Add circles to nodes
+    nodes.append('circle')
+      .attr('r', 8)
+      .attr('fill', (d: any) => getNodeColor(d))
+      .attr('stroke', '#fff')
+      .attr('stroke-width', 1.5);
 
     // Add labels to nodes
-    node.append('text')
-      .attr('dx', 12)
-      .attr('dy', '.35em')
-      .text(d => d.name || d.npub.substring(0, 8) + '...')
-      .attr('font-size', '10px')
-      .attr('fill', 'currentColor');
+    nodes.append('text')
+      .text((d: any) => d.name || d.id.slice(0, 8))
+      .attr('x', 12)
+      .attr('y', 4)
+      .attr('class', 'text-sm fill-current')
+      .style('pointer-events', 'none');
 
-    // Add tooltips
-    node.append('title')
-      .text(d => `${d.name || d.npub}\nType: ${d.type}`);
+    // Add titles for hover
+    nodes.append('title')
+      .text((d: any) => d.name || d.id);
 
     // Update positions on simulation tick
     simulation.on('tick', () => {
-      link
-        .attr('x1', d => (d.source as any).x)
-        .attr('y1', d => (d.source as any).y)
-        .attr('x2', d => (d.target as any).x)
-        .attr('y2', d => (d.target as any).y);
+      links
+        .attr('x1', (d: any) => d.source.x)
+        .attr('y1', (d: any) => d.source.y)
+        .attr('x2', (d: any) => d.target.x)
+        .attr('y2', (d: any) => d.target.y);
 
-      node
-        .attr('transform', d => `translate(${d.x || 0},${d.y || 0})`);
+      nodes.attr('transform', (d: any) => `translate(${d.x},${d.y})`);
     });
 
     // Drag functions
-    function dragstarted(event: any, d: any) {
+    function dragstarted(event: any) {
       if (!event.active) simulation.alphaTarget(0.3).restart();
-      d.fx = d.x;
-      d.fy = d.y;
+      event.subject.fx = event.subject.x;
+      event.subject.fy = event.subject.y;
     }
 
-    function dragged(event: any, d: any) {
-      d.fx = event.x;
-      d.fy = event.y;
+    function dragged(event: any) {
+      event.subject.fx = event.x;
+      event.subject.fy = event.y;
     }
 
-    function dragended(event: any, d: any) {
+    function dragended(event: any) {
       if (!event.active) simulation.alphaTarget(0);
-      d.fx = null;
-      d.fy = null;
+      event.subject.fx = null;
+      event.subject.fy = null;
+    }
+
+    // Node color based on type
+    function getNodeColor(node: any) {
+      switch (node.type) {
+        case 'freeMadeira':
+          return '#4CAF50';  // Green
+        case 'agency':
+          return '#2196F3';  // Blue
+        case 'core':
+          return '#FFC107';  // Amber
+        case 'follower':
+          return '#9C27B0';  // Purple
+        default:
+          return '#E91E63';  // Pink
+      }
     }
 
     // Cleanup
     return () => {
       simulation.stop();
     };
-  }, [data, profileImages, width, height]);
-
-  if (loading) {
-    return (
-      <div className={`flex items-center justify-center ${className}`} style={{ width, height }}>
-        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-purple-500"></div>
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className={`flex items-center justify-center ${className}`} style={{ width, height }}>
-        <div className="text-red-500 text-center">
-          <p className="text-lg font-semibold">Error loading social graph</p>
-          <p className="text-sm">{error}</p>
-          <button 
-            className="mt-3 px-4 py-2 bg-purple-500 text-white rounded-md hover:bg-purple-600"
-            onClick={() => window.location.reload()}
-          >
-            Retry
-          </button>
-        </div>
-      </div>
-    );
-  }
-  
-  if (data && data.nodes.length === 0) {
-    return (
-      <div className={`flex items-center justify-center ${className}`} style={{ width, height }}>
-        <div className="text-center">
-          <p className="text-lg font-semibold">No social graph data available</p>
-          <p className="text-sm">Try updating the data or check back later.</p>
-        </div>
-      </div>
-    );
-  }
+  }, [data, width, height]);
 
   return (
-    <svg 
+    <div 
       ref={svgRef} 
-      className={`w-full h-full ${className}`}
-      width={width}
-      height={height}
+      className="w-full h-full bg-background"
+      style={{ touchAction: 'none' }} // Prevents touch scrolling issues
     />
   );
 } 

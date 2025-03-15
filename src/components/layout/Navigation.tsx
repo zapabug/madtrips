@@ -117,8 +117,8 @@ export function Navigation() {
     <nav className="bg-white dark:bg-gray-800 shadow-md border-b border-sand dark:border-gray-700 fixed top-0 left-0 right-0 z-30">
       <div className="container mx-auto px-4">
         <div className="flex justify-between h-auto py-2">
-          <div className="flex items-center">
-            <div className="flex-shrink-0 flex items-center">
+          <div className="flex-1 flex justify-between items-center">
+            <div className="flex-shrink-0">
               <Link href="/" className="flex items-center text-xl font-bold text-ocean dark:text-bitcoin hover:text-bitcoin transition-colors group">
                 <NostrProfileHeader 
                   npub={MADTRIPS_NPUB} 
@@ -127,6 +127,7 @@ export function Navigation() {
                 />
               </Link>
             </div>
+
             <div className="hidden sm:ml-6 sm:flex sm:space-x-8 sm:items-center">
               {navigation.map((item) => (
                 <div key={item.name} className="relative group">
@@ -201,11 +202,8 @@ export function Navigation() {
                 </div>
               ))}
             </div>
-          </div>
-          
-          <div className="flex items-center space-x-4">
-            {/* Mobile menu button */}
-            <div className="flex items-center sm:hidden">
+
+            <div className="sm:hidden">
               <button
                 type="button"
                 className="inline-flex items-center justify-center p-2 rounded-md text-forest dark:text-gray-300 hover:text-bitcoin dark:hover:text-bitcoin hover:bg-sand/20 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-bitcoin"
@@ -214,7 +212,6 @@ export function Navigation() {
                 onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
               >
                 <span className="sr-only">Open main menu</span>
-                {/* Icon when menu is closed */}
                 <svg
                   className={`${mobileMenuOpen ? 'hidden' : 'block'} h-6 w-6`}
                   xmlns="http://www.w3.org/2000/svg"
@@ -225,7 +222,6 @@ export function Navigation() {
                 >
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
                 </svg>
-                {/* Icon when menu is open */}
                 <svg
                   className={`${mobileMenuOpen ? 'block' : 'hidden'} h-6 w-6`}
                   xmlns="http://www.w3.org/2000/svg"
@@ -242,16 +238,15 @@ export function Navigation() {
         </div>
       </div>
 
-      {/* Mobile menu */}
       {mobileMenuOpen && (
-        <div className="sm:hidden" id="mobile-menu">
-          <div className="pt-2 pb-3 space-y-1">
+        <div className="sm:hidden border-t border-sand/20 dark:border-gray-700" id="mobile-menu">
+          <div className="py-2 space-y-1 bg-white dark:bg-gray-800">
             {navigation.map((item) => (
               <div key={item.name}>
                 {item.submenu ? (
                   <>
                     <button
-                      className={`w-full flex justify-between items-center py-2 pl-3 pr-4 text-base font-medium ${
+                      className={`w-full flex justify-between items-center py-3 px-4 text-base font-medium ${
                         isActive(item)
                           ? 'bg-bitcoin/10 dark:bg-bitcoin/20 text-bitcoin'
                           : 'text-forest dark:text-gray-300 hover:bg-sand/10 dark:hover:bg-gray-700 hover:text-bitcoin'
@@ -270,12 +265,12 @@ export function Navigation() {
                     </button>
                     
                     {openSubmenu === item.name && (
-                      <div className="pl-4">
+                      <div className="bg-sand/5 dark:bg-gray-700/50">
                         {item.submenu.map((subitem) => (
                           <Link
                             key={subitem.name}
                             href={subitem.href}
-                            className={`block py-2 pl-3 pr-4 text-base font-medium ${
+                            className={`block py-3 px-8 text-base font-medium ${
                               pathname === subitem.href
                                 ? 'bg-bitcoin/10 dark:bg-bitcoin/20 text-bitcoin'
                                 : 'text-forest dark:text-gray-300 hover:bg-sand/10 dark:hover:bg-gray-700 hover:text-bitcoin'
@@ -291,7 +286,7 @@ export function Navigation() {
                 ) : (
                   <Link
                     href={item.href}
-                    className={`block py-2 pl-3 pr-4 text-base font-medium ${
+                    className={`block py-3 px-4 text-base font-medium ${
                       isActive(item)
                         ? 'bg-bitcoin/10 dark:bg-bitcoin/20 text-bitcoin'
                         : 'text-forest dark:text-gray-300 hover:bg-sand/10 dark:hover:bg-gray-700 hover:text-bitcoin'

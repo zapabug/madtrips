@@ -1,3 +1,5 @@
 {
-  "/community/page": "app/community/page.js"
+  "/api/socialgraph/route": "app/api/socialgraph/route.js",
+  "/community/page": "app/community/page.js",
+  "/admin/socialgraph/page": "app/admin/socialgraph/page.js"
 }
