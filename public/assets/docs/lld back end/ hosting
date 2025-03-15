@@ -1,0 +1,193 @@
+### **Low-Level Design (LLD) & Step-by-Step Build Guide for MadTrips Backend** 🚀  
+
+Now that we have the **HLD**, let's break it down into **specific components, APIs, and the exact steps** to build a **smooth** and **scalable** backend using **Bun + Node.js + Express + Blossom + Nsite + LNBits**.  
+
+---
+
+## **1️⃣ Tech Stack Breakdown**  
+
+| **Component**         | **Tech/Service**              | **Purpose** |
+|----------------------|-----------------------------|-------------|
+| **Runtime**         | Bun                           | Fast, modern JS runtime |
+| **Backend Framework** | Express.js (or Fastify)      | REST API |
+| **Database**        | Blossom (Nostr-based DB)     | Decentralized data storage |
+| **Auth**            | Nostr (Pubkey-based)         | Secure, decentralized login |
+| **Payments**        | LNBits / BTCPay / LNURL      | Bitcoin Lightning & on-chain |
+| **Hosting**         | Nsite (Nostr static hosting) | Decentralized deployment |
+
+---
+
+## **2️⃣ System Components & Data Flow**  
+
+### **1. User Authentication (Nostr Pubkey-Based)**
+- Users authenticate using **NIP-07 (browser extension) or NIP-98 (delegated signing)**
+- No passwords—users sign messages with **Nostr private keys**
+- Backend verifies **signed messages** and stores minimal user metadata in **Blossom**
+
+### **2. Booking & Payments**
+- Users select **a travel package or service**
+- System generates **LNURL-pay / Lightning Invoice**
+- On payment success:
+  ✅ Booking is recorded in **Blossom**  
+  ✅ Confirmation is sent via **Nostr DM or email**  
+
+### **3. Business Directory & Live Map**
+- Businesses submit **Nostr events** with:
+  ✅ Name, location, services, payment options  
+  ✅ Accepts Bitcoin? (Yes/No)  
+- Data is stored in **Blossom** and dynamically fetched  
+
+### **4. Custom Requests & BTC-to-Fiat Exchange**
+- Users can **request custom services** via Nostr DM  
+- Fiat exchanges are handled manually through trusted **peer-to-peer** BTC traders  
+
+---
+
+## **3️⃣ Step-by-Step Build Guide** 🏗️  
+
+### **🔹 Step 1: Setup Bun + Node.js + Express**  
+1️⃣ Install Bun  
+```sh
+curl -fsSL https://bun.sh/install | bash
+```
+2️⃣ Create the project  
+```sh
+mkdir madtrips-backend && cd madtrips-backend
+bun init
+```
+3️⃣ Install dependencies  
+```sh
+bun add express dotenv cors nostr-tools blossom-sdk lnurl
+```
+4️⃣ Create `index.ts`  
+```ts
+import express from "express";
+import cors from "cors";
+import { generatePrivateKey, getPublicKey } from "nostr-tools";
+
+const app = express();
+app.use(cors());
+app.use(express.json());
+
+app.get("/", (req, res) => {
+  res.send("MadTrips Backend Running");
+});
+
+app.listen(3000, () => {
+  console.log("Server running on http://localhost:3000");
+});
+```
+5️⃣ Run the server  
+```sh
+bun run index.ts
+```
+
+---
+
+### **🔹 Step 2: Implement Nostr Authentication**  
+1️⃣ **Create an Auth API** in `auth.ts`:  
+```ts
+import { verifyEvent, getPublicKey } from "nostr-tools";
+
+export function verifyNostrSignature(event) {
+    return verifyEvent(event);
+}
+
+export function getUserPubkey(event) {
+    return getPublicKey(event.sig);
+}
+```
+2️⃣ **Add login route in `index.ts`**  
+```ts
+app.post("/login", (req, res) => {
+    const { event } = req.body;
+    if (!verifyNostrSignature(event)) return res.status(400).send("Invalid signature");
+
+    const pubkey = getUserPubkey(event);
+    res.send({ pubkey });
+});
+```
+
+---
+
+### **🔹 Step 3: Store Data in Blossom (Decentralized DB)**  
+1️⃣ **Connect to Blossom**  
+```sh
+bun add @blossomdb/sdk
+```
+2️⃣ **Create `database.ts`**  
+```ts
+import { BlossomDB } from "@blossomdb/sdk";
+
+const db = new BlossomDB("https://your-blossom-instance");
+export default db;
+```
+3️⃣ **Store a new booking**  
+```ts
+app.post("/bookings", async (req, res) => {
+    const { pubkey, packageId, amount } = req.body;
+
+    await db.put(`booking-${pubkey}-${Date.now()}`, { pubkey, packageId, amount, status: "pending" });
+
+    res.send({ message: "Booking saved!" });
+});
+```
+
+---
+
+### **🔹 Step 4: Integrate Lightning Payments (LNBits / BTCPay / LNURL)**  
+1️⃣ **Create `payments.ts`**  
+```ts
+import axios from "axios";
+
+const LNBits_API = "https://your-lnbits-instance/api";
+
+export async function createInvoice(amount, memo) {
+    const response = await axios.post(`${LNBits_API}/create_invoice`, {
+        amount,
+        memo,
+    });
+    return response.data.payment_request;
+}
+```
+2️⃣ **Add route to generate invoice**  
+```ts
+app.post("/pay", async (req, res) => {
+    const { amount, memo } = req.body;
+    const invoice = await createInvoice(amount, memo);
+    res.send({ invoice });
+});
+```
+3️⃣ **Verify payment status (LNBits Webhook)**  
+```ts
+app.post("/payment-callback", async (req, res) => {
+    const { payment_hash, status } = req.body;
+    if (status === "paid") {
+        await db.put(`payment-${payment_hash}`, { status: "confirmed" });
+        res.send({ message: "Payment received!" });
+    }
+});
+```
+
+---
+
+### **🔹 Step 5: Deploy on Nsite (Decentralized Hosting via Nostr)**  
+1️⃣ Install Nsite CLI  
+```sh
+npm install -g @nsite/cli
+```
+2️⃣ Package and deploy  
+```sh
+nsite deploy ./madtrips-backend
+```
+3️⃣ Share your **Nostr relay URL** for users to access the service!
+
+---
+
+## **4️⃣ Next Steps** 🚀  
+✅ **Run local tests** (Login, Booking, Payments)  
+✅ **Ensure Blossom DB syncs properly**  
+✅ **Connect to a Bitcoin Lightning wallet for real payments**  
+✅ **Deploy on Nsite and test from Nostr clients**  
+
+🔥 **Do you need help setting up Blossom or choosing an LN service?**

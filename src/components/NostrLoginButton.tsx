@@ -1,192 +1,160 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import Image from 'next/image';
-import { useNostrAuth, TrustLevel } from '@/lib/nostr/NostrAuthProvider';
 
-interface NostrLoginButtonProps {
-  className?: string;
+// Add TypeScript declaration for window.nostr
+declare global {
+  interface Window {
+    nostr?: {
+      getPublicKey: () => Promise<string>;
+      signEvent: (event: any) => Promise<any>;
+      // Add other nostr methods as needed
+    };
+  }
 }
 
-export const NostrLoginButton: React.FC<NostrLoginButtonProps> = ({ className = '' }) => {
-  const { isConnected, user, login, logout, checkTrustLevel } = useNostrAuth();
-  const [isLoading, setIsLoading] = useState(false);
+interface NostrLoginButtonProps {
+  onLogin?: (npub: string) => void;
+}
 
-  const handleAuth = async () => {
-    if (isConnected) {
-      logout();
-    } else {
-      try {
-        setIsLoading(true);
-        await login();
-      } catch (error) {
-        console.error('Login failed:', error);
-      } finally {
+export const NostrLoginButton: React.FC<NostrLoginButtonProps> = ({ 
+  onLogin,
+}) => {
+  const [npub, setNpub] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [isOpen, setIsOpen] = useState(false);
+
+  useEffect(() => {
+    // Listen for auth event
+    const handleNostrAuth = (event: CustomEvent) => {
+      if (event.detail.type === 'login' || event.detail.type === 'signup') {
+        const userNpub = event.detail.npub;
+        setNpub(userNpub);
         setIsLoading(false);
+        if (onLogin) onLogin(userNpub);
+        console.log('User logged in with npub:', userNpub);
+      } else if (event.detail.type === 'logout') {
+        setNpub(null);
       }
+    };
+
+    // Listen for login failures
+    const handleNostrLoginFail = () => {
+      setIsLoading(false);
+      console.log('Nostr login failed or was canceled');
+    };
+
+    // Add event listeners
+    document.addEventListener('nlAuth' as any, handleNostrAuth);
+    document.addEventListener('nlFail' as any, handleNostrLoginFail);
+
+    // Check if user is already logged in with window.nostr
+    const checkExistingSession = () => {
+      if (typeof window !== 'undefined' && window.nostr) {
+        try {
+          window.nostr.getPublicKey().then((publicKey: string) => {
+            if (publicKey) {
+              const npub = publicKey; // In a real app, you might need to encode this to npub
+              setNpub(npub);
+            }
+          }).catch(() => {
+            // Not logged in or getPublicKey isn't available
+          });
+        } catch (e) {
+          // nostr object exists but getPublicKey isn't a function
+        }
+      }
+    };
+
+    checkExistingSession();
+
+    // Remove event listeners on cleanup
+    return () => {
+      document.removeEventListener('nlAuth' as any, handleNostrAuth);
+      document.removeEventListener('nlFail' as any, handleNostrLoginFail);
+    };
+  }, [onLogin]);
+
+  const handleLogin = () => {
+    if (typeof window !== 'undefined') {
+      setIsLoading(true);
+      
+      // Dispatch the nlLaunch event to trigger the login flow
+      document.dispatchEvent(new CustomEvent('nlLaunch', { detail: 'welcome' }));
+      
+      setIsOpen(false); // Close the menu
+    }
+  };
+
+  const handleLogout = () => {
+    if (typeof window !== 'undefined') {
+      // Dispatch logout event
+      document.dispatchEvent(new Event('nlLogout'));
+      setNpub(null);
+      setIsOpen(false); // Close the menu
     }
   };
 
   return (
-    <div className={`flex items-center ${className}`}>
-      {isConnected && user ? (
-        <div className="flex items-center space-x-2">
-          <NostrUserProfile user={user} />
-          <button
-            onClick={handleAuth}
-            className="text-xs text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300"
-          >
-            Disconnect
-          </button>
-        </div>
-      ) : (
-        <button
-          onClick={handleAuth}
-          disabled={isLoading}
-          className={`flex items-center space-x-1 px-3 py-1.5 rounded-md ${
-            isLoading 
-              ? 'bg-gray-200 cursor-wait' 
-              : 'bg-[#F7931A] hover:bg-[#F7931A]/90'
-          } text-white transition-colors`}
+    <>
+      {/* Floating button */}
+      <div className="fixed bottom-6 right-6 z-50">
+        <button 
+          onClick={() => setIsOpen(!isOpen)}
+          className="h-12 w-12 rounded-full shadow-lg hover:shadow-xl focus:outline-none transform transition-transform hover:scale-110 active:scale-95"
+          aria-label="Nostr Login"
         >
-          {isLoading ? (
-            <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-          ) : (
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4">
-              <path d="M12 22C6.5 22 2 17.5 2 12S6.5 2 12 2s10 4.5 10 10-4.5 10-10 10z" />
-              <path d="M12 16v-4" />
-              <path d="M12 8h.01" />
-            </svg>
-          )}
-          <span className="text-sm font-medium">
-            {isLoading ? 'Connecting...' : 'Connect with Nostr'}
-          </span>
+          <img 
+            src="https://camo.githubusercontent.com/8fc030d170b472876019dc1ff3b0b67d925034c8d441e6709bbb0a0631904b5b/68747470733a2f2f6e6f7374722e6275696c642f692f6e6f7374722e6275696c645f633538646131626162343238653766313835393664376562383062303536633530666239623939383535326261336230373764656532613163316538373066642e676966" 
+            alt="Nostr" 
+            className="h-full w-full rounded-full" 
+          />
         </button>
-      )}
-    </div>
-  );
-};
-
-interface NostrUserProfileProps {
-  user: {
-    pubkey: string;
-    npub: string;
-    name?: string;
-    profileImage?: string;
-  };
-}
-
-export const NostrUserProfile: React.FC<NostrUserProfileProps> = ({ user }) => {
-  const { checkTrustLevel } = useNostrAuth();
-  const trustLevel = checkTrustLevel(user.npub);
-  
-  // Shorten npub for display
-  const shortenNpub = (npub: string) => {
-    if (!npub) return "";
-    return npub.substring(0, 6) + "..." + npub.substring(npub.length - 4);
-  };
-
-  return (
-    <div className="flex items-center space-x-2">
-      <div className="relative">
-        <Image
-          src={user.profileImage || getDefaultProfileImage(user.npub)}
-          alt={user.name || 'Nostr user'}
-          width={28}
-          height={28}
-          className="rounded-full"
-        />
-        <div className="absolute -bottom-1 -right-1">
-          <TrustBadge npub={user.npub} />
-        </div>
+        
+        {/* Dropdown menu */}
+        {isOpen && (
+          <div className="absolute bottom-16 right-0 bg-white dark:bg-gray-800 rounded-lg shadow-xl p-4 w-48 border border-gray-200 dark:border-gray-700">
+            {npub ? (
+              <div className="space-y-3">
+                <div className="text-sm text-gray-700 dark:text-gray-300">
+                  <span className="font-medium">Logged in as:</span>
+                  <div className="mt-1 font-mono text-xs truncate text-bitcoin">
+                    {npub.substring(0, 8)}...{npub.substring(npub.length - 4)}
+                  </div>
+                </div>
+                <button
+                  onClick={handleLogout}
+                  className="w-full bg-[#F7931A] hover:bg-[#F7931A]/80 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors"
+                >
+                  Logout
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={handleLogin}
+                disabled={isLoading}
+                className="w-full bg-[#F7931A] hover:bg-[#F7931A]/80 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors flex items-center justify-center"
+              >
+                {isLoading ? (
+                  <span className="animate-pulse">Connecting...</span>
+                ) : (
+                  <span>Login with Nostr</span>
+                )}
+              </button>
+            )}
+          </div>
+        )}
       </div>
-      <div>
-        <p className="text-sm font-medium dark:text-white">
-          {user.name || shortenNpub(user.npub)}
-        </p>
-      </div>
-    </div>
-  );
-};
-
-interface TrustBadgeProps {
-  npub: string;
-  size?: 'sm' | 'md';
-}
-
-export const TrustBadge: React.FC<TrustBadgeProps> = ({ npub, size = 'sm' }) => {
-  const { checkTrustLevel, isConnected } = useNostrAuth();
-  const [trustLevel, setTrustLevel] = useState<TrustLevel>(TrustLevel.UNKNOWN);
-  const [loading, setLoading] = useState(true);
-  
-  useEffect(() => {
-    const getTrustLevel = async () => {
-      if (!isConnected || !npub) return;
       
-      try {
-        const level = await checkTrustLevel(npub);
-        setTrustLevel(level);
-      } catch (err) {
-        console.error('Error checking trust level:', err);
-      } finally {
-        setLoading(false);
-      }
-    };
-    
-    getTrustLevel();
-  }, [npub, checkTrustLevel, isConnected]);
-  
-  if (!isConnected || loading) return null;
-  
-  if (trustLevel === TrustLevel.UNKNOWN) return null;
-  
-  const sizeClass = size === 'sm' ? 'w-4 h-4' : 'w-5 h-5';
-  
-  let badgeColor = '';
-  let tooltip = '';
-  
-  switch (trustLevel) {
-    case TrustLevel.VERIFIED:
-      badgeColor = 'bg-purple-500';
-      tooltip = 'Core Community Member';
-      break;
-    case TrustLevel.HIGH:
-      badgeColor = 'bg-green-500';
-      tooltip = 'Directly Connected';
-      break;
-    case TrustLevel.MEDIUM:
-      badgeColor = 'bg-blue-500';
-      tooltip = 'Indirectly Connected';
-      break;
-    case TrustLevel.LOW:
-      badgeColor = 'bg-yellow-500';
-      tooltip = 'Weakly Connected';
-      break;
-    default:
-      return null;
-  }
-  
-  return (
-    <div className="relative group">
-      <div className={`${sizeClass} ${badgeColor} rounded-full border border-white`}></div>
-      <div className="absolute bottom-full mb-1 left-1/2 transform -translate-x-1/2 hidden group-hover:block bg-black text-white text-xs py-1 px-2 rounded whitespace-nowrap">
-        {tooltip}
-      </div>
-    </div>
+      {/* Click-away listener */}
+      {isOpen && (
+        <div 
+          className="fixed inset-0 z-40" 
+          onClick={() => setIsOpen(false)}
+          aria-hidden="true"
+        />
+      )}
+    </>
   );
-};
-
-// Helper function to generate default profile image
-function getDefaultProfileImage(npub: string): string {
-  // Generate a color based on the npub hash
-  const hash = npub.split('').reduce((acc, char) => {
-    return char.charCodeAt(0) + ((acc << 5) - acc);
-  }, 0);
-  
-  const color = `hsl(${Math.abs(hash) % 360}, 70%, 60%)`;
-  
-  // Create a data URI for a colored circle with the first letter
-  const firstLetter = (npub.replace('npub1', '') || 'N').charAt(0).toUpperCase();
-  
-  return `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40"><circle cx="20" cy="20" r="20" fill="${color}"/><text x="20" y="25" font-family="Arial" font-size="16" fill="white" text-anchor="middle">${firstLetter}</text></svg>`;
-} 
+}; 

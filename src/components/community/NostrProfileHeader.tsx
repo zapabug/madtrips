@@ -174,7 +174,7 @@ export function NostrProfileHeader({ npub, className = '', showImage = false }: 
           )}
         </div>
       )}
-      <span className="truncate max-w-[120px] md:max-w-none">{loading ? 'Loading...' : error ? 'MadTrips' : name}</span>
+      <span className="truncate max-w-[150px] sm:max-w-[180px] md:max-w-none">{loading ? 'Loading...' : error ? 'MadTrips' : name}</span>
     </div>
   )
 } 
