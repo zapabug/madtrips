@@ -131,23 +131,13 @@ export default function RootLayout({
           data-no-banner="true"
           data-no-embed-info="true"
           data-custom-login-button-id="nl-custom-trigger"
-          data-start-screen="login"
+          data-start-screen="welcome-login"
           strategy="afterInteractive"
         />
         
         {/* Custom script to ensure proper integration */}
         <Script id="nostr-login-custom-integration" strategy="afterInteractive">
           {`
-            // Add TypeScript declaration for window.NostrLogin
-            declare global {
-              interface Window {
-                NostrLogin?: {
-                  getProfile?: (npub: string) => { picture?: string, name?: string, [key: string]: any } | null;
-                  [key: string]: any;
-                };
-              }
-            }
-            
             document.addEventListener('DOMContentLoaded', function() {
               // Make sure the Nostr Login library is fully loaded
               setTimeout(() => {
@@ -156,11 +146,11 @@ export default function RootLayout({
                 console.log('Nostr Login integration initialized');
                 
                 // Modify the login flow to skip intermediate screens
-                const originalLaunch = window.NostrLogin && window.NostrLogin.launch;
-                if (window.NostrLogin && originalLaunch) {
+                if (window.NostrLogin && window.NostrLogin.launch) {
+                  const originalLaunch = window.NostrLogin.launch;
                   window.NostrLogin.launch = function(opts) {
-                    // Always direct to login screen with options
-                    const newOpts = { ...opts, startScreen: 'login' };
+                    // Always direct to the welcome-login screen with all options
+                    const newOpts = Object.assign({}, opts, {startScreen: 'welcome-login'});
                     return originalLaunch(newOpts);
                   };
                 }
@@ -170,25 +160,66 @@ export default function RootLayout({
                   try {
                     console.log('Nostr Login auth event captured:', e.detail);
                     
-                    // If event doesn't have profile picture but we can get it elsewhere
-                    if (e.detail && e.detail.npub && (!e.detail.profile || !e.detail.profile.picture)) {
+                    // Function to find a profile picture from various sources
+                    const findProfilePicture = function(detail) {
+                      if (detail.profile && detail.profile.picture) return detail.profile.picture;
+                      if (detail.picture) return detail.picture;
+                      if (detail.metadata && detail.metadata.picture) return detail.metadata.picture;
+                      if (detail.user && detail.user.picture) return detail.user.picture;
+                      if (detail.user && detail.user.profile && detail.user.profile.picture) return detail.user.profile.picture;
+                      return null;
+                    };
+                    
+                    // Check if we need to enhance the profile data
+                    const profilePic = findProfilePicture(e.detail);
+                    if (!profilePic && e.detail && e.detail.npub) {
                       // Try to get profile data from nostr-login's cache
                       if (window.NostrLogin && window.NostrLogin.getProfile) {
                         const profile = window.NostrLogin.getProfile(e.detail.npub);
                         if (profile && profile.picture) {
                           console.log('Found profile picture from NostrLogin cache');
-                          // Clone the event and add profile data
-                          const newEvent = new CustomEvent('nlAuth', {
-                            detail: {
-                              ...e.detail,
-                              profile: {
-                                ...e.detail.profile,
-                                picture: profile.picture
-                              }
-                            }
-                          });
-                          // Dispatch the enhanced event
+                          
+                          // Create enhanced profile data
+                          const enhancedProfile = Object.assign({}, 
+                            e.detail.profile || {},
+                            { picture: profile.picture }
+                          );
+                          
+                          // Clone the event with enhanced data
+                          const newDetail = Object.assign({}, e.detail, { profile: enhancedProfile });
+                          
+                          // Create and dispatch enhanced event
+                          const newEvent = new CustomEvent('nlAuth', { detail: newDetail });
                           setTimeout(() => document.dispatchEvent(newEvent), 0);
+                        } else {
+                          // Try the avatar service instead of Primal API
+                          console.log('Trying to use avatar.nostr.build service');
+                          
+                          // Create an avatar URL using the npub
+                          const avatarUrl = 'https://avatar.nostr.build/' + e.detail.npub + '.png';
+                          
+                          // Use Image to check if the avatar exists
+                          const img = document.createElement('img');
+                          img.onload = function() {
+                            console.log('Found avatar from nostr.build');
+                            
+                            // Create enhanced profile data with the avatar
+                            const enhancedProfile = Object.assign({}, 
+                              e.detail.profile || {},
+                              { picture: avatarUrl }
+                            );
+                            
+                            // Clone the event with enhanced data
+                            const newDetail = Object.assign({}, e.detail, { profile: enhancedProfile });
+                            
+                            // Create and dispatch enhanced event
+                            const newEvent = new CustomEvent('nlAuth', { detail: newDetail });
+                            setTimeout(() => document.dispatchEvent(newEvent), 0);
+                          };
+                          img.onerror = function() {
+                            console.log('No avatar found for this npub');
+                          };
+                          img.src = avatarUrl;
                         }
                       }
                     }

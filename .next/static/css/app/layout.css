@@ -1183,6 +1183,13 @@ video {
 .border-transparent {
   border-color: transparent;
 }
+.border-white {
+  --tw-border-opacity: 1;
+  border-color: rgb(255 255 255 / var(--tw-border-opacity));
+}
+.border-t-transparent {
+  border-top-color: transparent;
+}
 .bg-\[\#0F4C35\] {
   --tw-bg-opacity: 1;
   background-color: rgb(15 76 53 / var(--tw-bg-opacity));
