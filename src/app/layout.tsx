@@ -4,12 +4,12 @@ import type { Metadata, Viewport } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
 import { Navigation } from "@/components/layout/Navigation";
-import { ThemeProvider } from "@/components/ThemeProvider";
+import { NostrLoginButton } from "@/components/NostrLoginButton";
+import { Providers } from "./providers";
 import { NostrLink } from "@/components/NostrLink";
 import Link from "next/link";
 import Image from "next/image";
 import Script from "next/script";
-import { NostrLoginButton } from "@/components/NostrLoginButton";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -30,13 +30,7 @@ export default function RootLayout({
         {/* Remove any manual preload tags for fonts */}
       </head>
       <body className={`${inter.className} min-h-screen flex flex-col`}>
-        <ThemeProvider
-          attribute="class"
-          defaultTheme="dark"
-          forcedTheme="dark"
-          enableSystem={false}
-          disableTransitionOnChange
-        >
+        <Providers>
           <Navigation />
           <main className="flex-grow bg-gray-900 pt-16">
             {children}
@@ -119,7 +113,7 @@ export default function RootLayout({
           
           {/* Floating Nostr Login Button - This will be our custom UI for Nostr Login */}
           <NostrLoginButton />
-        </ThemeProvider>
+        </Providers>
         
         {/* Nostr Login Script - Now hidden but still providing functionality */}
         <Script

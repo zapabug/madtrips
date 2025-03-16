@@ -15,12 +15,18 @@ export default function PackagesPage() {
     async function fetchPackages() {
       try {
         setLoading(true);
+        console.log('Fetching packages from API...');
         const response = await api.getPackages() as { packages: Package[] };
+        console.log('Packages response:', response);
         setPackages(response.packages);
         setError(null);
       } catch (err) {
         console.error('Error fetching packages:', err);
-        setError('Failed to load packages. Please try again later.');
+        if (err instanceof Error) {
+          setError(`Failed to load packages: ${err.message}`);
+        } else {
+          setError('Failed to load packages. Please try again later.');
+        }
       } finally {
         setLoading(false);
       }

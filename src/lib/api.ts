@@ -1,26 +1,44 @@
 // API utility functions for interacting with backend
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080/api';
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:9090/api';
 
 // Generic fetch function with error handling
 async function fetchAPI<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+  const url = `${API_BASE_URL}${endpoint}`;
+  console.log(`API Request: ${url}`);
+  
   try {
-    const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+    const response = await fetch(url, {
       ...options,
+      mode: 'cors',
+      credentials: 'same-origin',
       headers: {
         'Content-Type': 'application/json',
         ...options.headers,
       },
     });
 
+    console.log(`API Response Status: ${response.status} ${response.statusText}`);
+
     if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.message || 'An error occurred');
+      let errorMessage = `API Error: ${response.status} ${response.statusText}`;
+      try {
+        const error = await response.json();
+        errorMessage = error.message || errorMessage;
+      } catch (parseError) {
+        console.error('Failed to parse error response:', parseError);
+      }
+      throw new Error(errorMessage);
     }
 
-    return await response.json();
+    const data = await response.json();
+    console.log('API Response Data (first few items):', 
+      Array.isArray(data) ? data.slice(0, 2) : 
+      typeof data === 'object' ? Object.keys(data) : data
+    );
+    return data;
   } catch (error) {
-    console.error('API fetch error:', error);
+    console.error(`API Fetch Error for ${url}:`, error);
     throw error;
   }
 }
