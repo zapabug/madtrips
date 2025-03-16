@@ -22,7 +22,6 @@ const BRAND_COLORS = {
   deepBlue: '#1E3A8A',     // Atlantic Ocean
   forestGreen: '#0F4C35',  // Lush landscapes
   lightSand: '#F5E3C3',    // Beach-inspired
-  white: '#FFFFFF',        // Clean, minimal design
 };
 
 // Reintroduce DEFAULT_PROFILE_IMAGE
@@ -99,7 +98,6 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
   const [loadingImages, setLoadingImages] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [useMockData, setUseMockData] = useState(false);
   const { ndk, user, getSocialGraph } = useNostr();
   const containerRef = useRef<HTMLDivElement>(null);
   const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
@@ -285,142 +283,9 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
       const errorMessage = error instanceof Error ? error.message : String(error);
       console.error("Error fetching social graph data:", errorMessage);
       setError(`Failed to fetch social graph: ${errorMessage}`);
-      
-      // Only use mock data in development mode as a fallback
-      if (process.env.NODE_ENV === 'development') {
-        console.warn("Using mock data as fallback in development mode");
-        setGraphData(generateMockData());
-      }
     } finally {
       setIsLoading(false);
     }
-  };
-
-  // Toggle between real and mock data (for development purposes only)
-  const toggleMockData = () => {
-    if (process.env.NODE_ENV !== 'development') {
-      console.warn("Mock data toggle is only available in development mode");
-      return;
-    }
-    
-    setUseMockData(!useMockData);
-    if (!useMockData) {
-      console.log("Switching to mock data");
-      setGraphData(generateMockData());
-    } else {
-      console.log("Switching to real data");
-      fetchNostrData();
-    }
-  };
-
-  // Generate mock data only used as fallback 
-  const generateMockData = (): GraphData => {
-    console.warn("Generating mock data - this should only be used during development");
-    const nodes: GraphNode[] = [];
-    const links: GraphLink[] = [];
-    
-    // Add core NPUBs as nodes
-    for (let i = 0; i < npubs.length; i++) {
-      nodes.push({
-        id: npubs[i],
-        npub: npubs[i],
-        name: getNameForNpub(npubs[i]),
-        displayName: `User ${i + 1}`,
-        picture: getRandomProfilePicture(),
-        isCoreNode: true,
-        nodeType: 'profile',
-        group: 1,
-      });
-    }
-
-    // Generate random connections between nodes
-    for (let i = 0; i < npubs.length; i++) {
-      // For each core NPUB, create some random followers
-      const followerCount = Math.floor(Math.random() * 5) + 3; // Reduce mock data size
-      
-      for (let j = 0; j < followerCount; j++) {
-        const followerNpub = `npub${Math.random().toString(36).substring(2, 15)}`;
-        
-        // Add follower node
-        nodes.push({
-          id: followerNpub,
-          npub: followerNpub,
-          name: `Follower ${j} of ${i}`,
-          displayName: `User ${npubs.length + j}`,
-          picture: getRandomProfilePicture(),
-          isCoreNode: false,
-          nodeType: 'follower',
-          group: 2,
-        });
-        
-        // Add connection from follower to core NPUB
-        links.push({
-          source: followerNpub,
-          target: npubs[i],
-          type: 'follows',
-          value: Math.random() * 2 + 1,
-        });
-      }
-    }
-
-    // Add some connections between core NPUBs
-    for (let i = 0; i < npubs.length; i++) {
-      for (let j = i + 1; j < npubs.length; j++) {
-        if (Math.random() > 0.3) {
-          links.push({
-            source: npubs[i],
-            target: npubs[j],
-            type: 'mutual',
-            value: 3,
-          });
-        }
-      }
-    }
-
-    console.log("Using mock data for social graph visualization - for development only");
-    return { nodes, links };
-  };
-
-  // Get a name for an NPUB (for mocking)
-  const getNameForNpub = (npub: string): string => {
-    // Return specific names for known NPUBs
-    switch (npub) {
-      case "npub1etgqcj9gc6yaxttuwu9eqgs3ynt2dzaudvwnrssrn2zdt2useaasfj8n6e":
-        return "Free Madeira";
-      case "npub1s0veng2gvfwr62acrxhnqexq76sj6ldg3a5t935jy8e6w3shr5vsnwrmq5":
-        return "Bitcoin Madeira";
-      case "npub1dxd02kcjhgpkyrx60qnkd6j42kmc72u5lum0rp2ud8x5zfhnk4zscjj6hh":
-        return "Madtrips";
-      case "npub1funchalx8v747rsee6ahsuyrcd2s3rnxlyrtumfex9lecpmgwars6hq8kc":
-        return "Funchal";
-      default:
-        return `Nostr ${shortenNpub(npub)}`;
-    }
-  };
-
-  // Default profile images for the core NPUBs (fallback)
-  const DEFAULT_PROFILE_IMAGES: Record<string, string> = {
-    "npub1etgqcj9gc6yaxttuwu9eqgs3ynt2dzaudvwnrssrn2zdt2useaasfj8n6e": "https://pbs.twimg.com/profile_images/1651198611996639235/CKc6YTq3_400x400.jpg", // Free Madeira
-    "npub1s0veng2gvfwr62acrxhnqexq76sj6ldg3a5t935jy8e6w3shr5vsnwrmq5": "https://pbs.twimg.com/profile_images/1475551024915496967/FPajZGkw_400x400.jpg", // Bitcoin Madeira
-    "npub1dxd02kcjhgpkyrx60qnkd6j42kmc72u5lum0rp2ud8x5zfhnk4zscjj6hh": "https://pbs.twimg.com/profile_images/1475551024915496967/FPajZGkw_400x400.jpg", // Madtrips
-    "npub1funchalx8v747rsee6ahsuyrcd2s3rnxlyrtumfex9lecpmgwars6hq8kc": "https://cdn.nostr.build/p/X3qn.jpeg", // Funchal
-  };
-
-  // Get a random profile picture for mock followers
-  const getRandomProfilePicture = (): string => {
-    // List of sample profile pictures (using placeholder service)
-    const placeholders = [
-      "https://i.pravatar.cc/150?img=1",
-      "https://i.pravatar.cc/150?img=2",
-      "https://i.pravatar.cc/150?img=3",
-      "https://i.pravatar.cc/150?img=4",
-      "https://i.pravatar.cc/150?img=5",
-      "https://i.pravatar.cc/150?img=6",
-      "https://i.pravatar.cc/150?img=7",
-      "https://i.pravatar.cc/150?img=8"
-    ];
-    
-    return placeholders[Math.floor(Math.random() * placeholders.length)];
   };
 
   // Initialize data on component mount
@@ -479,7 +344,7 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
         nodes: CORE_NPUBS.map(npub => ({
           id: npub,
           npub,
-          name: getNameForNpub(npub),
+          name: shortenNpub(npub),
           isCoreNode: true,
           nodeType: 'profile',
           group: 1,
@@ -519,15 +384,6 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
               </ul>
             </div>
           )}
-          
-          {process.env.NODE_ENV === 'development' && (
-            <button 
-              onClick={() => setGraphData(generateMockData())}
-              className="mt-4 px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-md"
-            >
-              Use Mock Data (Development Only)
-            </button>
-          )}
         </div>
       </div>
     );
@@ -536,10 +392,11 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
   return (
     <div 
       ref={containerRef}
-      className={`social-graph-container ${className} bg-gradient-to-br from-${BRAND_COLORS.deepBlue.substring(1)} to-${BRAND_COLORS.forestGreen.substring(1)} rounded-lg shadow-lg overflow-hidden`}
+      className="social-graph-container rounded-lg shadow-lg overflow-hidden w-full h-full"
       style={{ 
         height: typeof height === 'number' ? `${height}px` : height,
         width: typeof width === 'number' ? `${width}px` : width,
+        background: `linear-gradient(135deg, ${BRAND_COLORS.deepBlue} 0%, ${BRAND_COLORS.forestGreen} 100%)`,
       }}
     >
       <div className="w-full h-full relative">
@@ -558,18 +415,6 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
             </svg>
             {isLoading ? 'Loading...' : 'Reload'}
-          </button>
-          
-          <button 
-            onClick={toggleMockData}
-            className={`px-3 py-1 bg-white/20 hover:bg-white/30 rounded shadow-sm text-sm font-medium border border-gray-200 flex items-center`}
-            aria-label={useMockData ? "Use real data" : "Use mock data"}
-            style={{ color: useMockData ? BRAND_COLORS.lightSand : BRAND_COLORS.bitcoinOrange }}
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-            </svg>
-            {useMockData ? 'Using Mock Data' : 'Using Real Data'}
           </button>
         </div>
 

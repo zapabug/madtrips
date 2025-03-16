@@ -6,6 +6,14 @@ import dynamic from 'next/dynamic'
 // Dynamically import ForceGraph2D with no SSR
 const ForceGraph2D = dynamic(() => import('react-force-graph-2d').then(mod => mod.default), { ssr: false })
 
+// Branding colors
+const BRAND_COLORS = {
+  bitcoinOrange: '#F7931A', // Bitcoin & innovation
+  deepBlue: '#1E3A8A',     // Atlantic Ocean
+  forestGreen: '#0F4C35',  // Lush landscapes
+  lightSand: '#F5E3C3',    // Beach-inspired
+}
+
 // Types for the visualization
 interface Node {
   id: string
@@ -17,6 +25,7 @@ interface Node {
   y?: number
   color?: string
   val?: number
+  isCoreNode?: boolean
 }
 
 interface Link {
@@ -24,6 +33,7 @@ interface Link {
   target: string | { id: string }
   value?: number
   color?: string
+  type?: string
 }
 
 interface SocialGraphVisualizationProps {
@@ -106,15 +116,16 @@ export const SocialGraphVisualization: React.FC<SocialGraphVisualizationProps> =
   return (
     <ForceGraph2D
       graphData={data}
-      nodeColor={(node: any) => node.color || '#1a8bf7'}
-      nodeVal={(node: any) => node.val || 5}
-      linkColor={(link: any) => link.color || '#cccccc'}
+      nodeColor={(node: any) => node.isCoreNode ? BRAND_COLORS.bitcoinOrange : BRAND_COLORS.lightSand}
+      nodeVal={(node: any) => node.isCoreNode ? 10 : 5}
+      linkColor={(link: any) => link.type === 'mutual' ? BRAND_COLORS.forestGreen : '#adb5bd'}
       linkWidth={(link: any) => Math.sqrt(link.value || 1)}
       onNodeClick={handleNodeClick}
       width={width}
       height={height}
+      backgroundColor="transparent"
       nodeCanvasObject={(node: any, ctx: CanvasRenderingContext2D, globalScale: number) => {
-        const nodeSize = node.val || 5
+        const nodeSize = node.isCoreNode ? 10 : 5
         const imageSource = nodeImages.get(node.npub)
         
         // Draw the node - with profile image if available
@@ -139,7 +150,7 @@ export const SocialGraphVisualization: React.FC<SocialGraphVisualizationProps> =
             // Draw a border
             ctx.beginPath()
             ctx.arc(node.x as number, node.y as number, nodeSize, 0, 2 * Math.PI)
-            ctx.strokeStyle = node.color || '#1a8bf7'
+            ctx.strokeStyle = node.isCoreNode ? BRAND_COLORS.bitcoinOrange : BRAND_COLORS.deepBlue
             ctx.lineWidth = 1.5
             ctx.stroke()
             
@@ -148,14 +159,14 @@ export const SocialGraphVisualization: React.FC<SocialGraphVisualizationProps> =
             // Fallback to circle if image drawing fails
             console.warn('Failed to draw node image, falling back to circle', err)
             ctx.beginPath()
-            ctx.fillStyle = node.color || '#1a8bf7'
+            ctx.fillStyle = node.isCoreNode ? BRAND_COLORS.bitcoinOrange : BRAND_COLORS.lightSand
             ctx.arc(node.x as number, node.y as number, nodeSize, 0, 2 * Math.PI)
             ctx.fill()
           }
         } else {
           // Fallback to plain circle if no image
           ctx.beginPath()
-          ctx.fillStyle = node.color || '#1a8bf7'
+          ctx.fillStyle = node.isCoreNode ? BRAND_COLORS.bitcoinOrange : BRAND_COLORS.lightSand
           ctx.arc(node.x as number, node.y as number, nodeSize, 0, 2 * Math.PI)
           ctx.fill()
         }
@@ -166,8 +177,8 @@ export const SocialGraphVisualization: React.FC<SocialGraphVisualizationProps> =
           ctx.font = '8px Arial'
           ctx.textAlign = 'center'
           ctx.textBaseline = 'middle'
-          ctx.fillStyle = '#000'
-          ctx.strokeStyle = '#fff'
+          ctx.fillStyle = BRAND_COLORS.lightSand
+          ctx.strokeStyle = BRAND_COLORS.deepBlue
           ctx.lineWidth = 2
           
           // Draw text outline for better visibility
