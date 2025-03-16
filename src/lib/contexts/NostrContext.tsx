@@ -47,11 +47,12 @@ interface NostrContextType {
   availableProfiles: ViewOnlyProfile[];
   login: (method: LoginMethod, options?: any) => Promise<void>;
   logout: () => void;
-  getUserProfile: (npub: string) => Promise<NDKUser>;
-  getFollows: (npub: string) => Promise<NDKUser[]>;
+  getUserProfile: (npub: string) => Promise<NDKUser | null>;
+  getFollows: (npub: string) => Promise<string[]>;
   shortenNpub: (npub: string) => string;
   payInvoice?: (invoice: string) => Promise<any>;
   canMakePayments: boolean;
+  getSocialGraph: (npubs: string[], maxConnections?: number) => Promise<{nodes: any[], links: any[]}>;
 }
 
 // Create the context
@@ -310,7 +311,7 @@ export const NostrProvider: React.FC<{children: ReactNode}> = ({ children }) => 
   };
 
   // Get a user's profile
-  const getUserProfile = async (npub: string): Promise<NDKUser> => {
+  const getUserProfile = async (npub: string): Promise<NDKUser | null> => {
     if (!ndk) {
       throw new Error('NDK not initialized');
     }
@@ -321,14 +322,14 @@ export const NostrProvider: React.FC<{children: ReactNode}> = ({ children }) => 
   };
 
   // Get users that a user follows
-  const getFollows = async (npub: string): Promise<NDKUser[]> => {
+  const getFollows = async (npub: string): Promise<string[]> => {
     if (!ndk) {
       throw new Error('NDK not initialized');
     }
 
     const user = ndk.getUser({ npub });
     const follows = await user.follows();
-    return Array.from(follows);
+    return Array.from(follows).map(follow => follow.npub);
   };
 
   // Pay a Lightning invoice
@@ -355,6 +356,200 @@ export const NostrProvider: React.FC<{children: ReactNode}> = ({ children }) => 
     }
   };
 
+  // Generate social graph data for the provided NPUBs
+  const getSocialGraph = async (npubs: string[], maxConnections: number = 25) => {
+    if (!ndk) {
+      throw new Error('NDK not initialized');
+    }
+    
+    // Check relay connections
+    try {
+      // Try to connect if not already connected
+      await ndk.connect();
+      
+      // Log connected relays (if any)
+      if (ndk.pool?.relays) {
+        const relayCount = Object.keys(ndk.pool.relays).length;
+        console.log(`Connected to ${relayCount} relays`);
+        if (relayCount === 0) {
+          console.warn('No relays connected. Results may be limited.');
+        }
+      } else {
+        console.warn('No relay pool available');
+      }
+    } catch (error) {
+      console.error('Relay connection error:', error);
+      // Continue anyway, but log the error
+    }
+    
+    console.log(`Fetching social graph for ${npubs.length} NPUBs with max ${maxConnections} connections`);
+    
+    // Real implementation using actual Nostr data
+    const nodes: any[] = [];
+    const links: any[] = [];
+    const nodeMap = new Map<string, boolean>();
+    
+    // Create a timeout promise
+    const timeout = (ms: number) => new Promise((_, reject) => 
+      setTimeout(() => reject(new Error(`Operation timed out after ${ms}ms`)), ms)
+    );
+    
+    // Add the core NPUBs as nodes
+    for (const npub of npubs) {
+      if (nodeMap.has(npub)) continue;
+      
+      try {
+        // Get the actual user profile from Nostr with timeout
+        const user = ndk.getUser({ npub });
+        
+        // Set timeout for profile fetching to avoid hanging
+        const profilePromise = user.fetchProfile();
+        await Promise.race([
+          profilePromise,
+          timeout(10000) // 10 second timeout
+        ]);
+        
+        console.log(`Fetched profile for ${npub}: ${user.profile?.name || 'unnamed'}`);
+        
+        nodes.push({
+          id: npub,
+          npub,
+          name: user.profile?.displayName || user.profile?.name || shortenNpub(npub),
+          type: 'profile',
+          picture: user.profile?.picture || '',
+          isCoreNode: true,
+          val: 10,
+          group: 1
+        });
+        
+        nodeMap.set(npub, true);
+      } catch (e) {
+        console.error(`Failed to fetch profile for ${npub}`, e);
+        // Still add the node even if profile fetch fails
+        nodes.push({
+          id: npub,
+          npub,
+          name: shortenNpub(npub),
+          type: 'profile',
+          isCoreNode: true,
+          val: 10,
+          group: 1
+        });
+        
+        nodeMap.set(npub, true);
+      }
+    }
+    
+    // Fetch real follows for each core NPUB
+    for (const npub of npubs) {
+      try {
+        // Get the actual follows from Nostr with timeout
+        const user = ndk.getUser({ npub });
+        
+        // Set timeout for follows fetching to avoid hanging
+        const followsPromise = user.follows();
+        const follows = await Promise.race([
+          followsPromise,
+          timeout(15000) // 15 second timeout
+        ]) as Set<NDKUser>;
+        
+        console.log(`Fetched ${follows.size} follows for ${npub}`);
+        
+        // Limit to maxConnections if needed
+        const followsList = Array.from(follows).slice(0, maxConnections);
+        
+        // Process each follow
+        for (const followedUser of followsList) {
+          if (!followedUser || typeof followedUser !== 'object') {
+            console.warn('Invalid followed user:', followedUser);
+            continue;
+          }
+          
+          const followedNpub = (followedUser as NDKUser).npub;
+          if (!followedNpub) {
+            console.warn('User missing npub:', followedUser);
+            continue;
+          }
+          
+          // Skip if already processed
+          if (nodeMap.has(followedNpub)) {
+            // Still add connection if not already added
+            links.push({
+              source: npub,
+              target: followedNpub,
+              type: 'follows',
+              value: 1
+            });
+            continue;
+          }
+          
+          // Try to get profile information for the followed user
+          try {
+            // Set timeout for profile fetching
+            const profilePromise = (followedUser as NDKUser).fetchProfile();
+            await Promise.race([
+              profilePromise,
+              timeout(5000) // 5 second timeout for follows' profiles
+            ]);
+            
+            nodes.push({
+              id: followedNpub,
+              npub: followedNpub,
+              name: (followedUser as NDKUser).profile?.displayName || (followedUser as NDKUser).profile?.name || shortenNpub(followedNpub),
+              type: 'connection',
+              picture: (followedUser as NDKUser).profile?.picture || '',
+              isCoreNode: false,
+              val: 3,
+              group: 2
+            });
+          } catch (e) {
+            console.warn(`Failed to fetch profile for follow ${followedNpub}`, e);
+            nodes.push({
+              id: followedNpub,
+              npub: followedNpub,
+              name: shortenNpub(followedNpub),
+              type: 'connection',
+              isCoreNode: false,
+              val: 3,
+              group: 2
+            });
+          }
+          
+          nodeMap.set(followedNpub, true);
+          
+          // Add connection
+          links.push({
+            source: npub,
+            target: followedNpub,
+            type: 'follows',
+            value: 1
+          });
+        }
+        
+        // Check for mutual follows between core NPUBs (real connections)
+        const followedPubkeys = new Set(followsList.map(f => (f as NDKUser).npub));
+        
+        // For each other core NPUB, check if this NPUB follows it
+        for (const otherNpub of npubs) {
+          if (otherNpub !== npub && followedPubkeys.has(otherNpub)) {
+            links.push({
+              source: npub,
+              target: otherNpub,
+              type: 'mutual',
+              value: 2
+            });
+          }
+        }
+      } catch (e) {
+        console.error(`Failed to fetch follows for ${npub}`, e);
+      }
+    }
+    
+    console.log(`Completed social graph with ${nodes.length} nodes and ${links.length} links`);
+    
+    return { nodes, links };
+  };
+
   // Provide the context value
   const contextValue: NostrContextType = {
     ndk,
@@ -371,6 +566,7 @@ export const NostrProvider: React.FC<{children: ReactNode}> = ({ children }) => 
     shortenNpub,
     payInvoice: canMakePayments ? payInvoice : undefined,
     canMakePayments,
+    getSocialGraph,
   };
 
   return (

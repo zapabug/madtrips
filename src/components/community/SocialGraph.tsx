@@ -231,6 +231,7 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
       );
       
       if (validNpubs.length === 0) {
+        console.error("No valid NPUBs found in:", npubs);
         setError("No valid NPUBs provided to fetch social graph data.");
         setIsLoading(false);
         return;
@@ -239,14 +240,46 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
       console.log("Fetching Nostr social graph data for NPUBs:", validNpubs);
       
       // Use the getSocialGraph function from the NostrContext
-      const realData = await getSocialGraph(validNpubs, maxConnections);
-      
-      // Check if we got valid data
-      if (realData && realData.nodes && realData.nodes.length > 0) {
-        console.log(`Successfully fetched social graph with ${realData.nodes.length} nodes and ${realData.links.length} links`);
-        setGraphData(realData);
-      } else {
-        throw new Error("Received empty or invalid graph data from Nostr");
+      try {
+        const realData = await getSocialGraph(validNpubs, maxConnections);
+        
+        // Add debugging to check data structure
+        console.log("Raw graph data received:", JSON.stringify(realData, null, 2).substring(0, 500) + "...");
+        
+        // Validate nodes and links
+        if (!realData) {
+          throw new Error("No data returned from getSocialGraph");
+        }
+        
+        if (!Array.isArray(realData.nodes)) {
+          throw new Error("Invalid nodes data - not an array");
+        }
+        
+        if (!Array.isArray(realData.links)) {
+          throw new Error("Invalid links data - not an array");
+        }
+        
+        // Check node data for all required fields
+        realData.nodes.forEach((node, index) => {
+          if (!node.id) {
+            console.warn(`Node at index ${index} missing id:`, node);
+          }
+          if (!node.npub) {
+            console.warn(`Node at index ${index} missing npub:`, node);
+          }
+        });
+        
+        // Check if we got valid data
+        if (realData && realData.nodes && realData.nodes.length > 0) {
+          console.log(`Successfully fetched social graph with ${realData.nodes.length} nodes and ${realData.links.length} links`);
+          console.log("Sample node:", realData.nodes[0]);
+          setGraphData(realData);
+        } else {
+          throw new Error("Received empty or invalid graph data from Nostr");
+        }
+      } catch (error) {
+        console.error("Error in getSocialGraph:", error);
+        throw error; // Re-throw to be caught by outer catch
       }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);

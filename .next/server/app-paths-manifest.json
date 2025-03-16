@@ -1,3 +1,5 @@
 {
-  "/packages/page": "app/packages/page.js"
+  "/packages/page": "app/packages/page.js",
+  "/page": "app/page.js",
+  "/community/page": "app/community/page.js"
 }
