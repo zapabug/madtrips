@@ -115,178 +115,19 @@ export default function RootLayout({
           <NostrLoginButton />
         </Providers>
         
-        {/* Nostr Login Script - Now hidden but still providing functionality */}
-        <Script
-          src="https://www.unpkg.com/nostr-login@latest/dist/unpkg.js"
-          data-perms="sign_event:1,sign_event:0"
-          data-theme="ocean"
-          data-show-banner="false"
-          data-no-button="true"
-          data-no-banner="true"
-          data-no-embed-info="true"
-          data-custom-login-button-id="nl-custom-trigger"
-          data-start-screen="welcome-login"
-          strategy="afterInteractive"
-        />
-        
-        {/* Custom script to ensure proper integration */}
-        <Script id="nostr-login-custom-integration" strategy="afterInteractive">
-          {`
-            document.addEventListener('DOMContentLoaded', function() {
-              // Make sure the Nostr Login library is fully loaded
-              setTimeout(() => {
-                // We already have event listeners in our React component,
-                // this just ensures the scripts work well together
-                console.log('Nostr Login integration initialized');
-                
-                // Modify the login flow to skip intermediate screens
-                if (window.NostrLogin && window.NostrLogin.launch) {
-                  const originalLaunch = window.NostrLogin.launch;
-                  window.NostrLogin.launch = function(opts) {
-                    // Always direct to the welcome-login screen with all options
-                    const newOpts = Object.assign({}, opts, {startScreen: 'welcome-login'});
-                    return originalLaunch(newOpts);
-                  };
-                }
-                
-                // Track Nostr login events to enhance profile data handling
-                document.addEventListener('nlAuth', function(e) {
-                  try {
-                    console.log('Nostr Login auth event captured:', e.detail);
-                    
-                    // Function to find a profile picture from various sources
-                    const findProfilePicture = function(detail) {
-                      if (detail.profile && detail.profile.picture) return detail.profile.picture;
-                      if (detail.picture) return detail.picture;
-                      if (detail.metadata && detail.metadata.picture) return detail.metadata.picture;
-                      if (detail.user && detail.user.picture) return detail.user.picture;
-                      if (detail.user && detail.user.profile && detail.user.profile.picture) return detail.user.profile.picture;
-                      return null;
-                    };
-                    
-                    // Check if we need to enhance the profile data
-                    const profilePic = findProfilePicture(e.detail);
-                    if (!profilePic && e.detail && e.detail.npub) {
-                      // Try to get profile data from nostr-login's cache
-                      if (window.NostrLogin && window.NostrLogin.getProfile) {
-                        const profile = window.NostrLogin.getProfile(e.detail.npub);
-                        if (profile && profile.picture) {
-                          console.log('Found profile picture from NostrLogin cache');
-                          
-                          // Create enhanced profile data
-                          const enhancedProfile = Object.assign({}, 
-                            e.detail.profile || {},
-                            { picture: profile.picture }
-                          );
-                          
-                          // Clone the event with enhanced data
-                          const newDetail = Object.assign({}, e.detail, { profile: enhancedProfile });
-                          
-                          // Create and dispatch enhanced event
-                          const newEvent = new CustomEvent('nlAuth', { detail: newDetail });
-                          setTimeout(() => document.dispatchEvent(newEvent), 0);
-                        } else {
-                          // Try multiple avatar services with fallbacks
-                          console.log('Trying multiple avatar services');
-                          
-                          // Function to check if an image exists
-                          const checkImageExists = (url) => {
-                            return new Promise((resolve) => {
-                              const img = document.createElement('img');
-                              img.onload = () => resolve(true);
-                              img.onerror = () => resolve(false);
-                              img.crossOrigin = 'anonymous';
-                              // Set timeout to avoid waiting forever
-                              setTimeout(() => resolve(false), 3000);
-                              img.src = url;
-                            });
-                          };
-                          
-                          // Try multiple sources in sequence
-                          const tryAvatarSources = async () => {
-                            // 1. Try avatar.nostr.build
-                            const avatarUrl = 'https://avatar.nostr.build/' + e.detail.npub + '.png';
-                            try {
-                              const avatarExists = await checkImageExists(avatarUrl);
-                              if (avatarExists) {
-                                console.log('Found avatar from nostr.build');
-                                return avatarUrl;
-                              }
-                            } catch (err) {
-                              console.warn('Error checking avatar.nostr.build:', err);
-                            }
-                            
-                            // 2. Try iris.to
-                            const irisUrl = 'https://iris.to/api/pfp/' + e.detail.npub;
-                            try {
-                              const irisExists = await checkImageExists(irisUrl);
-                              if (irisExists) {
-                                console.log('Found avatar from iris.to');
-                                return irisUrl;
-                              }
-                            } catch (err) {
-                              console.warn('Error checking iris.to:', err);
-                            }
-                            
-                            // 3. Use robohash as a final fallback
-                            const robohashUrl = 'https://robohash.org/' + e.detail.npub + '?set=set4';
-                            console.log('Using robohash as fallback avatar');
-                            return robohashUrl;
-                          };
-                          
-                          // Execute the avatar sources check
-                          tryAvatarSources().then(pictureUrl => {
-                            if (pictureUrl) {
-                              // Create enhanced profile data with the avatar
-                              const enhancedProfile = Object.assign({}, 
-                                e.detail.profile || {},
-                                { picture: pictureUrl }
-                              );
-                              
-                              // Clone the event with enhanced data
-                              const newDetail = Object.assign({}, e.detail, { profile: enhancedProfile });
-                              
-                              // Create and dispatch enhanced event
-                              const newEvent = new CustomEvent('nlAuth', { detail: newDetail });
-                              setTimeout(() => document.dispatchEvent(newEvent), 0);
-                            }
-                          }).catch(err => {
-                            console.error('Avatar sources check failed:', err);
-                          });
-                        }
-                      }
-                    }
-                  } catch (err) {
-                    console.error('Error handling Nostr auth event:', err);
-                  }
-                });
-                
-                // Ensure nlLaunch events are properly captured
-                document.addEventListener('nlLaunch', function(e) {
-                  console.log('Nostr Login launch event captured', e.detail);
-                });
-              }, 1000);
-            });
-          `}
-        </Script>
-        
-        {/* Add custom CSS to hide any remaining Nostr Login elements */}
+        {/* Add custom CSS to style our login button */}
         <style jsx global>{`
-          .nl-banner {
-            display: none !important;
+          /* Custom styles for our new login approach */
+          .nostr-login-btn {
+            transition: all 0.2s ease-in-out;
           }
-          .nl-button-container {
-            display: none !important;
+          .nostr-login-btn:hover {
+            transform: scale(1.05);
           }
-          .nl-login-prompt {
-            display: none !important;
-          }
-          /* Keep our custom trigger visible */
-          #nl-custom-trigger {
-            display: flex !important;
-          }
-          #custom-nostr-login {
-            display: block !important;
+          
+          /* Dark mode support */
+          .dark .nostr-login-btn {
+            background-color: #2d3748;
           }
         `}</style>
       </body>

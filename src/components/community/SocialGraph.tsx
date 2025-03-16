@@ -16,9 +16,6 @@ const CORE_NPUBS = [
   "npub1funchalx8v747rsee6ahsuyrcd2s3rnxlyrtumfex9lecpmgwars6hq8kc", // Funchal
 ];
 
-// Fallback profile image for nodes without a picture
-const DEFAULT_PROFILE_IMAGE = "https://nostr.build/i/nostr.build_d421c1d7fd21c5d73c3428f0fc5ed7359cedb81bcad8074de350bec2d02e9a67.jpeg";
-
 // Branding colors
 const BRAND_COLORS = {
   bitcoinOrange: '#F7931A', // Bitcoin & innovation - user likes this
@@ -28,12 +25,15 @@ const BRAND_COLORS = {
   white: '#FFFFFF',        // Clean, minimal design
 };
 
+// Reintroduce DEFAULT_PROFILE_IMAGE
+const DEFAULT_PROFILE_IMAGE = "https://nostr.build/i/nostr.build_d421c1d7fd21c5d73c3428f0fc5ed7359cedb81bcad8074de350bec2d02e9a67.jpeg";
+
 // Node and link types for the graph
 interface GraphNode {
   id: string;
   name?: string;
   displayName?: string;
-  npub: string;
+  npub?: string;
   picture?: string;
   group?: number;
   color?: string;
@@ -104,14 +104,11 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
   const containerRef = useRef<HTMLDivElement>(null);
   const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
 
-  // Function to convert node's NPUB to shortened form for display
-  const shortenNpub = (npub: string): string => {
-    if (!npub) return '';
-    return `${npub.substring(0, 6)}...${npub.substring(npub.length - 4)}`;
-  };
+  // Ensure user is not null before accessing properties
+  const isUserLoggedIn = user !== null && !!user;
 
-  // Handle click on a node - open the Nostr profile in a Nostr viewer
-  const handleNodeClick = (node: any) => {
+  // Handle undefined values for npub and other properties
+  const handleNodeClick = (node: GraphNode) => {
     if (!node || !node.npub) return;
     
     setSelectedNode(node);
@@ -120,6 +117,12 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
     // Open the Nostr profile in njump.me
     const url = `https://njump.me/${node.npub}`;
     window.open(url, '_blank');
+  };
+
+  // Use optional chaining or default values
+  const shortenNpub = (npub: string | undefined): string => {
+    if (!npub) return '';
+    return `${npub.substring(0, 6)}...${npub.substring(npub.length - 4)}`;
   };
 
   // Preload images for all nodes
@@ -132,8 +135,9 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
     const totalImages = nodes.length;
 
     nodes.forEach(node => {
+      const npubKey = node.npub || '';
       // Skip if we already have this image
-      if (nodeImages.has(node.npub)) return;
+      if (nodeImages.has(npubKey)) return;
 
       // Get profile image URL
       let imageUrl = DEFAULT_PROFILE_IMAGE;
@@ -147,7 +151,7 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
       img.crossOrigin = 'anonymous';
       
       img.onload = () => {
-        newImages.set(node.npub, img);
+        newImages.set(npubKey, img);
         loadedCount++;
         
         // When all images are loaded, update the state
@@ -164,7 +168,7 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
         defaultImg.src = DEFAULT_PROFILE_IMAGE;
         
         defaultImg.onload = () => {
-          newImages.set(node.npub, defaultImg);
+          newImages.set(npubKey, defaultImg);
           loadedCount++;
           
           if (loadedCount === totalImages) {
@@ -207,11 +211,11 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
 
   // Fetch real data from Nostr
   const fetchNostrData = async () => {
-    // Default to mock data if not explicitly using real data
-    if (!ndk || !user) {
-      setError("Nostr client not initialized or user not logged in. Please log in with a Nostr extension first.");
-      console.log("NDK not initialized or user not logged in - using mock data for visualization");
-      setGraphData(generateMockData());
+    // First check if we have NDK and user available
+    if (!ndk) {
+      console.log("NDK not initialized - showing login prompt");
+      setError("Nostr client not initialized. Please connect using a Nostr extension.");
+      setIsLoading(false);
       return;
     }
     
@@ -223,82 +227,83 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
       const validNpubs = npubs.filter(npub => 
         typeof npub === 'string' && 
         npub.startsWith('npub1') && 
-        npub.length === 63
+        npub.length >= 60 // slightly more lenient check
       );
       
       if (validNpubs.length === 0) {
-        console.warn("No valid NPUBs to fetch data for - using mock data");
-        setGraphData(generateMockData());
+        setError("No valid NPUBs provided to fetch social graph data.");
+        setIsLoading(false);
         return;
       }
       
       console.log("Fetching Nostr social graph data for NPUBs:", validNpubs);
+      
+      // Use the getSocialGraph function from the NostrContext
       const realData = await getSocialGraph(validNpubs, maxConnections);
       
       // Check if we got valid data
       if (realData && realData.nodes && realData.nodes.length > 0) {
         console.log(`Successfully fetched social graph with ${realData.nodes.length} nodes and ${realData.links.length} links`);
         setGraphData(realData);
-        
-        // If we successfully loaded data, we don't need mock data anymore
-        if (useMockData) setUseMockData(false);
       } else {
-        console.warn("Received empty graph data from Nostr - using mock data");
-        setGraphData(generateMockData());
+        throw new Error("Received empty or invalid graph data from Nostr");
       }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      console.error("Error fetching Nostr social graph:", error);
-      setError(`Failed to load Nostr data: ${errorMessage}`);
+      console.error("Error fetching social graph data:", errorMessage);
+      setError(`Failed to fetch social graph: ${errorMessage}`);
       
-      // Always fall back to mock data on error
-      console.log("Error occurred - falling back to mock data");
-      setGraphData(generateMockData());
+      // Only use mock data in development mode as a fallback
+      if (process.env.NODE_ENV === 'development') {
+        console.warn("Using mock data as fallback in development mode");
+        setGraphData(generateMockData());
+      }
     } finally {
       setIsLoading(false);
     }
   };
 
-  // Toggle between real and mock data
+  // Toggle between real and mock data (for development purposes only)
   const toggleMockData = () => {
-    const newState = !useMockData;
-    setUseMockData(newState);
+    if (process.env.NODE_ENV !== 'development') {
+      console.warn("Mock data toggle is only available in development mode");
+      return;
+    }
     
-    if (newState) {
-      // Use mock data
+    setUseMockData(!useMockData);
+    if (!useMockData) {
+      console.log("Switching to mock data");
       setGraphData(generateMockData());
-      setError("Using mock data for demonstration");
     } else {
-      // Try to use real data
-      setGraphData(null); // Clear existing data
+      console.log("Switching to real data");
       fetchNostrData();
     }
   };
 
-  // Mock data generation for fallback/demonstration
+  // Generate mock data only used as fallback 
   const generateMockData = (): GraphData => {
+    console.warn("Generating mock data - this should only be used during development");
     const nodes: GraphNode[] = [];
     const links: GraphLink[] = [];
-
+    
     // Add core NPUBs as nodes
-    npubs.forEach((npub, index) => {
+    for (let i = 0; i < npubs.length; i++) {
       nodes.push({
-        id: npub,
-        npub,
-        name: getNameForNpub(npub),
-        displayName: getNameForNpub(npub),
-        picture: DEFAULT_PROFILE_IMAGES[npub] || undefined,
+        id: npubs[i],
+        npub: npubs[i],
+        name: getNameForNpub(npubs[i]),
+        displayName: `User ${i + 1}`,
+        picture: getRandomProfilePicture(),
         isCoreNode: true,
-        isCenter: npub === centerNpub,
         nodeType: 'profile',
         group: 1,
       });
-    });
+    }
 
     // Generate random connections between nodes
     for (let i = 0; i < npubs.length; i++) {
       // For each core NPUB, create some random followers
-      const followerCount = Math.floor(Math.random() * 10) + 5;
+      const followerCount = Math.floor(Math.random() * 5) + 3; // Reduce mock data size
       
       for (let j = 0; j < followerCount; j++) {
         const followerNpub = `npub${Math.random().toString(36).substring(2, 15)}`;
@@ -309,7 +314,6 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
           npub: followerNpub,
           name: `Follower ${j} of ${i}`,
           displayName: `User ${npubs.length + j}`,
-          // Random profile picture for followers
           picture: getRandomProfilePicture(),
           isCoreNode: false,
           nodeType: 'follower',
@@ -323,16 +327,6 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
           type: 'follows',
           value: Math.random() * 2 + 1,
         });
-        
-        // Sometimes add mutual follows
-        if (Math.random() > 0.7) {
-          links.push({
-            source: npubs[i],
-            target: followerNpub,
-            type: 'follows',
-            value: Math.random() * 2 + 1,
-          });
-        }
       }
     }
 
@@ -350,7 +344,7 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
       }
     }
 
-    console.log("Using mock data for social graph visualization");
+    console.log("Using mock data for social graph visualization - for development only");
     return { nodes, links };
   };
 
@@ -396,70 +390,43 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
     return placeholders[Math.floor(Math.random() * placeholders.length)];
   };
 
-  // Update dimensions when container size changes
+  // Initialize data on component mount
   useEffect(() => {
-    if (!containerRef.current) return;
-
     const updateDimensions = () => {
       if (containerRef.current) {
-        const { offsetWidth, offsetHeight } = containerRef.current;
         setDimensions({
-          width: offsetWidth,
-          height: typeof height === 'number' ? height : offsetHeight,
+          width: containerRef.current.offsetWidth,
+          height: containerRef.current.offsetHeight || 600,
         });
       }
     };
 
-    // Initial update
+    // Initial dimensions update
     updateDimensions();
-
+    
     // Add resize listener
     window.addEventListener('resize', updateDimensions);
-
+    
     // Cleanup
     return () => window.removeEventListener('resize', updateDimensions);
-  }, [height, width]);
+  }, []);
 
-  // Initialize graph data
+  // Initialize data when dependencies change
   useEffect(() => {
-    // Define the initialization function
     const initializeData = async () => {
-      // Always use user-provided data first if available
+      // If we already have data (passed as prop), use that
       if (data) {
+        console.log("Using provided data:", data);
         setGraphData(data);
         return;
       }
       
-      // Use mock data if explicitly requested
-      if (useMockData) {
-        setGraphData(generateMockData());
-        return;
-      }
-      
-      // Otherwise try to fetch real data, with built-in fallback
-      try {
-        // If not logged in, just use mock data without showing error
-        if (!user || !ndk) {
-          console.log("User not logged in - using mock data without error");
-          setGraphData(generateMockData());
-          return;
-        }
-        
-        await fetchNostrData();
-      } catch (err) {
-        console.error("Error initializing graph data:", err);
-        // Always fall back to mock data if there's an error
-        setGraphData(generateMockData());
-        // Only set error if it's not because user is not logged in
-        if (user && ndk) {
-          setError(`Error initializing graph: ${err instanceof Error ? err.message : String(err)}`);
-        }
-      }
+      // Otherwise, try to fetch from Nostr
+      await fetchNostrData();
     };
-
-    // Run the initialization
+    
     initializeData();
-  }, [data, npubs, centerNpub, maxConnections, useMockData, ndk, user]);
+  }, [ndk, npubs.join(','), centerNpub, maxConnections]); // Re-fetch when these dependencies change
 
   // Preload images when graph data changes
   useEffect(() => {
@@ -467,6 +434,71 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
       preloadImages(graphData.nodes);
     }
   }, [graphData]);
+
+  // Update graph data based on login status
+  useEffect(() => {
+    if (isUserLoggedIn && user && user.npub) {
+      // Fetch data including user's NPUB
+      fetchNostrData();
+    } else {
+      // Display core NPUBs only
+      setGraphData({
+        nodes: CORE_NPUBS.map(npub => ({
+          id: npub,
+          npub,
+          name: getNameForNpub(npub),
+          isCoreNode: true,
+          nodeType: 'profile',
+          group: 1,
+        })),
+        links: [],
+      });
+    }
+  }, [isUserLoggedIn, user?.npub]);
+
+  // Render appropriate UI based on loading/error state
+  if (isLoading) {
+    return (
+      <div className={`flex flex-col items-center justify-center ${className}`} style={{ height, width }}>
+        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-gray-900 dark:border-gray-100"></div>
+        <div className="mt-4 text-lg font-medium">Loading Nostr social graph...</div>
+      </div>
+    );
+  }
+
+  if (error && !graphData) {
+    return (
+      <div className={`flex flex-col items-center justify-center ${className}`} style={{ height, width }}>
+        <div className="text-center p-6 bg-red-50 dark:bg-red-950 rounded-lg border border-red-200 dark:border-red-800">
+          <h3 className="text-lg font-semibold text-red-700 dark:text-red-400 mb-2">Error Loading Social Graph</h3>
+          <p className="text-red-600 dark:text-red-300 mb-4">{error}</p>
+          
+          {!ndk && (
+            <div className="p-4 mt-2 bg-amber-50 dark:bg-amber-950 rounded-lg border border-amber-200 dark:border-amber-800">
+              <p className="text-amber-700 dark:text-amber-300 mb-2">
+                To use the social graph, you need a Nostr extension. 
+                Try installing one of these:
+              </p>
+              <ul className="list-disc list-inside text-amber-600 dark:text-amber-400">
+                <li><a href="https://getalby.com/" target="_blank" rel="noopener noreferrer" className="underline hover:text-amber-800 dark:hover:text-amber-200">Alby</a></li>
+                <li><a href="https://github.com/fiatjaf/nos2x" target="_blank" rel="noopener noreferrer" className="underline hover:text-amber-800 dark:hover:text-amber-200">nos2x</a></li>
+                <li><a href="https://getflamingo.org/" target="_blank" rel="noopener noreferrer" className="underline hover:text-amber-800 dark:hover:text-amber-200">Flamingo</a></li>
+              </ul>
+            </div>
+          )}
+          
+          {process.env.NODE_ENV === 'development' && (
+            <button 
+              onClick={() => setGraphData(generateMockData())}
+              className="mt-4 px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-md"
+            >
+              Use Mock Data (Development Only)
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div 
@@ -559,30 +591,6 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
         )}
 
         <div className="w-full h-full">
-          {isLoading && !graphData && (
-            <div className="absolute inset-0 flex items-center justify-center bg-white/10 z-10">
-              <div className="flex flex-col items-center">
-                <div className="w-12 h-12 border-4 border-t-transparent rounded-full animate-spin mb-3" style={{ borderColor: BRAND_COLORS.bitcoinOrange, borderTopColor: 'transparent' }}></div>
-                <p style={{ color: BRAND_COLORS.lightSand }}>Loading Nostr connections...</p>
-              </div>
-            </div>
-          )}
-          
-          {!isLoading && !graphData && (
-            <div className="absolute inset-0 flex items-center justify-center bg-white/10 z-10">
-              <div className="flex flex-col items-center">
-                <p style={{ color: BRAND_COLORS.lightSand }} className="mb-3">No graph data available</p>
-                <button 
-                  onClick={() => useMockData ? setGraphData(generateMockData()) : fetchNostrData()} 
-                  className="px-4 py-2 rounded hover:opacity-90"
-                  style={{ backgroundColor: BRAND_COLORS.bitcoinOrange }}
-                >
-                  {useMockData ? 'Generate Mock Data' : 'Load Data'}
-                </button>
-              </div>
-            </div>
-          )}
-          
           {graphData && (
             <ForceGraph2D
               graphData={convertGraphData(graphData)}
@@ -590,14 +598,13 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
               nodeVal={(node: any) => node.val || 1}
               linkColor={(link: any) => link.color || '#adb5bd'}
               linkWidth={(link: any) => Math.sqrt(link.value || 1)}
-              onNodeClick={handleNodeClick}
+              onNodeClick={(node: any, event: MouseEvent) => handleNodeClick(node as GraphNode)}
               width={dimensions.width}
               height={dimensions.height}
               nodeCanvasObject={(node: any, ctx: CanvasRenderingContext2D, globalScale: number) => {
-                const nodeSize = node.val || 5;
-                
-                // Get the node image from cache or get default image
-                const imageSource = nodeImages.get(node.npub);
+                const graphNode = node as GraphNode;
+                const nodeSize = graphNode.val || 5;
+                const imageSource = nodeImages.get(graphNode.npub || '');
                 
                 // Draw the node with profile image if available
                 if (imageSource) {
@@ -605,15 +612,15 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
                     // Create circular clipping path
                     ctx.save();
                     ctx.beginPath();
-                    ctx.arc(node.x as number, node.y as number, nodeSize, 0, 2 * Math.PI);
+                    ctx.arc(graphNode.x as number, graphNode.y as number, nodeSize, 0, 2 * Math.PI);
                     ctx.clip();
                     
                     // Draw the profile image
                     const imgSize = nodeSize * 2;
                     ctx.drawImage(
                       imageSource, 
-                      (node.x as number) - nodeSize, 
-                      (node.y as number) - nodeSize, 
+                      (graphNode.x as number) - nodeSize, 
+                      (graphNode.y as number) - nodeSize, 
                       imgSize, 
                       imgSize
                     );
@@ -622,24 +629,24 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
                   } catch (err) {
                     // Fallback to circle if image drawing fails
                     ctx.beginPath();
-                    ctx.fillStyle = node.color as string || BRAND_COLORS.lightSand;
-                    ctx.arc(node.x as number, node.y as number, nodeSize, 0, 2 * Math.PI);
+                    ctx.fillStyle = graphNode.color as string || BRAND_COLORS.lightSand;
+                    ctx.arc(graphNode.x as number, graphNode.y as number, nodeSize, 0, 2 * Math.PI);
                     ctx.fill();
                   }
                 } else {
                   // Fallback to plain circle if no image
                   ctx.beginPath();
-                  ctx.fillStyle = node.color as string || BRAND_COLORS.lightSand;
-                  ctx.arc(node.x as number, node.y as number, nodeSize, 0, 2 * Math.PI);
+                  ctx.fillStyle = graphNode.color as string || BRAND_COLORS.lightSand;
+                  ctx.arc(graphNode.x as number, graphNode.y as number, nodeSize, 0, 2 * Math.PI);
                   ctx.fill();
                 }
                 
                 // Add highlight border for core nodes
-                if (node.isCoreNode) {
+                if (graphNode.isCoreNode) {
                   ctx.beginPath();
                   ctx.strokeStyle = BRAND_COLORS.bitcoinOrange; // Bitcoin orange for core nodes
                   ctx.lineWidth = 2;
-                  ctx.arc(node.x as number, node.y as number, nodeSize + 2, 0, 2 * Math.PI);
+                  ctx.arc(graphNode.x as number, graphNode.y as number, nodeSize + 2, 0, 2 * Math.PI);
                   ctx.stroke();
                 }
                 

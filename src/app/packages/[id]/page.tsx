@@ -4,10 +4,86 @@ import { useState, useEffect } from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
-import { api } from '@/lib/api';
 import { Package, PaymentData } from '@/types';
-import { useNostr } from '@/lib/nostr';
+import { useNostr } from '@/lib/contexts/NostrContext';
+import { NostrPayment } from '@/components/NostrPayment';
 import React from 'react';
+import { getPackageById, formatSats } from '@/data/packages';
+
+// Real lnbits payment functions
+const createPayment = async (amount: number, description: string): Promise<PaymentData> => {
+  try {
+    // Call your lnbits API
+    const response = await fetch('/api/payments/create', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        amount,
+        description,
+      }),
+    });
+    
+    const data = await response.json();
+    
+    if (!response.ok) {
+      throw new Error(data.message || 'Failed to create payment');
+    }
+    
+    return data;
+  } catch (error) {
+    console.error('Error creating payment:', error);
+    throw error;
+  }
+};
+
+const checkPaymentStatus = async (paymentId: string) => {
+  try {
+    // Call your lnbits API to check payment status
+    const response = await fetch(`/api/payments/status/${paymentId}`, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    });
+    
+    const data = await response.json();
+    
+    if (!response.ok) {
+      throw new Error(data.message || 'Failed to check payment status');
+    }
+    
+    return data;
+  } catch (error) {
+    console.error('Error checking payment status:', error);
+    throw error;
+  }
+};
+
+const createBooking = async (data: { packageId: string; nostrPubkey: string; invoice: string; preimage?: string }) => {
+  try {
+    // Call your lnbits API to create booking
+    const response = await fetch('/api/bookings/create', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(data),
+    });
+    
+    const responseData = await response.json();
+    
+    if (!response.ok) {
+      throw new Error(responseData.message || 'Failed to create booking');
+    }
+    
+    return responseData;
+  } catch (error) {
+    console.error('Error creating booking:', error);
+    throw error;
+  }
+};
 
 export default function PackageDetailPage() {
   // Use the useParams hook to get route params in a client component
@@ -20,67 +96,43 @@ export default function PackageDetailPage() {
   
   // Booking and payment states
   const [showBookingForm, setShowBookingForm] = useState(false);
+  const [showNostrPayment, setShowNostrPayment] = useState(false);
   const [paymentData, setPaymentData] = useState<PaymentData | null>(null);
   const [bookingComplete, setBookingComplete] = useState(false);
   const [bookingId, setBookingId] = useState<string | null>(null);
   
   // Nostr state
-  const { publicKey, isNostrConnected, connectNostr, generateRandomPubkey, connectWithPrimal, preferredClient } = useNostr();
+  const { user, loginMethod } = useNostr();
 
   useEffect(() => {
-    async function fetchPackage() {
-      try {
-        setLoading(true);
-        if (!packageId) {
-          setError('Invalid package ID');
-          setLoading(false);
-          return;
-        }
-        
-        const response = await api.getPackage(packageId) as { package: Package };
-        setPackageItem(response.package);
-        setError(null);
-      } catch (err) {
-        console.error('Error fetching package:', err);
-        setError('Failed to load package details. Please try again later.');
-      } finally {
+    // Find the package by ID from our centralized data
+    const findPackage = () => {
+      setLoading(true);
+      
+      if (!packageId) {
+        setError('Invalid package ID');
         setLoading(false);
+        return;
       }
-    }
+      
+      const foundPackage = getPackageById(packageId);
+      
+      if (foundPackage) {
+        setPackageItem(foundPackage);
+        setError(null);
+      } else {
+        setError('Package not found');
+      }
+      
+      setLoading(false);
+    };
 
-    fetchPackage();
+    findPackage();
   }, [packageId]);
-
-  // Helper function to format satoshi amount to BTC
-  const formatSats = (sats: number) => {
-    const btc = sats / 100000000;
-    return `${btc.toFixed(8)} BTC (${sats.toLocaleString()} sats)`;
-  };
 
   const handleBookNow = () => {
     setShowBookingForm(true);
-    if (!isNostrConnected) {
-      // Don't auto-connect, let the user choose their preferred method
-    }
-  };
-
-  const handlePrimalConnect = () => {
-    connectWithPrimal({
-      perms: "sign_event:1,sign_event:0",
-      theme: "ocean",
-      relayUrls: [
-        "wss://relay.damus.io",
-        "wss://relay.primal.net", 
-        "wss://relay.snort.social"
-      ]
-    });
-  };
-
-  const handleNip07Connect = () => {
-    connectNostr({
-      perms: "sign_event:1,sign_event:0",
-      theme: "ocean"
-    });
+    // We'll handle the Nostr login separately
   };
 
   const handlePaymentRequest = async (e: React.FormEvent) => {
@@ -89,75 +141,58 @@ export default function PackageDetailPage() {
     if (!packageItem) return;
     
     // Check if Nostr is connected
-    if (!publicKey) {
-      setError('Please connect your Nostr wallet to continue.');
+    if (!user) {
+      setError('Please connect your Nostr wallet to continue with payment.');
       return;
     }
     
     try {
-      // Generate payment invoice
-      const paymentResponse = await api.createPayment(
+      // Get a Lightning invoice from the API
+      const paymentResponse = await createPayment(
         packageItem.price, 
         `MadTrips: ${packageItem.title}`
-      ) as PaymentData;
+      );
       
       setPaymentData(paymentResponse);
-      
-      // Set up payment checking interval
-      const paymentCheckInterval = setInterval(async () => {
-        try {
-          // Check payment status
-          const statusResponse = await api.checkPaymentStatus(paymentResponse.id);
-          
-          if (statusResponse.paid) {
-            clearInterval(paymentCheckInterval);
-            
-            // Create booking
-            const bookingResponse = await api.createBooking({
-              packageId: packageItem.id,
-              nostrPubkey: publicKey,
-              invoice: paymentResponse.invoice
-            }) as { bookingId: string; status: string };
-            
-            setBookingId(bookingResponse.bookingId);
-            setBookingComplete(true);
-          }
-        } catch (err) {
-          console.error('Error checking payment status:', err);
-        }
-      }, 5000); // Check every 5 seconds
-      
-      // For demo purposes, we'll also set a timeout to automatically complete the booking
-      // This should be removed in a production environment
-      setTimeout(() => {
-        clearInterval(paymentCheckInterval);
-        
-        if (!bookingComplete) {
-          // If booking isn't complete after 30 seconds, create it anyway for demo purposes
-          const createDemoBooking = async () => {
-            try {
-              const bookingResponse = await api.createBooking({
-                packageId: packageItem.id,
-                nostrPubkey: publicKey,
-                invoice: paymentResponse.invoice
-              }) as { bookingId: string };
-              
-              setBookingId(bookingResponse.bookingId);
-              setBookingComplete(true);
-            } catch (err) {
-              console.error('Error creating demo booking:', err);
-              setError('Failed to complete booking. Please try again.');
-            }
-          };
-          
-          createDemoBooking();
-        }
-      }, 30000); // 30 second fallback for demo purposes
+      setShowNostrPayment(true);
       
     } catch (err) {
       console.error('Error generating payment:', err);
       setError('Failed to generate payment. Please try again.');
     }
+  };
+  
+  // Handle payment success
+  const handlePaymentSuccess = async (preimage: string) => {
+    if (!packageItem || !user || !paymentData) return;
+    
+    try {
+      // Create booking with the preimage as proof of payment
+      const bookingResponse = await createBooking({
+        packageId: packageItem.id,
+        nostrPubkey: user.npub,
+        invoice: paymentData.invoice,
+        preimage: preimage
+      });
+      
+      setBookingId(bookingResponse.bookingId);
+      setBookingComplete(true);
+      setShowNostrPayment(false);
+    } catch (err) {
+      console.error('Error creating booking:', err);
+      setError('Payment confirmed, but booking creation failed. Please contact support.');
+    }
+  };
+
+  // Handle payment error
+  const handlePaymentError = (error: Error) => {
+    setError(`Payment failed: ${error.message}`);
+    setShowNostrPayment(false);
+  };
+
+  // Handle payment cancel
+  const handlePaymentCancel = () => {
+    setShowNostrPayment(false);
   };
 
   if (loading) {
@@ -237,84 +272,75 @@ export default function PackageDetailPage() {
           )}
           
           {/* Booking Form */}
-          {showBookingForm && !paymentData && !bookingComplete && (
+          {showBookingForm && !paymentData && !bookingComplete && !showNostrPayment && (
             <div className="mt-8 max-w-md mx-auto">
-              <h2 className="text-xl font-semibold mb-4 text-gray-800 dark:text-white">Connect with Nostr</h2>
-              {!publicKey ? (
-                <div className="text-center">
+              <h2 className="text-xl font-semibold mb-4 text-gray-800 dark:text-white">Ready to Book</h2>
+              
+              {error && (
+                <div className="mb-4 p-3 bg-red-100 dark:bg-red-900 text-red-700 dark:text-red-100 rounded">
+                  <p>{error}</p>
+                </div>
+              )}
+              
+              {!user ? (
+                <div className="text-center mb-6">
                   <p className="text-gray-600 dark:text-gray-400 mb-4">
-                    Please select a Nostr connection method to continue.
+                    Please connect your Nostr wallet to continue with payment.
                   </p>
-                  
-                  {/* Primal Connection - Recommended */}
-                  <div className="mb-4 p-4 bg-green-50 dark:bg-green-900/20 rounded-lg border border-green-200 dark:border-green-800">
-                    <h3 className="font-medium text-green-700 dark:text-green-400 mb-2">Recommended</h3>
-                    <button
-                      onClick={handlePrimalConnect}
-                      className="w-full px-6 py-3 bg-[#7B3FE4] hover:bg-[#6A35C2] text-white rounded-md font-semibold transition-colors mb-2 flex items-center justify-center"
-                    >
-                      <span className="mr-2">Connect with Primal</span>
-                      <span className="text-xs px-2 py-1 bg-white bg-opacity-20 rounded">Recommended</span>
-                    </button>
-                    <p className="text-xs text-green-600 dark:text-green-400">
-                      Primal provides the best experience and avoids CORS issues
+                  <div className="bg-yellow-50 dark:bg-yellow-900/20 p-4 rounded-lg border border-yellow-200 dark:border-yellow-800 mb-4">
+                    <p className="text-sm text-yellow-700 dark:text-yellow-400">
+                      Use the Nostr login button in the bottom right corner to connect.
                     </p>
-                  </div>
-                  
-                  {/* NIP-07 Connection */}
-                  <div className="mb-4">
-                    <button
-                      onClick={handleNip07Connect}
-                      className="px-6 py-2 bg-[#8E44AD] hover:bg-[#8E44AD]/80 text-white rounded-md font-semibold transition-colors mb-4"
-                    >
-                      Connect with NIP-07 Extension
-                    </button>
-                    <p className="text-xs text-gray-500 dark:text-gray-400">
-                      Works with extensions like nos2x or Alby
-                    </p>
-                  </div>
-                  
-                  <div className="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700">
-                    <p className="text-gray-600 dark:text-gray-400 mb-2 text-sm">
-                      For demo purposes only:
-                    </p>
-                    <button
-                      onClick={() => generateRandomPubkey()}
-                      className="px-6 py-2 bg-gray-500 hover:bg-gray-600 text-white rounded-md font-semibold transition-colors text-sm"
-                    >
-                      Use Demo Pubkey
-                    </button>
                   </div>
                 </div>
               ) : (
                 <div>
                   <div className="mb-4 p-4 bg-gray-50 dark:bg-gray-700 rounded-lg">
                     <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">Connected with Nostr pubkey:</p>
-                    <p className="font-mono text-xs break-all">{publicKey}</p>
-                    {preferredClient === 'primal' && (
-                      <div className="mt-2 flex items-center text-green-600">
-                        <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-1" viewBox="0 0 20 20" fill="currentColor">
-                          <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                        </svg>
-                        <span className="text-xs">Using Primal (Recommended)</span>
-                      </div>
-                    )}
+                    <p className="font-mono text-xs break-all">{user.npub}</p>
+                    <div className="mt-2 flex items-center text-green-600">
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-1" viewBox="0 0 20 20" fill="currentColor">
+                        <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                      </svg>
+                      <span className="text-xs">Connected with {loginMethod === 'nip07' ? 'Browser Extension' : loginMethod === 'nip47' ? 'Remote Signer' : 'View Only'}</span>
+                    </div>
                   </div>
                   <div className="pt-4">
                     <button
                       onClick={handlePaymentRequest}
-                      className="w-full px-4 py-2 bg-[#F7931A] hover:bg-[#F7931A]/80 text-white rounded-md font-semibold transition-colors"
+                      disabled={loginMethod === 'viewonly'}
+                      className="w-full px-4 py-2 bg-[#F7931A] hover:bg-[#F7931A]/80 text-white rounded-md font-semibold transition-colors disabled:opacity-50"
                     >
                       Proceed to Payment
                     </button>
+                    
+                    {loginMethod === 'viewonly' && (
+                      <p className="mt-2 text-sm text-yellow-600 dark:text-yellow-400">
+                        You are in view-only mode. Please connect with a signing method to make payments.
+                      </p>
+                    )}
                   </div>
                 </div>
               )}
             </div>
           )}
           
-          {/* Payment QR Code */}
-          {paymentData && !bookingComplete && (
+          {/* NostrPayment Component - New Implementation */}
+          {showNostrPayment && paymentData && !bookingComplete && (
+            <div className="mt-8">
+              <NostrPayment
+                invoice={paymentData.invoice}
+                amount={formatSats(packageItem.price)}
+                description={`MadTrips: ${packageItem.title}`}
+                onSuccess={handlePaymentSuccess}
+                onError={handlePaymentError}
+                onCancel={handlePaymentCancel}
+              />
+            </div>
+          )}
+          
+          {/* Legacy Payment QR Code - Only show as fallback if NostrPayment not available */}
+          {paymentData && !bookingComplete && !showNostrPayment && (
             <div className="mt-8 max-w-md mx-auto text-center">
               <h2 className="text-xl font-semibold mb-4 text-gray-800 dark:text-white">Pay with Bitcoin</h2>
               <p className="text-gray-600 dark:text-gray-400 mb-4">

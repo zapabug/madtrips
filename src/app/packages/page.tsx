@@ -1,63 +1,14 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
+import { PACKAGES, formatSats } from '@/data/packages';
 import { Package } from '@/types';
-import { api } from '@/lib/api';
 
 export default function PackagesPage() {
-  const [packages, setPackages] = useState<Package[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    async function fetchPackages() {
-      try {
-        setLoading(true);
-        console.log('Fetching packages from API...');
-        const response = await api.getPackages() as { packages: Package[] };
-        console.log('Packages response:', response);
-        setPackages(response.packages);
-        setError(null);
-      } catch (err) {
-        console.error('Error fetching packages:', err);
-        if (err instanceof Error) {
-          setError(`Failed to load packages: ${err.message}`);
-        } else {
-          setError('Failed to load packages. Please try again later.');
-        }
-      } finally {
-        setLoading(false);
-      }
-    }
-
-    fetchPackages();
-  }, []);
-
-  // Helper function to format satoshi amount to BTC
-  const formatSats = (sats: number) => {
-    const btc = sats / 100000000;
-    return `${btc.toFixed(8)} BTC`;
-  };
-
-  if (loading) {
-    return (
-      <div className="container mx-auto px-4 py-12 flex items-center justify-center min-h-[60vh]">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[#F7931A]" />
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="container mx-auto px-4 py-12">
-        <div className="bg-red-50 p-4 rounded-md border border-red-200 text-red-700">
-          {error}
-        </div>
-      </div>
-    );
-  }
+  // No more API calls, using the direct hardcoded data
+  const [packages] = useState<Package[]>(PACKAGES);
 
   return (
     <div className="container mx-auto px-4 py-12">

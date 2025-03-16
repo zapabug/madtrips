@@ -2,8 +2,58 @@
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:9090/api';
 
+// Mock data for packages since we've moved everything to the frontend
+const MOCK_PACKAGES = [
+  {
+    id: '1',
+    title: 'Beach Day Experience',
+    description: 'Enjoy a day at Madeira\'s most beautiful beaches with transportation included.',
+    price: 15000000, // 0.15 BTC in satoshis
+    duration: '1 Day',
+    includes: ['Transportation', 'Lunch', 'Beach Equipment'],
+    image: '/assets/packages/beach-day.jpg'
+  },
+  {
+    id: '2',
+    title: 'Mountain Explorer',
+    description: 'Discover the stunning mountains and levadas of Madeira with expert guides.',
+    price: 30000000, // 0.3 BTC in satoshis
+    duration: '2 Days',
+    includes: ['Transportation', 'Accommodation', 'Meals', 'Guided Tours'],
+    image: '/assets/packages/mountains.jpg'
+  },
+  {
+    id: '3',
+    title: 'Bitcoin Conference Package',
+    description: 'All-inclusive package for the annual Bitcoin Madeira Conference.',
+    price: 50000000, // 0.5 BTC in satoshis
+    duration: '3 Days',
+    includes: ['Conference Entry', 'Accommodation', 'Meals', 'Networking Events'],
+    image: '/assets/packages/conference.jpg'
+  }
+];
+
 // Generic fetch function with error handling
 async function fetchAPI<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+  // Special handling for packages endpoints that now use mock data
+  if (endpoint === '/packages') {
+    console.log('Using mock packages data instead of API call');
+    return { packages: MOCK_PACKAGES } as unknown as T;
+  }
+  
+  if (endpoint.startsWith('/packages/')) {
+    const id = endpoint.split('/').pop();
+    const mockPackage = MOCK_PACKAGES.find(p => p.id === id);
+    
+    if (mockPackage) {
+      console.log(`Using mock data for package ${id}`);
+      return { package: mockPackage } as unknown as T;
+    } else {
+      throw new Error(`Package with ID ${id} not found`);
+    }
+  }
+
+  // For other endpoints, proceed with API call
   const url = `${API_BASE_URL}${endpoint}`;
   console.log(`API Request: ${url}`);
   
