@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import crypto from 'crypto';
 
 // Define Nostr login options type
 interface NostrLoginOptions {
@@ -6,6 +7,52 @@ interface NostrLoginOptions {
   theme?: 'ocean' | 'dark' | 'light';
   relayUrls?: string[];
 }
+
+// Types
+export interface NostrMessageResponse {
+  success: boolean;
+  eventId?: string;
+  timestamp?: string;
+  client?: string;
+  error?: string;
+}
+
+export interface NostrProof {
+  bookingId: string;
+  timestamp: string;
+  pubkey: string;
+  signature: string;
+}
+
+// For a real implementation, this would be securely managed
+const APP_PRIVATE_KEY = process.env.NOSTR_PRIVATE_KEY || crypto.randomBytes(32).toString('hex');
+
+// Convert hex private key to public key (simplified for demo)
+const getPublicKey = (privateKey: string): string => {
+  // In a real implementation, this would use proper cryptography
+  // For demo, we'll just hash the private key
+  return crypto.createHash('sha256').update(privateKey).digest('hex');
+};
+
+const APP_PUBLIC_KEY = getPublicKey(APP_PRIVATE_KEY);
+
+// Helper to convert npub to hex format if needed
+export const normalizeNostrPubkey = (pubkey: string): string => {
+  // Check if this is an npub prefix
+  if (pubkey.startsWith('npub')) {
+    console.log(`Converting npub to hex: ${pubkey.substring(0, 12)}...`);
+    // In a real implementation, you would use proper bech32 conversion
+    // For demo, we'll just return a known hex value for npub1funchalx8v747rsee6ahsuyrcd2s3rnxlyrtumfex9lecpmgwars6hq8kc
+    if (pubkey === 'npub1funchalx8v747rsee6ahsuyrcd2s3rnxlyrtumfex9lecpmgwars6hq8kc') {
+      return '36f11d533238584db19a528377cb622c3e58e3066057651a82a84f1f3dd618e8';
+    }
+    // For other npubs, just hash them for demo
+    return crypto.createHash('sha256').update(pubkey).digest('hex');
+  }
+  
+  // Already a hex pubkey
+  return pubkey;
+};
 
 /**
  * Custom hook to interact with Nostr
@@ -30,18 +77,6 @@ export function useNostr() {
   // Default Primal public key for demonstration
   const DEFAULT_PRIMAL_PUBKEY = 'npub1funchalx8v747rsee6ahsuyrcd2s3rnxlyrtumfex9lecpmgwars6hq8kc';
   
-  // Convert npub to hex format
-  const npubToHex = (npub: string): string => {
-    // Simple conversion for demo purposes
-    // In a real implementation, you'd use proper bech32 conversion
-    if (npub.startsWith('npub')) {
-      // This is a simplified approach - in production code,
-      // you should use a proper Nostr library for conversion
-      return '36f11d533238584db19a528377cb622c3e58e3066057651a82a84f1f3dd618e8';
-    }
-    return npub;
-  };
-
   // Check for existing connection on load
   useEffect(() => {
     const checkConnection = async () => {
@@ -172,4 +207,97 @@ export function useNostr() {
     // For demo purposes only
     generateRandomPubkey
   };
-} 
+}
+
+// Send a direct message to a user
+export const sendDirectMessage = async (
+  recipientPubkey: string, 
+  message: string
+): Promise<NostrMessageResponse> => {
+  try {
+    // Normalize the pubkey (convert from npub if needed)
+    const normalizedPubkey = normalizeNostrPubkey(recipientPubkey);
+    
+    console.log(`Sending Nostr DM to ${normalizedPubkey.substring(0, 8)}...`);
+    console.log('Message content:', message);
+    
+    // In a real implementation, this would create and publish a Nostr event
+    // For demo purposes, we'll just log the message
+    
+    // Check if this is a Primal pubkey and handle accordingly
+    const isPrimal = recipientPubkey.startsWith('npub1funchalx8v747rsee6ahsuyrcd2s3rnxlyrtumfex9lecpmgwars6hq8kc');
+    if (isPrimal) {
+      console.log('Using Primal-specific DM protocol...');
+    }
+    
+    // Simulate a successful message send
+    return {
+      success: true,
+      eventId: crypto.randomBytes(32).toString('hex'),
+      timestamp: new Date().toISOString(),
+      client: isPrimal ? 'primal' : 'standard'
+    };
+  } catch (error: any) {
+    console.error('Error sending Nostr DM:', error);
+    return {
+      success: false,
+      error: error.message
+    };
+  }
+};
+
+export interface BookingDetails {
+  id: string;
+  nostrPubkey: string;
+  packageTitle: string;
+  createdAt: string;
+}
+
+export interface PaymentDetails {
+  amount: number;
+}
+
+// Send a booking confirmation message
+export const sendBookingConfirmation = async (
+  booking: BookingDetails, 
+  payment: PaymentDetails
+): Promise<NostrMessageResponse> => {
+  if (!booking.nostrPubkey) {
+    console.warn('Cannot send booking confirmation: No Nostr pubkey provided');
+    return { success: false, error: 'No Nostr pubkey provided' };
+  }
+  
+  // Check if this is a Primal pubkey
+  const isPrimal = booking.nostrPubkey.includes('npub1funchalx8v747rsee6ahsuyrcd2s3rnxlyrtumfex9lecpmgwars6hq8kc');
+  
+  // Create a message with appropriate format for the client
+  const confirmationMessage = `
+🎉 Your MadTrips booking is confirmed!
+
+📦 Package: ${booking.packageTitle}
+🔑 Booking ID: ${booking.id}
+💰 Amount: ${payment.amount} sats
+📅 Date: ${new Date(booking.createdAt).toLocaleString()}
+
+Thank you for booking with MadTrips! Your adventure awaits.
+
+${isPrimal ? '📱 Confirmation sent via Primal' : 'This is a secure message sent via Nostr.'}
+`;
+
+  return await sendDirectMessage(booking.nostrPubkey, confirmationMessage);
+};
+
+// For demo purposes only - in a real app, you would use proper Nostr libraries
+export const generateNostrProof = (bookingId: string): NostrProof => {
+  // Create a simple proof of booking that could be verified
+  const signature = crypto.createHmac('sha256', APP_PRIVATE_KEY)
+    .update(bookingId)
+    .digest('hex');
+    
+  return {
+    bookingId,
+    timestamp: new Date().toISOString(),
+    pubkey: APP_PUBLIC_KEY,
+    signature
+  };
+}; 

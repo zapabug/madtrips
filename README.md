@@ -63,3 +63,37 @@ Nostr: npub1dxd02kcjhgpkyrx60qnkd6j42kmc72u5lum0rp2ud8x5zfhnk4zscjj6hh
 Community: Join NOSTR! 
 
 🚀 MadTrips – Experience the Future of Travel with Bitcoin!
+
+## Architecture Overview
+
+MadTrips uses an optimized architecture that leverages Next.js App Router and API Routes to eliminate the need for a separate Express.js server.
+
+### Key Features
+
+- **Serverless API Routes**: All backend functionality is implemented through Next.js API Routes, eliminating the need for a separate server.
+- **Client-side Nostr Integration**: Where possible, Nostr operations are performed directly in the browser using NIP-07 compatible extensions.
+- **Server Components**: Using React Server Components for improved performance and reduced client-side JavaScript.
+- **Minimal Server-Side Logic**: Server-side operations are limited only to those requiring secrets or security (like payment processing).
+
+### Folder Structure
+
+- `/src/app/api/*` - Next.js API Routes replacing Express.js endpoints
+- `/src/lib/*` - Shared libraries for both client and server
+- `/src/components/*` - React components, including client-side Nostr integration
+
+### API Routes
+
+- `GET /api/packages` - List all travel packages
+- `GET /api/packages/[id]` - Get a specific travel package
+- `GET /api/businesses` - List Bitcoin-accepting businesses
+- `POST /api/payments` - Create a Lightning invoice
+- `GET /api/payments/[id]` - Check payment status
+- `POST /api/bookings` - Create a new booking
+
+### Benefits of This Architecture
+
+1. **Simplified Deployment**: Single deployment instead of separate frontend and backend
+2. **Reduced Infrastructure**: No need to maintain separate servers
+3. **Improved Performance**: API routes can be deployed at the edge for faster response times
+4. **Better Developer Experience**: Single codebase and seamless TypeScript integration
+5. **Enhanced Security**: Sensitive operations remain server-side while moving non-sensitive operations to the client
