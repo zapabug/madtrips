@@ -2,44 +2,17 @@
 
 import React, { useEffect, useState } from 'react'
 import dynamic from 'next/dynamic'
+import { GraphNode, GraphLink } from '../../types';
+import { preloadImages, handleNodeClick } from '../../utils/graphUtils';
+import { BRAND_COLORS } from '../../constants/brandColors';
 
 // Dynamically import ForceGraph2D with no SSR
 const ForceGraph2D = dynamic(() => import('react-force-graph-2d').then(mod => mod.default), { ssr: false })
 
-// Branding colors
-const BRAND_COLORS = {
-  bitcoinOrange: '#F7931A', // Bitcoin & innovation
-  deepBlue: '#1E3A8A',     // Atlantic Ocean
-  forestGreen: '#0F4C35',  // Lush landscapes
-  lightSand: '#F5E3C3',    // Beach-inspired
-}
-
-// Types for the visualization
-interface Node {
-  id: string
-  name?: string
-  npub: string
-  type: string
-  picture?: string
-  x?: number
-  y?: number
-  color?: string
-  val?: number
-  isCoreNode?: boolean
-}
-
-interface Link {
-  source: string | { id: string }
-  target: string | { id: string }
-  value?: number
-  color?: string
-  type?: string
-}
-
 interface SocialGraphVisualizationProps {
   data: {
-    nodes: Node[]
-    links: Link[]
+    nodes: GraphNode[]
+    links: GraphLink[]
   }
   width: number
   height: number
@@ -54,64 +27,72 @@ export const SocialGraphVisualization: React.FC<SocialGraphVisualizationProps> =
   const [nodeImages, setNodeImages] = useState<Map<string, HTMLImageElement>>(new Map())
   const [isLoadingImages, setIsLoadingImages] = useState(false)
 
-  // Preload images for better rendering
+  // Use the shared preloadImages function instead of the duplicate one
   useEffect(() => {
-    const preloadImages = async () => {
-      console.log('Preloading images for nodes:', data.nodes.length)
-      setIsLoadingImages(true)
-      
-      const imageMap = new Map<string, HTMLImageElement>()
-      const imagePromises: Promise<void>[] = []
-
-      // Process nodes with pictures
-      data.nodes.forEach(node => {
-        if (node.picture && node.npub) {
-          const img = new Image()
-          
-          const promise = new Promise<void>((resolve) => {
-            img.onload = () => {
-              imageMap.set(node.npub, img)
-              resolve()
-            }
-            img.onerror = () => {
-              console.warn(`Failed to load image for ${node.npub}`)
-              resolve()
-            }
-          })
-          
-          img.src = node.picture
-          imagePromises.push(promise)
-        }
-      })
-
-      try {
-        await Promise.all(imagePromises)
-        console.log(`Successfully loaded ${imageMap.size} images`)
-      } catch (err) {
-        console.error('Error preloading images:', err)
-      } finally {
-        setNodeImages(imageMap)
-        setIsLoadingImages(false)
-      }
-    }
-
     if (data && data.nodes && data.nodes.length > 0) {
-      preloadImages()
+      setIsLoadingImages(true);
+      
+      const imageMap = new Map<string, HTMLImageElement>();
+      
+      // Create a function to update the nodeImages state when images are loaded
+      const handleImagesLoaded = () => {
+        setNodeImages(imageMap);
+        setIsLoadingImages(false);
+        console.log(`Successfully loaded ${imageMap.size} images`);
+      };
+      
+      // Create a function to handle errors
+      const handleImageError = (error: any) => {
+        console.error('Error preloading images:', error);
+        setIsLoadingImages(false);
+      };
+      
+      // Process nodes with pictures and npub
+      const nodesWithImages = data.nodes.filter(node => 
+        node.picture && node.npub && typeof node.npub === 'string'
+      );
+      
+      // Create a custom preload function that updates our local imageMap
+      const customPreload = (nodes: GraphNode[], onLoad: () => void, onError: (error: any) => void) => {
+        let loadedImages = 0;
+        let validNodes = 0;
+        
+        nodes.forEach((node) => {
+          if (node.picture && node.npub) {
+            validNodes++;
+            const img = new Image();
+            img.src = node.picture;
+            img.onload = () => {
+              if (node.npub) {
+                imageMap.set(node.npub, img);
+              }
+              loadedImages += 1;
+              if (loadedImages === validNodes) {
+                onLoad();
+              }
+            };
+            img.onerror = onError;
+          }
+        });
+        
+        if (validNodes === 0) {
+          onLoad();
+        }
+      };
+      
+      // Use our custom preload function
+      customPreload(nodesWithImages, handleImagesLoaded, handleImageError);
     }
-  }, [data])
-
-  // Handle node click
-  const handleNodeClick = (node: any, event: MouseEvent) => {
-    console.log('Node clicked:', node)
-    
-    // Open the Nostr profile in njump.me
-    if (node.npub && node.npub.startsWith('npub')) {
-      const url = `https://njump.me/${node.npub}`
-      window.open(url, '_blank')
-    }
-  }
+  }, [data]);
 
   console.log(`Rendering social graph with ${data?.nodes?.length || 0} nodes and ${data?.links?.length || 0} links`)
+
+  // Ensure node.npub is defined before using it
+  const handleNodeClickWrapper = (node: any, event: MouseEvent) => {
+    if (node.npub && typeof node.npub === 'string') {
+      handleNodeClick(node as GraphNode);
+    }
+  };
 
   return (
     <ForceGraph2D
@@ -120,7 +101,7 @@ export const SocialGraphVisualization: React.FC<SocialGraphVisualizationProps> =
       nodeVal={(node: any) => node.isCoreNode ? 10 : 5}
       linkColor={(link: any) => link.type === 'mutual' ? BRAND_COLORS.forestGreen : '#adb5bd'}
       linkWidth={(link: any) => Math.sqrt(link.value || 1)}
-      onNodeClick={handleNodeClick}
+      onNodeClick={handleNodeClickWrapper}
       width={width}
       height={height}
       backgroundColor="transparent"

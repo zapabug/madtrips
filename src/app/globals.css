@@ -27,10 +27,22 @@
   to { transform: translateY(0); opacity: 1; }
 }
 
+/* Add custom animation for loading messages - slower timing */
+@keyframes fadeInOut {
+  0% { opacity: 0; transform: translateY(10px); }
+  10% { opacity: 1; transform: translateY(0); }
+  90% { opacity: 1; transform: translateY(0); }
+  100% { opacity: 0; transform: translateY(-10px); }
+}
+
 .animate-fade-in {
   animation: fadeIn 0.5s ease-in-out;
 }
 
 .animate-slide-up {
   animation: slideUp 0.5s ease-out;
+}
+
+.animate-fade-in-out {
+  animation: fadeInOut 6s ease-in-out;
 }

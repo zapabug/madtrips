@@ -2,11 +2,7 @@
 
 import Image from 'next/image'
 import { useProfileImage } from '@/lib/hooks/useProfileImage'
-
-// Known profile pictures for specific npubs
-const KNOWN_PROFILES: Record<string, string> = {
-  'npub1freemadeir39t3zlklv2yq2espvmhqnntwlvf34jp9xy2k79gqmqrg9g7w': 'https://freemadeira.com/wp-content/uploads/2023/03/freemadeira-logo-01.png'
-}
+import { KNOWN_PROFILES } from '../../utils/profileUtils'
 
 interface NostrProfileImageProps {
   npub: string
