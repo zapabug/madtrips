@@ -330,8 +330,9 @@ export default function PackageDetailPage() {
             <div className="mt-8">
               <NostrPayment
                 invoice={paymentData.invoice}
-                amount={formatSats(packageItem.price)}
+                amount={packageItem.price}
                 description={`MadTrips: ${packageItem.title}`}
+                recipientPubkey={process.env.NEXT_PUBLIC_APP_PUBKEY || ''}
                 onSuccess={handlePaymentSuccess}
                 onError={handlePaymentError}
                 onCancel={handlePaymentCancel}

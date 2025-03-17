@@ -218,13 +218,30 @@ export const NostrLoginButton: React.FC = () => {
     
     try {
       // Subscribe to NIP-47 connection events (kind 24133)
+      // Note: NIP-47 uses "session" as the tag identifier, not "#session"
       const filter = {
         kinds: [24133],
         "#session": [sessionToken.current]
       };
       
+      console.log("Checking for connection events with session token:", sessionToken.current.substring(0, 8) + "...");
+      
       // Use NDK to fetch events - real implementation for production
-      const events = await ndk.fetchEvents(filter);
+      let events = await ndk.fetchEvents(filter);
+      
+      // Also try with alternative tag format as implementations may vary
+      if (!events || events.size === 0) {
+        const alternativeFilter = {
+          kinds: [24133],
+          "session": [sessionToken.current]
+        };
+        const alternativeEvents = await ndk.fetchEvents(alternativeFilter);
+        if (alternativeEvents && alternativeEvents.size > 0) {
+          console.log("Found events with alternative tag format");
+          // Use these events instead
+          events = alternativeEvents;
+        }
+      }
       
       // Check if we have any matching events
       if (events && events.size > 0) {
@@ -232,10 +249,23 @@ export const NostrLoginButton: React.FC = () => {
         const firstEvent = Array.from(events)[0];
         console.log("Received connection event:", firstEvent);
         
-        // Validate the event further if needed
-        // For example, check the pubkey matches what we expect
-        
-        return true;
+        // Validate event further to ensure it's a proper connection event
+        // Check both tag formats as implementations may vary
+        if (firstEvent.kind === 24133 && 
+            (firstEvent.tags.some(tag => tag[0] === 'session' && tag[1] === sessionToken.current) ||
+             firstEvent.tags.some(tag => tag[0] === '#session' && tag[1] === sessionToken.current))) {
+          console.log("Valid connection event confirmed with pubkey:", firstEvent.pubkey);
+          return true;
+        } else {
+          console.warn("Received event didn't fully match expected format, tags:", firstEvent.tags);
+          // Log all tags for debugging
+          firstEvent.tags.forEach(tag => {
+            console.log(`Tag: ${tag[0]} = ${tag[1]}`);
+          });
+          return false;
+        }
+      } else {
+        console.log("No connection events found yet");
       }
       
       return false;

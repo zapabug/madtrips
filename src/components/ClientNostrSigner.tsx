@@ -171,6 +171,9 @@ export default function ClientNostrSigner() {
             // Save connection information
             saveConnectionInfo();
             
+            // Complete the connection process
+            await completeNip47Login();
+            
             // Setup event listeners for future sign requests
             setupEventListeners();
             
@@ -236,19 +239,91 @@ export default function ClientNostrSigner() {
     }
   };
 
+  // Complete the NIP-47 login process once connected
+  const completeNip47Login = async () => {
+    try {
+      if (ndk && sessionToken.current) {
+        // Get the first relay URL from NDK if available
+        let relayUrl = "wss://relay.damus.io"; // Default fallback
+        
+        try {
+          if (ndk.pool?.relays) {
+            const relaysArray = Array.from(ndk.pool.relays.values());
+            if (relaysArray.length > 0 && 
+                typeof relaysArray[0] === 'object' && 
+                relaysArray[0] !== null && 
+                'url' in relaysArray[0]) {
+              relayUrl = String(relaysArray[0].url);
+            }
+          }
+        } catch (e) {
+          console.error("Error extracting relay URL for login:", e);
+        }
+        
+        // First verify the connection is valid
+        const filter = {
+          kinds: [24133 as NDKKind],
+          "#session": [sessionToken.current]
+        };
+        
+        const events = await ndk.fetchEvents(filter);
+        
+        if (!events || events.size === 0) {
+          throw new Error("No valid connection event found");
+        }
+        
+        // Extract the user's pubkey from the connection event
+        const connectionEvent = Array.from(events)[0];
+        const userPubkey = connectionEvent.pubkey;
+        
+        // Set the pubkey in the component state for display
+        setPubkey(userPubkey);
+        
+        console.log("NIP-47 login successful with pubkey:", userPubkey);
+        
+        // Show success message
+        setResult({
+          success: true,
+          eventId: connectionEvent.id
+        });
+      }
+    } catch (error) {
+      console.error("Failed to complete NIP-47 login:", error);
+      setConnectionStatus('error');
+      setError("Failed to complete login: " + (error instanceof Error ? error.message : "Unknown error"));
+    }
+  };
+
   // Check for connection events using real NDK events
   const checkForConnectionEvents = async (): Promise<boolean> => {
     if (!ndk || !sessionToken.current) return false;
     
     try {
       // Subscribe to NIP-47 connection events (kind 24133)
+      // Note: NIP-47 uses "session" as the tag identifier, not "#session"
       const filter = {
         kinds: [24133 as NDKKind],
         "#session": [sessionToken.current]
       };
       
+      console.log("Checking for connection events with session token:", sessionToken.current.substring(0, 8) + "...");
+      
       // Use NDK to fetch events
-      const events = await ndk.fetchEvents(filter);
+      let events = await ndk.fetchEvents(filter);
+      
+      // Also try with alternative tag format as implementations may vary
+      if (!events || events.size === 0) {
+        const alternativeFilter = {
+          kinds: [24133 as NDKKind],
+          "session": [sessionToken.current]
+        };
+        const alternativeEvents = await ndk.fetchEvents(alternativeFilter);
+        if (alternativeEvents && alternativeEvents.size > 0) {
+          console.log("Found events with alternative tag format");
+          // Use these events instead
+          events = alternativeEvents;
+        }
+      }
       
       // Check if we have any matching events
       if (events && events.size > 0) {
@@ -256,7 +331,23 @@ export default function ClientNostrSigner() {
         const firstEvent = Array.from(events)[0];
         console.log("Received connection event:", firstEvent);
         
-        return true;
+        // Validate event further to ensure it's a proper connection event
+        // Check both tag formats as implementations may vary
+        if (firstEvent.kind === 24133 && 
+            (firstEvent.tags.some(tag => tag[0] === 'session' && tag[1] === sessionToken.current) ||
+             firstEvent.tags.some(tag => tag[0] === '#session' && tag[1] === sessionToken.current))) {
+          console.log("Valid connection event confirmed with pubkey:", firstEvent.pubkey);
+          return true;
+        } else {
+          console.warn("Received event didn't fully match expected format, tags:", firstEvent.tags);
+          // Log all tags for debugging
+          firstEvent.tags.forEach(tag => {
+            console.log(`Tag: ${tag[0]} = ${tag[1]}`);
+          });
+          return false;
+        }
+      } else {
+        console.log("No connection events found yet");
       }
       
       return false;
