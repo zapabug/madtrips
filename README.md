@@ -6,94 +6,91 @@ MadTrips is an all-in-one travel solution for Bitcoiners living on a Bitcoin sta
 
 Features
 
-Bitcoin-Only Travel Packages: Adventure, luxury, and business retreats with full Bitcoin payment integration.
-
-Bitcoin Business Directory & Map: Explore over 130+ Bitcoin-accepting businesses in Madeira.
-
-Custom Tours & Airport Transfers: Bitcoin-accepted taxi and guided experiences.
-
-Bitcoin Circular Economy: Experience a 100% BTC-based lifestyle.
-
-Nostr Integration: Decentralized authentication, community engagement, and live updates.
+- **Bitcoin-Only Travel Packages**: Adventure, luxury, and business retreats with full Bitcoin payment integration
+- **Bitcoin Business Directory & Map**: Explore over 130+ Bitcoin-accepting businesses in Madeira
+- **Custom Tours & Airport Transfers**: Bitcoin-accepted taxi and guided experiences
+- **Bitcoin Circular Economy**: Experience a 100% BTC-based lifestyle
+- **Nostr Integration**: Decentralized authentication, data storage, and community engagement
+- **Personalized Experience**: Save packages, track bookings, and manage your travel preferences
 
 Services
 
 Travel Packages
 
-Bitcoin & Business Teambuilding Retreats
-
-Ultimate Madeira Adventure
-
-Couples Escape
-
-Bitcoin Pioneer Tour (100% BTC Lifestyle)
-
-VIP Experience (Luxury & Custom Trips)
+- Bitcoin & Business Teambuilding Retreats
+- Ultimate Madeira Adventure
+- Couples Escape
+- Bitcoin Pioneer Tour (100% BTC Lifestyle)
+- VIP Experience (Luxury & Custom Trips)
 
 Additional Services
 
-Guided Bitcoin Economy Tours
-
-BTC-to-Fiat Exchange Facilitation
+- Guided Bitcoin Economy Tours
+- BTC-to-Fiat Exchange Facilitation
 
 Tech Stack
 
-Frontend: Next.js + TailwindCSS
-
-Backend: Bun + Node.js + Express
-
-Authentication & Data: Nostr (nsite & Blossom)
-
-Payments: Lightning Network (LNURL, BTCPay, LNBits)
+- **Frontend**: Next.js + TailwindCSS
+- **Authentication & Storage**: Nostr (NIP-07, NIP-19)
+- **Payments**: Lightning Network (LNURL, BTCPay, LNBits)
+- **State Management**: React Context + Nostr Storage
 
 Getting Started
 
-Book Your Trip: Select from pre-designed packages or build your own.
+1. **Connect Your Wallet**: Use your Nostr wallet to sign in and access personalized features
+2. **Browse Packages**: Explore pre-designed packages or build your own custom experience
+3. **Save & Compare**: Save packages to your wishlist and compare options
+4. **Book & Pay**: Complete your booking with Bitcoin via Lightning Network
+5. **Track & Manage**: View your booking history and manage upcoming trips
 
-Pay in Bitcoin: Secure transactions via LNURL or On-Chain BTC.
+User Features
 
-Enjoy Madeira: Use Bitcoin to pay for food, transport, and experiences.
+- **Personal Cart**: Save and manage your selected packages (stored in your Nostr relays)
+- **Booking History**: Track all your past and upcoming trips
+- **Saved Packages**: Create a wishlist of packages for future reference
+- **Decentralized Storage**: Your data is stored in your Nostr relays, not on our servers
+- **Bitcoin Payments**: Secure and instant payments via Lightning Network
 
 Contact & Community
 
-Website: https://mad-trips.npub.pro/ [nsite comming soon]
-
-Nostr: npub1dxd02kcjhgpkyrx60qnkd6j42kmc72u5lum0rp2ud8x5zfhnk4zscjj6hh
-
-Community: Join NOSTR! 
+- Website: https://mad-trips.npub.pro/ [nsite coming soon]
+- Nostr: npub1dxd02kcjhgpkyrx60qnkd6j42kmc72u5lum0rp2ud8x5zfhnk4zscjj6hh
+- Community: Join NOSTR!
 
 🚀 MadTrips – Experience the Future of Travel with Bitcoin!
 
 ## Architecture Overview
 
-MadTrips uses an optimized architecture that leverages Next.js App Router and API Routes to eliminate the need for a separate Express.js server.
+MadTrips uses a fully decentralized architecture leveraging Nostr for authentication and data storage, eliminating the need for traditional backend servers.
 
 ### Key Features
 
-- **Serverless API Routes**: All backend functionality is implemented through Next.js API Routes, eliminating the need for a separate server.
-- **Client-side Nostr Integration**: Where possible, Nostr operations are performed directly in the browser using NIP-07 compatible extensions.
-- **Server Components**: Using React Server Components for improved performance and reduced client-side JavaScript.
-- **Minimal Server-Side Logic**: Server-side operations are limited only to those requiring secrets or security (like payment processing).
+- **Decentralized Storage**: User data stored in Nostr relays using NIP-19
+- **Client-side Nostr Integration**: Direct browser integration with NIP-07 compatible extensions
+- **Server Components**: Using React Server Components for improved performance
+- **State Management**: React Context with Nostr persistence
 
 ### Folder Structure
 
-- `/src/app/api/*` - Next.js API Routes replacing Express.js endpoints
-- `/src/lib/*` - Shared libraries for both client and server
-- `/src/components/*` - React components, including client-side Nostr integration
+- `/src/app/*` - Next.js App Router pages
+- `/src/components/*` - React components
+- `/src/hooks/*` - Custom React hooks for Nostr integration
+- `/src/lib/*` - Shared utilities and Nostr services
+- `/src/types/*` - TypeScript type definitions
 
-### API Routes
+### Data Storage
 
-- `GET /api/packages` - List all travel packages
-- `GET /api/packages/[id]` - Get a specific travel package
-- `GET /api/businesses` - List Bitcoin-accepting businesses
-- `POST /api/payments` - Create a Lightning invoice
-- `GET /api/payments/[id]` - Check payment status
-- `POST /api/bookings` - Create a new booking
+- **User Preferences**: Stored in Nostr relays using NIP-19
+- **Cart State**: Persisted to user's Nostr relays
+- **Booking History**: Stored as Nostr events
+- **Package Data**: Static data with optional Nostr updates
 
 ### Benefits of This Architecture
 
-1. **Simplified Deployment**: Single deployment instead of separate frontend and backend
-2. **Reduced Infrastructure**: No need to maintain separate servers
-3. **Improved Performance**: API routes can be deployed at the edge for faster response times
-4. **Better Developer Experience**: Single codebase and seamless TypeScript integration
-5. **Enhanced Security**: Sensitive operations remain server-side while moving non-sensitive operations to the client
+1. **True Decentralization**: No central server required
+2. **Enhanced Privacy**: Data stored in user's own relays
+3. **Better Developer Experience**: TypeScript and modern React features
+4. **Enhanced Security**: Nostr-based authentication and Bitcoin payments
+5. **Seamless User Experience**: Persistent state and offline capabilities
+6. **Cost Effective**: No server infrastructure needed
+7. **Censorship Resistant**: Data stored across multiple relays

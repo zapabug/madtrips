@@ -52,4 +52,29 @@ export interface CreateBookingRequest {
   packageId: string;
   nostrPubkey: string;
   invoice: string;
+}
+
+// Cart item type
+export interface CartItem {
+  id: string;
+  packageId: string;
+  title: string;
+  price: number;
+  quantity: number;
+  selectedOptions?: Record<string, any>;
+}
+
+// Cart state type
+export interface CartState {
+  items: CartItem[];
+  total: number;
+  lastUpdated: string;
+}
+
+// User selections type
+export interface UserSelections {
+  nostrPubkey: string;
+  cart: CartState;
+  savedPackages: string[]; // Array of package IDs
+  bookingHistory: BookingData[];
 } 
