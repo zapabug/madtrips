@@ -4,6 +4,22 @@ import React, { useState, useEffect } from 'react';
 import { useNostr } from '@/lib/contexts/NostrContext';
 import { getPaymentService } from '@/lib/services/PaymentService';
 
+// Define WebLN interface directly in this file
+interface WebLNProvider {
+  enable: () => Promise<void>;
+  sendPayment: (invoice: string) => Promise<{
+    preimage: string;
+    paymentHash?: string;
+  }>;
+}
+
+// Add a type declaration that is specific to this file
+declare global {
+  interface Window {
+    webln?: WebLNProvider;
+  }
+}
+
 interface NostrPaymentProps {
   invoice: string;
   amount: string;
@@ -225,18 +241,4 @@ export const NostrPayment: React.FC<NostrPaymentProps> = ({
       </div>
     </div>
   );
-};
-
-// WebLN type definitions for TypeScript
-declare global {
-  interface Window {
-    webln?: {
-      enable: () => Promise<void>;
-      sendPayment: (invoice: string) => Promise<{
-        preimage: string;
-        paymentHash?: string;
-      }>;
-      // Add other WebLN methods as needed
-    };
-  }
-} 
+}; 

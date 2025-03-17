@@ -1,53 +1,6 @@
 // Global type augmentations for Nostr
-interface Window {
-  nostr?: {
-    getPublicKey: () => Promise<string>;
-    signEvent: (event: any) => Promise<any>;
-    // Add other nostr methods as needed
-  };
-  
-  NostrLogin?: {
-    getProfile?: (npub: string) => { picture?: string, name?: string, [key: string]: any } | null;
-    launch?: (opts: any) => void;
-    ensureAuth?: (opts?: any) => any;
-    // Allow additional properties
-    [key: string]: any;
-  };
-  
-  // WebLN interface for Lightning payments
-  webln?: {
-    enable: () => Promise<void>;
-    getInfo: () => Promise<{
-      node: {
-        alias: string;
-        pubkey: string;
-        color?: string;
-      };
-      methods: string[];
-      // Additional fields may be present
-      [key: string]: any;
-    }>;
-    sendPayment: (paymentRequest: string) => Promise<{
-      preimage: string;
-      paymentHash?: string;
-    }>;
-    makeInvoice: (args: {
-      amount: string | number;
-      defaultMemo?: string;
-      defaultAmount?: string | number;
-    }) => Promise<{
-      paymentRequest: string;
-      paymentHash?: string;
-    }>;
-    signMessage: (message: string) => Promise<{ signature: string }>;
-    verifyMessage: (signature: string, message: string) => Promise<{ valid: boolean }>;
-    // Allow additional properties
-    [key: string]: any;
-  };
-}
 
 // Types for Nostr extensions and integrations
-
 interface Nostr {
   getPublicKey: () => Promise<string>;
   signEvent: (event: any) => Promise<any>;
@@ -129,5 +82,6 @@ declare global {
   interface Window {
     nostr?: NIP07Interface;
     madtripsNostr?: MadTripsNostr;
+    // WebLN is now defined in webln.d.ts
   }
 } 

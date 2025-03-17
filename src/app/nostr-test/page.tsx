@@ -1,3 +1,5 @@
+'use client';
+
 import dynamic from 'next/dynamic';
 
 // Use dynamic import with no SSR to avoid hydration issues with client components
@@ -54,7 +56,4 @@ export default function NostrTestPage() {
   );
 }
 
-export const metadata = {
-  title: 'Nostr Payment Integration | MadTrips',
-  description: 'Nostr payment integration using NIP-47 and Lightning',
-}; 
+// Metadata removed - should be in a metadata.ts file or similar 

@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
-import { Package, PaymentData } from '@/types';
+import { Package, PaymentData } from '@/types/index';
 import { useNostr } from '@/lib/contexts/NostrContext';
 import { NostrPayment } from '@/components/NostrPayment';
 import React from 'react';

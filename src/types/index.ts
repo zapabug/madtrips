@@ -1,49 +1,15 @@
-// Travel package type
-export interface Package {
-  id: string;
-  title: string;
-  description: string;
-  price: number;
-  duration: string;
-  includes: string[];
-  image?: string;
-}
+/**
+ * Types Index
+ * 
+ * This file serves as the central export point for all types in the application.
+ * Instead of defining types here, we re-export them from dedicated type files.
+ */
 
-// Payment data
-export interface PaymentData {
-  id: string;
-  invoice: string;
-  qrCode: string;
-  expiry: number;
-}
+// Re-export all package related types
+export * from './package-types';
 
-// Booking data
-export interface BookingData {
-  id: string;
-  packageId: string;
-  packageTitle: string;
-  nostrPubkey: string;
-  paymentId: string;
-  amount: number;
-  status: string;
-  createdAt: string;
-}
+// Re-export all graph related types
+export * from './graph-types';
 
-// Booking form data
-export interface BookingFormData {
-  name: string;
-  email: string;
-}
-
-// Payment creation request
-export interface CreatePaymentRequest {
-  amount: number;
-  description: string;
-}
-
-// Booking creation request
-export interface CreateBookingRequest {
-  packageId: string;
-  nostrPubkey: string;
-  invoice: string;
-} 
+// Note: global.d.ts, nostr.d.ts, and webln.d.ts don't need to be re-exported
+// as they use the 'declare global' syntax for global augmentation. 

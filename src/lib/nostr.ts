@@ -1,3 +1,5 @@
+'use client';
+
 import { useState, useEffect } from 'react';
 import crypto from 'crypto';
 
@@ -157,7 +159,7 @@ export function useNostr() {
     
     try {
       // For demo purposes, we'll directly use the hardcoded public key
-      const hexPubkey = npubToHex(DEFAULT_PRIMAL_PUBKEY);
+      const hexPubkey = normalizeNostrPubkey(DEFAULT_PRIMAL_PUBKEY);
       setPublicKey(hexPubkey);
       setIsNostrConnected(true);
       setPreferredClient('primal');

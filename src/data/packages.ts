@@ -1,4 +1,4 @@
-import { Package } from '@/types';
+import { Package } from '@/types/index';
 
 // Shared packages data for use across the application
 export const PACKAGES: Package[] = [
