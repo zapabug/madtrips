@@ -1,72 +1,334 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { normalizeNostrPubkey } from '@/lib/nostr';
 import { QRCodeSVG } from 'qrcode.react';
 import { useNostr } from '@/lib/contexts/NostrContext';
+import { NDKEvent, NDKKind } from '@nostr-dev-kit/ndk';
 
 // This component demonstrates how to move Nostr signing to the client-side
 // Instead of making server API calls for Nostr operations
 
 export default function ClientNostrSigner() {
-  const { user, login, loginMethod } = useNostr();
+  const { ndk } = useNostr();
   const [message, setMessage] = useState('');
   const [result, setResult] = useState<{success: boolean; eventId?: string} | null>(null);
   const [pubkey, setPubkey] = useState('');
   const [error, setError] = useState('');
   const [connectUrl, setConnectUrl] = useState('');
   const [copySuccess, setCopySuccess] = useState(false);
-  const [showQR, setShowQR] = useState(false);
+  const [connectionStatus, setConnectionStatus] = useState<'idle' | 'connecting' | 'connected' | 'error'>('idle');
+  
+  // Session token for NIP-47 connection
+  const sessionToken = useRef<string>('');
+  // Connection checking interval
+  const connectionCheckInterval = useRef<NodeJS.Timeout | null>(null);
+  
+  // Security utilities for production use
+  const SESSION_EXPIRY_HOURS = 24;
+  const isSessionExpired = (timestamp: number) => {
+    const expiryTime = timestamp + (SESSION_EXPIRY_HOURS * 60 * 60 * 1000);
+    return Date.now() > expiryTime;
+  };
+
+  const generateSecureToken = () => {
+    const array = new Uint8Array(32);
+    crypto.getRandomValues(array);
+    return Array.from(array, byte => byte.toString(16).padStart(2, '0')).join('');
+  };
+
+  const saveSession = (token: string, pubkey: string, relay: string) => {
+    const session = { token, pubkey, relay, timestamp: Date.now() };
+    localStorage.setItem('nostr_client_signer_session', JSON.stringify(session));
+  };
   
   // Check if window.nostr exists (NIP-07)
   const isNostrAvailable = () => {
     return typeof window !== 'undefined' && 'nostr' in window;
   };
 
+  // Check for existing NIP-47 sessions on mount
+  useEffect(() => {
+    if (ndk) {
+      // Check for existing connections on mount
+      const savedSession = localStorage.getItem('nostr_client_signer_session');
+      if (savedSession) {
+        try {
+          const session = JSON.parse(savedSession);
+          if (session.token && session.pubkey && session.relay && !isSessionExpired(session.timestamp)) {
+            // Restore the session and check if it's still valid
+            sessionToken.current = session.token;
+            setConnectionStatus('connecting');
+            startConnectionCheck();
+          } else {
+            // Session expired, remove it
+            localStorage.removeItem('nostr_client_signer_session');
+          }
+        } catch (e) {
+          console.error("Error restoring session:", e);
+          localStorage.removeItem('nostr_client_signer_session');
+        }
+      }
+    }
+  }, [ndk]);
+
   // Generate a Nostr Connect URL (NIP-47) when component mounts
   useEffect(() => {
-    if (!user && loginMethod !== 'nip47') {
+    if (ndk) {
       generateConnectUrl();
     }
-  }, [user, loginMethod]);
+    
+    return () => {
+      // Clean up on unmount
+      if (connectionCheckInterval.current) {
+        clearInterval(connectionCheckInterval.current);
+      }
+    };
+  }, [ndk]);
 
   // Generate a Nostr Connect URL with a random token
   const generateConnectUrl = () => {
-    // Create a unique session token (in a real app, you'd want to store this)
-    const token = crypto.randomUUID();
+    if (!ndk) {
+      setError("NDK instance not available");
+      setConnectionStatus('error');
+      return;
+    }
     
-    // Generate a proper NIP-47 URL (nostrconnect://<pubkey>?relay=wss://...)
-    // This is a placeholder - in a real app you'd use your app's pubkey
-    const appPubkey = 'npub1example00000000000000000000000000000000000000000000';
-    const relayUrl = 'wss://relay.example.com';
-    
-    // Construct the NIP-47 URL
-    const url = `nostrconnect://${appPubkey}?relay=${encodeURIComponent(relayUrl)}&metadata=${encodeURIComponent(JSON.stringify({
-      name: "MadTrips App",
-      url: "https://madtrips.example.com",
-      description: "Travel booking with Nostr"
-    }))}&session_token=${token}`;
-    
-    setConnectUrl(url);
-  };
-
-  // Handle NIP-47 login
-  const handleNip47Login = async () => {
     try {
-      await login('nip47', { target: connectUrl });
-      setShowQR(false);
+      // Create a unique session token using secure random generator
+      sessionToken.current = generateSecureToken();
+      
+      // Get the app's public key from environment variable or use a fallback
+      // In production, use your actual application pubkey from environment variable
+      const APP_PUBKEY = process.env.NEXT_PUBLIC_APP_PUBKEY || 
+                          "npub1nfgqmjytjcvu3lt5wd8xg05s8castvp5mjkufuk2dmcr4hgga5xs8qj85n";
+      
+      if (ndk.signer) {
+        // Log information about the signer for debugging
+        console.log("NDK signer type:", typeof ndk.signer);
+      }
+      
+      // Get active relay URLs from NDK
+      let relayUrls: string[] = [];
+      if (ndk.pool?.relays) {
+        // Convert Map to array of URLs safely
+        try {
+          const relaysArray = Array.from(ndk.pool.relays.values());
+          relayUrls = relaysArray
+            .map(relay => typeof relay === 'object' && relay !== null && 'url' in relay ? 
+              String(relay.url) : undefined)
+            .filter(Boolean) as string[];
+        } catch (e) {
+          console.error("Error extracting relay URLs:", e);
+        }
+      }
+      
+      const primaryRelay = relayUrls.length > 0 ? relayUrls[0] : "wss://relay.damus.io";
+      
+      // Construct proper app metadata
+      const metadata = {
+        name: "MadTrips",
+        url: window.location.origin,
+        description: "Travel booking with Nostr integration"
+      };
+      
+      // Construct the NIP-47 URL
+      const url = `nostrconnect://${APP_PUBKEY}?relay=${encodeURIComponent(primaryRelay)}&metadata=${encodeURIComponent(JSON.stringify(metadata))}&session_token=${sessionToken.current}`;
+      
+      console.log("Generated Nostr Connect URL for relay:", primaryRelay);
+      setConnectUrl(url);
+      setConnectionStatus('idle');
+      
+      // Start polling for connection status
+      startConnectionCheck();
     } catch (error) {
-      console.error("Failed to login with NIP-47:", error);
-      setError("NIP-47 login failed: " + (error instanceof Error ? error.message : "Unknown error"));
+      console.error("Error generating NIP-47 URL:", error);
+      setError(`Failed to generate connection URL: ${error instanceof Error ? error.message : "Unknown error"}`);
+      setConnectionStatus('error');
     }
   };
 
+  // Start checking for connection status
+  const startConnectionCheck = () => {
+    // Clear any existing interval
+    if (connectionCheckInterval.current) {
+      clearInterval(connectionCheckInterval.current);
+    }
+    
+    setConnectionStatus('connecting');
+    
+    // Poll every 3 seconds to check if connection is established
+    connectionCheckInterval.current = setInterval(async () => {
+      try {
+        if (ndk && sessionToken.current) {
+          // Check for a real connection using NDK events
+          const hasConnection = await checkForConnectionEvents();
+          
+          if (hasConnection) {
+            clearInterval(connectionCheckInterval.current!);
+            setConnectionStatus('connected');
+            
+            // Save connection information
+            saveConnectionInfo();
+            
+            // Setup event listeners for future sign requests
+            setupEventListeners();
+            
+            // Reset state after successful connection
+            setTimeout(() => {
+              setConnectionStatus('idle');
+            }, 3000);
+          }
+        }
+      } catch (error) {
+        console.error("Error checking connection status:", error);
+      }
+    }, 3000);
+    
+    // Time out after 2 minutes
+    setTimeout(() => {
+      if (connectionStatus !== 'connected' && connectionCheckInterval.current) {
+        clearInterval(connectionCheckInterval.current);
+        setConnectionStatus('error');
+      }
+    }, 120000);
+  };
+
+  // Save connection information for future use
+  const saveConnectionInfo = async () => {
+    if (!ndk || !sessionToken.current) return;
+    
+    try {
+      // Get the first relay URL
+      let relayUrl = "wss://relay.damus.io"; // Default fallback
+      
+      if (ndk.pool?.relays) {
+        try {
+          const relaysArray = Array.from(ndk.pool.relays.values());
+          if (relaysArray.length > 0 && 
+              typeof relaysArray[0] === 'object' && 
+              relaysArray[0] !== null && 
+              'url' in relaysArray[0]) {
+            relayUrl = String(relaysArray[0].url);
+          }
+        } catch (e) {
+          console.error("Error extracting relay URL:", e);
+        }
+      }
+      
+      // Get connection event to extract pubkey
+      const filter = {
+        kinds: [24133 as NDKKind],
+        "#session": [sessionToken.current]
+      };
+      
+      const events = await ndk.fetchEvents(filter);
+      
+      if (events && events.size > 0) {
+        const connectionEvent = Array.from(events)[0];
+        const userPubkey = connectionEvent.pubkey;
+        
+        // Save to local storage
+        saveSession(sessionToken.current, userPubkey, relayUrl);
+      }
+    } catch (error) {
+      console.error("Error saving connection info:", error);
+    }
+  };
+
+  // Check for connection events using real NDK events
+  const checkForConnectionEvents = async (): Promise<boolean> => {
+    if (!ndk || !sessionToken.current) return false;
+    
+    try {
+      // Subscribe to NIP-47 connection events (kind 24133)
+      const filter = {
+        kinds: [24133 as NDKKind],
+        "#session": [sessionToken.current]
+      };
+      
+      // Use NDK to fetch events
+      const events = await ndk.fetchEvents(filter);
+      
+      // Check if we have any matching events
+      if (events && events.size > 0) {
+        // Log the first event for debugging
+        const firstEvent = Array.from(events)[0];
+        console.log("Received connection event:", firstEvent);
+        
+        return true;
+      }
+      
+      return false;
+    } catch (error) {
+      console.error("Error checking for connection events:", error);
+      return false;
+    }
+  };
+
+  // Setup event listeners for NIP-47 requests
+  const setupEventListeners = () => {
+    if (!ndk) return;
+    
+    // Instead of using subscribe, we'll set up a polling mechanism to check for events
+    const checkForSignRequests = async () => {
+      try {
+        // Fetch NIP-47 sign request events (kind 24134)
+        const filter = {
+          kinds: [24134 as NDKKind], // Sign request events
+          "#session": [sessionToken.current]
+        };
+        
+        const events = await ndk.fetchEvents(filter);
+        
+        if (events && events.size > 0) {
+          // Process any new sign requests
+          for (const event of events) {
+            console.log("Processing sign request:", event);
+            // Handle the sign request based on your application's needs
+            // ...
+          }
+        }
+      } catch (error) {
+        console.error("Error checking for sign requests:", error);
+      }
+      
+      // Poll again in a few seconds
+      setTimeout(checkForSignRequests, 5000);
+    };
+    
+    // Start the polling
+    checkForSignRequests();
+  };
+
+  // Clean up a session when disconnecting
+  const cleanupSession = () => {
+    // Clear localStorage
+    localStorage.removeItem('nostr_client_signer_session');
+    
+    // Send disconnection event (if implemented in your NIP-47 flow)
+    if (ndk && sessionToken.current) {
+      // Create and publish a disconnection event
+      // This would depend on your specific implementation
+    }
+    
+    // Reset state
+    sessionToken.current = '';
+    setConnectionStatus('idle');
+  };
+
   // Copy Connect URL to clipboard
-  const copyConnectUrl = () => {
+  const copyConnectUrl = async () => {
     if (connectUrl) {
-      navigator.clipboard.writeText(connectUrl);
-      setCopySuccess(true);
-      setTimeout(() => setCopySuccess(false), 2000);
+      try {
+        await navigator.clipboard.writeText(connectUrl);
+        setCopySuccess(true);
+        console.log("Secret URL copied to clipboard:", connectUrl.substring(0, 20) + "...");
+        setTimeout(() => setCopySuccess(false), 2000);
+      } catch (error) {
+        console.error("Failed to copy to clipboard:", error);
+        setError("Failed to copy to clipboard. Your browser may not support this feature.");
+      }
     }
   };
 
@@ -158,102 +420,132 @@ export default function ClientNostrSigner() {
 
   return (
     <div className="p-4 border rounded-lg">
-      <h2 className="text-lg font-semibold mb-4">Nostr Signing</h2>
+      <h2 className="text-lg font-semibold mb-4">Client-side Nostr Signing</h2>
       
       {/* NIP-47 Nostr Connect Section */}
-      {!user && (
-        <div className="mb-6 p-4 bg-blue-50 dark:bg-blue-900/30 rounded-lg">
-          <h3 className="text-md font-semibold mb-2">Connect with Nostr Signing Device</h3>
-          <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
-            Scan this QR code with your Nostr signing device or copy the connection URL
-          </p>
-          
-          {/* QR Code Display */}
-          <div className="flex flex-col md:flex-row items-center gap-4">
-            <div className="bg-white p-4 rounded-lg shadow-md">
-              <QRCodeSVG
-                value={connectUrl}
-                size={200}
-                bgColor={"#ffffff"}
-                fgColor={"#000000"}
-                level={"L"}
-                includeMargin={false}
-              />
+      <div className="mb-6 p-4 bg-blue-50 dark:bg-blue-900/30 rounded-lg">
+        <h3 className="text-md font-semibold mb-2">Connect with Nostr Signing Device</h3>
+        
+        {connectionStatus === 'connecting' && (
+          <div className="text-sm text-blue-600 dark:text-blue-400 mb-4 flex items-center">
+            <div className="animate-pulse mr-2">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 12h.01M12 12h.01M19 12h.01M6 12a1 1 0 11-2 0 1 1 0 012 0zm7 0a1 1 0 11-2 0 1 1 0 012 0zm7 0a1 1 0 11-2 0 1 1 0 012 0z" />
+              </svg>
             </div>
-            
-            <div className="flex flex-col gap-3 w-full md:w-auto">
-              <div className="text-sm text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-800 p-2 rounded">
-                <div className="font-semibold mb-1">Connection URL:</div>
-                <div className="font-mono text-xs break-all">
-                  {connectUrl.substring(0, 45)}...
-                </div>
-              </div>
-              
-              <div className="flex gap-2">
-                <button
-                  onClick={copyConnectUrl}
-                  className="px-4 py-2 bg-gray-600 hover:bg-gray-700 text-white rounded text-sm"
-                >
-                  {copySuccess ? 'Secret Copied!' : 'Copy Secret'}
-                </button>
-                
-                <button
-                  onClick={handleNip47Login}
-                  className="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded text-sm"
-                >
-                  Connect
-                </button>
-              </div>
-            </div>
+            Waiting for connection...
           </div>
-        </div>
-      )}
-      
-      {/* Message Signing Section - Only show when logged in */}
-      {user && (
-        <div className="border-t my-4 pt-4">
-          <h3 className="text-md font-semibold mb-2">Message Signing</h3>
-          
-          {isNostrAvailable() ? (
-            <div className="text-sm text-green-500 mb-2">✓ Nostr extension detected</div>
-          ) : (
-            <div className="text-sm text-amber-500 mb-2">⚠️ No Nostr extension detected</div>
-          )}
-          
-          {pubkey && (
-            <div className="text-sm mb-4">
-              Your pubkey: <span className="font-mono">{pubkey.substring(0, 8)}...</span>
-            </div>
-          )}
-          
-          <div className="mb-4">
-            <label className="block text-sm mb-1">Message:</label>
-            <textarea
-              className="w-full p-2 border rounded"
-              value={message}
-              onChange={(e) => setMessage(e.target.value)}
-              rows={3}
-              placeholder="Enter your message"
+        )}
+        
+        {connectionStatus === 'error' && (
+          <div className="text-sm text-red-600 dark:text-red-400 mb-4">
+            Connection error. Please try again.
+          </div>
+        )}
+        
+        {connectionStatus === 'connected' && (
+          <div className="text-sm text-green-600 dark:text-green-400 mb-4 flex items-center">
+            <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+            </svg>
+            Connected successfully!
+          </div>
+        )}
+        
+        <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
+          Scan this QR code with your Nostr signing device
+        </p>
+        
+        {/* QR Code Display */}
+        <div className="flex flex-col md:flex-row items-center gap-4">
+          <div 
+            className="bg-white p-4 rounded-lg shadow-md cursor-pointer hover:bg-gray-50 transition-colors"
+            onClick={copyConnectUrl}
+          >
+            <QRCodeSVG
+              value={connectUrl}
+              size={200}
+              bgColor={"#ffffff"}
+              fgColor={"#000000"}
+              level={"L"}
+              includeMargin={false}
             />
+            {copySuccess && (
+              <div className="mt-2 py-1 px-2 bg-green-100 dark:bg-green-800 text-green-700 dark:text-green-200 rounded-md font-medium text-center">
+                ✓ Secret copied!
+              </div>
+            )}
+            {!copySuccess && (
+              <div className="mt-2 text-sm text-gray-500 dark:text-gray-400 text-center">
+                Click to copy secret URL
+              </div>
+            )}
           </div>
           
-          <div className="flex gap-2 mb-4">
-            <button
-              onClick={signAndPublish}
-              className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
-            >
-              Sign & Publish
-            </button>
-            
-            <button
-              onClick={() => sendDM('npub1funchalx8v747rsee6ahsuyrcd2s3rnxlyrtumfex9lecpmgwars6hq8kc')}
-              className="px-4 py-2 bg-purple-500 text-white rounded hover:bg-purple-600"
-            >
-              Send DM to Demo User
-            </button>
+          <div className="flex flex-col gap-3 w-full md:w-auto">            
+            <div className="flex flex-col gap-2">
+              <button
+                onClick={generateConnectUrl}
+                className="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded text-sm"
+              >
+                Generate New Connection
+              </button>
+              
+              {connectionStatus === 'error' && (
+                <button
+                  onClick={() => setConnectionStatus('idle')}
+                  className="px-4 py-2 bg-gray-500 hover:bg-gray-600 text-white rounded text-sm"
+                >
+                  Reset Error
+                </button>
+              )}
+            </div>
           </div>
         </div>
-      )}
+      </div>
+      
+      <div className="border-t my-4 pt-4">
+        <h3 className="text-md font-semibold mb-2">Test Message Signing</h3>
+        
+        {isNostrAvailable() ? (
+          <div className="text-sm text-green-500 mb-2">✓ Nostr extension detected</div>
+        ) : (
+          <div className="text-sm text-amber-500 mb-2">⚠️ No Nostr extension detected</div>
+        )}
+        
+        {pubkey && (
+          <div className="text-sm mb-4">
+            Your pubkey: <span className="font-mono">{pubkey.substring(0, 8)}...</span>
+          </div>
+        )}
+        
+        <div className="mb-4">
+          <label className="block text-sm mb-1">Message:</label>
+          <textarea
+            className="w-full p-2 border rounded"
+            value={message}
+            onChange={(e) => setMessage(e.target.value)}
+            rows={3}
+            placeholder="Enter your message"
+          />
+        </div>
+        
+        <div className="flex gap-2 mb-4">
+          <button
+            onClick={signAndPublish}
+            className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
+          >
+            Sign & Publish
+          </button>
+          
+          <button
+            onClick={() => sendDM('npub1funchalx8v747rsee6ahsuyrcd2s3rnxlyrtumfex9lecpmgwars6hq8kc')}
+            className="px-4 py-2 bg-purple-500 text-white rounded hover:bg-purple-600"
+          >
+            Send DM to Demo User
+          </button>
+        </div>
+      </div>
       
       {error && (
         <div className="p-2 bg-red-100 text-red-700 rounded mb-4">
