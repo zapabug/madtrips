@@ -242,6 +242,94 @@ export class PaymentService {
     
     console.log('Payment service disconnected');
   }
+
+  /**
+   * Listen for incoming NutZaps targeting a specific pubkey
+   * @param pubkey The public key to listen for payments to
+   * @param onPaymentReceived Callback when a payment is received
+   * @returns The subscription object that can be used to unsubscribe
+   */
+  listenForNutZaps(pubkey: string, onPaymentReceived: (amount: number, sender: string) => void): NDKSubscription {
+    const filter: NDKFilter = {
+      kinds: [9739 as any], // NutZap events with type cast
+      '#p': [pubkey], // Payments targeting this pubkey
+    };
+    
+    const subscription = this.ndk.subscribe(filter);
+    
+    subscription.on('event', (event: NDKEvent) => {
+      // Process the incoming NutZap
+      const amountTag = event.tags.find(tag => tag[0] === 'amount');
+      const amount = amountTag ? parseInt(amountTag[1], 10) : 0;
+      
+      if (amount > 0) {
+        onPaymentReceived(amount, event.pubkey);
+      }
+    });
+    
+    return subscription;
+  }
+
+  /**
+   * Send a NutZap to a recipient
+   * @param recipient The recipient's public key
+   * @param amount Amount in sats
+   * @param comment Optional comment to include with the payment
+   * @returns Promise resolving to the event ID
+   */
+  async sendNutZap(recipient: string, amount: number, comment: string = ''): Promise<{ preimage: string }> {
+    // Create a NutZap event (NIP-61)
+    const event = new NDKEvent(this.ndk);
+    event.kind = 9739 as any; // NutZap kind (casting to any to avoid TypeScript errors)
+    
+    event.tags = [
+      ['p', recipient],
+      ['amount', amount.toString()],
+      ['description', comment]
+    ];
+    
+    event.content = comment;
+    
+    // Sign and publish the event
+    await event.publish();
+    
+    return {
+      preimage: event.id
+    };
+  }
+
+  /**
+   * Check if a recipient supports NutZaps by checking their profile metadata
+   * @param recipientPubkey The recipient's public key
+   * @returns Promise resolving to whether the recipient supports NutZaps
+   */
+  async checkNutZapSupport(recipientPubkey: string): Promise<boolean> {
+    try {
+      // Create a filter for the recipient's profile metadata
+      const filter: NDKFilter = {
+        kinds: [0], // Profile metadata kind
+        authors: [recipientPubkey],
+        limit: 1
+      };
+      
+      // Fetch the profile event
+      const events = await this.ndk.fetchEvents(filter);
+      if (!events.size) return false;
+      
+      const profileEvent = Array.from(events)[0];
+      const content = JSON.parse(profileEvent.content || '{}');
+      
+      // Check for NutZap support in the profile
+      return !!(
+        content.supported_nip?.includes('61') || // NIP-61 is NutZaps
+        content.nip61_supported ||
+        content.nutzap_supported
+      );
+    } catch (error) {
+      console.error('Error checking NutZap support:', error);
+      return false;
+    }
+  }
 }
 
 // Create a singleton instance

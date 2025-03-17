@@ -22,8 +22,9 @@ declare global {
 
 interface NostrPaymentProps {
   invoice: string;
-  amount: string;
+  amount: number;
   description: string;
+  recipientPubkey: string;
   onSuccess?: (preimage: string) => void;
   onError?: (error: Error) => void;
   onCancel?: () => void;
@@ -33,6 +34,7 @@ export const NostrPayment: React.FC<NostrPaymentProps> = ({
   invoice,
   amount,
   description,
+  recipientPubkey,
   onSuccess,
   onError,
   onCancel
@@ -42,6 +44,7 @@ export const NostrPayment: React.FC<NostrPaymentProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [preimage, setPreimage] = useState<string | null>(null);
   const [walletConnected, setWalletConnected] = useState(false);
+  const [useNutZaps, setUseNutZaps] = useState(false);
 
   // Check if the user is logged in with NIP-47
   const isNip47 = loginMethod === 'nip47';
@@ -107,15 +110,23 @@ export const NostrPayment: React.FC<NostrPaymentProps> = ({
       
       const paymentService = getPaymentService(ndk);
       
-      // Different payment approaches based on login method
+      // Check if recipient supports NutZaps
+      const supportsNutZaps = await paymentService.checkNutZapSupport(recipientPubkey);
+      
       if (isNip47) {
-        // For NIP-47, use the remote signer
+        // Use NIP-47 remote signer
         const result = await paymentService.payInvoice(invoice);
         setPreimage(result.preimage);
         setStatus('success');
         onSuccess?.(result.preimage);
+      } else if (supportsNutZaps && useNutZaps) {
+        // Use NutZaps if supported and enabled
+        const result = await paymentService.sendNutZap(recipientPubkey, amount, description);
+        setPreimage(result.preimage);
+        setStatus('success');
+        onSuccess?.(result.preimage);
       } else if (loginMethod === 'nip07') {
-        // For NIP-07, use the extension's webln if available
+        // Fall back to standard Lightning payment
         if (typeof window !== 'undefined' && window.webln) {
           try {
             await window.webln.enable();
@@ -195,23 +206,38 @@ export const NostrPayment: React.FC<NostrPaymentProps> = ({
             )}
           </button>
         ) : status !== 'success' ? (
-          <button 
-            onClick={processPayment}
-            disabled={status === 'paying'}
-            className="w-full px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-md text-sm font-medium flex items-center justify-center disabled:opacity-50"
-          >
-            {status === 'paying' ? (
-              <>
-                <span className="mr-2 animate-spin">⚡</span>
-                Paying...
-              </>
-            ) : (
-              <>
-                <span className="mr-2">⚡</span>
-                Pay with Nostr
-              </>
-            )}
-          </button>
+          <>
+            {/* Payment Method Selection */}
+            <div className="flex items-center space-x-2 mb-4">
+              <label className="flex items-center space-x-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={useNutZaps}
+                  onChange={(e) => setUseNutZaps(e.target.checked)}
+                  className="form-checkbox h-4 w-4 text-blue-600"
+                />
+                <span>Use NutZap (if supported)</span>
+              </label>
+            </div>
+
+            <button 
+              onClick={processPayment}
+              disabled={status === 'paying'}
+              className="w-full px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-md text-sm font-medium flex items-center justify-center disabled:opacity-50"
+            >
+              {status === 'paying' ? (
+                <>
+                  <span className="mr-2 animate-spin">⚡</span>
+                  Paying...
+                </>
+              ) : (
+                <>
+                  <span className="mr-2">⚡</span>
+                  Pay with {useNutZaps ? 'NutZap' : 'Lightning'}
+                </>
+              )}
+            </button>
+          </>
         ) : null}
         
         {(status === 'idle' || status === 'error') && (
