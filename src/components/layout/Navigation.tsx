@@ -12,10 +12,9 @@ const navigation = [
   { name: 'Home', href: '/', sectionId: 'home' },
   { 
     name: 'Packages', 
-    href: '/#packages',
+    href: '/packages',
     sectionId: 'packages',
     submenu: [
-      { name: 'All Packages', href: '/packages' },
       { name: 'Build Custom Package', href: '/packages/custom' },
     ] 
   },
@@ -145,10 +144,12 @@ export function Navigation() {
                       <button
                         className={`${styles.desktopLinkBase} ${isActive(item) ? styles.activeDesktopLink : styles.inactiveDesktopLink}`}
                         onClick={(e) => {
-                          if (pathname === '/') {
-                            handleSectionNavigation(e, item.sectionId)
+                          if (item.name === 'Packages') {
+                            router.push('/packages');
+                          } else if (pathname === '/') {
+                            handleSectionNavigation(e, item.sectionId);
                           } else {
-                            router.push('/#packages')
+                            router.push(item.href);
                           }
                         }}
                       >
@@ -240,13 +241,15 @@ export function Navigation() {
           <div className="py-2 space-y-1 bg-white dark:bg-gray-800">
             {navigation.map((item) => (
               <div key={item.name}>
-                {item.submenu ? (
+                {item.submenu && item.name !== 'Packages' ? (
                   <>
                     <button
                       className={`w-full flex justify-between items-center py-3 px-4 text-base font-medium ${
                         isActive(item) ? styles.activeMobileLink : styles.inactiveMobileLink
                       }`}
-                      onClick={() => toggleSubmenu(item.name)}
+                      onClick={() => {
+                        toggleSubmenu(item.name);
+                      }}
                     >
                       {item.name}
                       <svg 
@@ -279,18 +282,35 @@ export function Navigation() {
                     )}
                   </>
                 ) : (
-                  <Link
-                    href={item.href}
-                    className={`${styles.mobileLinkBase} ${isActive(item) ? styles.activeMobileLink : styles.inactiveMobileLink}`}
-                    onClick={() => {
-                      if (item.name === 'Map') {
-                        handleSectionNavigation({ preventDefault: () => {} } as React.MouseEvent, item.sectionId)
-                      }
-                      setMobileMenuOpen(false)
-                    }}
-                  >
-                    {item.name}
-                  </Link>
+                  <>
+                    <Link
+                      href={item.name === 'Packages' ? '/packages' : item.href}
+                      className={`${styles.mobileLinkBase} ${isActive(item) ? styles.activeMobileLink : styles.inactiveMobileLink}`}
+                      onClick={() => {
+                        if (item.name === 'Map') {
+                          handleSectionNavigation({ preventDefault: () => {} } as React.MouseEvent, item.sectionId)
+                        }
+                        setMobileMenuOpen(false)
+                      }}
+                    >
+                      {item.name}
+                    </Link>
+                    
+                    {/* Add Build Custom Package as a separate item for mobile */}
+                    {item.name === 'Packages' && item.submenu && (
+                      <Link
+                        href="/packages/custom"
+                        className={`block py-3 px-8 text-base font-medium ${
+                          pathname === '/packages/custom'
+                            ? styles.activeMobileLink
+                            : styles.inactiveMobileLink
+                        }`}
+                        onClick={() => setMobileMenuOpen(false)}
+                      >
+                        Build Custom Package
+                      </Link>
+                    )}
+                  </>
                 )}
               </div>
             ))}

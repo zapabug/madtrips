@@ -16,7 +16,7 @@ export function FeaturedPackages() {
         <div className="mx-auto max-w-2xl text-center">
           <h2 className="text-3xl font-bold tracking-tight text-ocean dark:text-[#F7931A] sm:text-4xl md:text-5xl">Featured Packages</h2>
           <p className="mt-2 text-lg leading-8 text-forest/80 dark:text-gray-400">
-            Discover our curated Bitcoin-friendly travel experiences
+            Discover our curated Bitcoin travel experiences
           </p>
         </div>
 

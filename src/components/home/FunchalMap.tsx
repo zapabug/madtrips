@@ -9,7 +9,7 @@ export function FunchalMap() {
             Explore Map
           </h2>
           <p className="mt-4 text-lg text-forest/70 dark:text-gray-400">
-            Explore Bitcoin-accepting businesses within Madeira
+            Lightning ready businesses within Madeira
           </p>
         </div>
         

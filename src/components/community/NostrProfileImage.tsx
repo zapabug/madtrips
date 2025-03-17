@@ -1,8 +1,8 @@
 'use client'
 
 import Image from 'next/image'
-import { useProfileImage } from '@/lib/hooks/useProfileImage'
-import { KNOWN_PROFILES } from '../../utils/profileUtils'
+import { useEffect, useState } from 'react'
+import { useNostr } from '@/lib/contexts/NostrContext'
 
 interface NostrProfileImageProps {
   npub: string
@@ -19,11 +19,42 @@ export function NostrProfileImage({
   className = '', 
   alt = 'Nostr Profile' 
 }: NostrProfileImageProps) {
-  // Use our new hook instead of the previous implementation
-  const { profilePic, loading, source, error } = useProfileImage(
-    npub,
-    KNOWN_PROFILES[npub] || null
-  )
+  const [profilePic, setProfilePic] = useState<string | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const { ndk, getUserProfile } = useNostr()
+
+  useEffect(() => {
+    const fetchProfileData = async () => {
+      if (!ndk || !npub) {
+        setLoading(false)
+        return
+      }
+
+      setLoading(true)
+      setError(null)
+
+      try {
+        // Use the getUserProfile function from NostrContext
+        const user = await getUserProfile(npub)
+        
+        if (user && user.profile?.picture) {
+          setProfilePic(user.profile.picture)
+        } else {
+          // If no profile picture is found, use bitcoin image as fallback
+          setProfilePic('/assets/bitcoin.png')
+        }
+      } catch (err) {
+        console.error(`Failed to fetch profile for ${npub}:`, err)
+        setError('Failed to load profile')
+        setProfilePic('/assets/bitcoin.png')
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    fetchProfileData()
+  }, [ndk, npub, getUserProfile])
 
   return (
     <div className={`relative ${className}`}>
