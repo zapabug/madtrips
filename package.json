@@ -8,7 +8,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "diagnose": "node scripts/diagnose-socialgraph.js"
+    "diagnose": "node scripts/diagnose-socialgraph.js",
+    "predeploy": "rm -rf api && echo 'API directory removed for decentralized deployment'"
   },
   "dependencies": {
     "@hookform/resolvers": "^4.1.3",

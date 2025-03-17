@@ -94,3 +94,25 @@ MadTrips uses a fully decentralized architecture leveraging Nostr for authentica
 5. **Seamless User Experience**: Persistent state and offline capabilities
 6. **Cost Effective**: No server infrastructure needed
 7. **Censorship Resistant**: Data stored across multiple relays
+
+## Deployment Guide
+
+Before deploying MadTrips, ensure that you fully implement the decentralized architecture as described above:
+
+1. **Remove API Server**: The `/api` directory contains an Express server that was used during development. This should be completely removed before deployment as it contradicts the decentralized architecture.
+
+2. **Verify Client-Side Operations**: Ensure all operations (authentication, data storage, payment processing) are handled client-side using Nostr and WebLN.
+
+3. **Static Data**: All package and business data should be stored statically in the codebase or fetched from Nostr relays. No traditional API calls should be made.
+
+4. **Environment Variables**: Remove any references to API endpoints or backend services in environment variables.
+
+5. **Build Process**: Standard Next.js build process (`next build`) can be used for deployment.
+
+The application is designed to run without any backend API services, relying completely on:
+- Nostr for data storage and authentication
+- WebLN for Lightning Network payments
+- Static data for packages and businesses
+- Client-side logic for all operations
+
+This ensures a truly decentralized application that can be deployed to any static hosting provider.

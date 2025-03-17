@@ -1,13 +1,8 @@
-import axios from 'axios';
+'use client';
+
 import QRCode from 'qrcode';
 
-// LNBits API configuration
-const LNBITS_URL = process.env.LNBITS_URL || 'https://legend.lnbits.com';
-const INVOICE_READ_KEY = process.env.LNBITS_INVOICE_READ_KEY;
-const ADMIN_KEY = process.env.LNBITS_ADMIN_KEY;
-const WALLET_ID = process.env.LNBITS_WALLET_ID;
-
-// Types
+// Client-side Lightning interface types
 export interface InvoiceResponse {
   id: string;
   invoice: string;
@@ -21,87 +16,120 @@ export interface PaymentStatus {
   error?: string;
 }
 
-// Check if LNBits is configured
-const isConfigured = (): boolean => {
-  return Boolean(INVOICE_READ_KEY && ADMIN_KEY && WALLET_ID);
+// WebLN detection and capabilities
+export const hasWebLN = (): boolean => {
+  if (typeof window === 'undefined') return false;
+  return 'webln' in window;
+};
+
+// Get supported payment methods
+export const getSupportedPaymentMethods = (): string[] => {
+  const methods = ['manual'];
+  
+  if (hasWebLN()) {
+    methods.push('webln');
+  }
+  
+  return methods;
 };
 
 // Create a Lightning invoice
 export const createInvoice = async (amount: number, memo: string): Promise<InvoiceResponse> => {
-  if (!isConfigured()) {
-    console.warn('LNBits is not configured. Using fake invoice.');
-    return createFakeInvoice(amount, memo);
-  }
-
-  try {
-    const response = await axios.post(
-      `${LNBITS_URL}/api/v1/payments`,
-      {
-        out: false,
-        amount: amount,
-        memo: memo,
-        unit: 'sat'
-      },
-      {
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Api-Key': ADMIN_KEY as string
-        }
+  // Check if WebLN is available
+  if (hasWebLN()) {
+    try {
+      // Try to use WebLN
+      // @ts-ignore - WebLN types are not included
+      await window.webln.enable();
+      
+      // Create an invoice with WebLN
+      try {
+        // @ts-ignore - WebLN types are not included
+        const result = await window.webln.makeInvoice({
+          amount: amount,
+          defaultMemo: memo
+        });
+        
+        // Generate QR code for the invoice
+        const qrCodeDataUrl = await QRCode.toDataURL(result.paymentRequest);
+        
+        return {
+          id: result.id || result.paymentHash || Math.random().toString(36).substring(2, 15),
+          invoice: result.paymentRequest,
+          qrCode: qrCodeDataUrl
+        };
+      } catch (invoiceError) {
+        console.error('Error creating invoice with WebLN:', invoiceError);
+        // Fall back to manual invoice
       }
-    );
+    } catch (error) {
+      console.error('Error enabling WebLN:', error);
+      // Fall back to manual invoice
+    }
+  }
+  
+  // If WebLN fails or is not available, create a fake invoice for demo purposes
+  return createFakeInvoice(amount, memo);
+};
 
-    // Generate QR code for the invoice
-    const qrCodeDataUrl = await QRCode.toDataURL(response.data.payment_request);
-
-    return {
-      id: response.data.payment_hash,
-      invoice: response.data.payment_request,
-      qrCode: qrCodeDataUrl
-    };
-  } catch (error: any) {
-    console.error('Error creating invoice with LNBits:', error.response?.data || error.message);
-    // Fallback to fake invoice if LNBits fails
-    return createFakeInvoice(amount, memo);
+// Send a payment
+export const sendPayment = async (invoice: string): Promise<PaymentStatus> => {
+  // Check if WebLN is available
+  if (hasWebLN()) {
+    try {
+      // Try to use WebLN
+      // @ts-ignore - WebLN types are not included
+      await window.webln.enable();
+      
+      // Send payment with WebLN
+      try {
+        // @ts-ignore - WebLN types are not included
+        const result = await window.webln.sendPayment(invoice);
+        
+        return {
+          paid: true,
+          preimage: result.preimage,
+          details: result
+        };
+      } catch (paymentError) {
+        console.error('Error sending payment with WebLN:', paymentError);
+        return { paid: false, error: 'Payment failed' };
+      }
+    } catch (error) {
+      console.error('Error enabling WebLN:', error);
+      return { paid: false, error: 'WebLN not available' };
+    }
+  } else {
+    // For demo purposes, simulate a successful payment after a delay
+    return new Promise((resolve) => {
+      setTimeout(() => {
+        resolve({ paid: true });
+      }, 2000);
+    });
   }
 };
 
 // Check if a payment has been received
 export const checkPayment = async (paymentHash: string): Promise<PaymentStatus> => {
-  if (!isConfigured()) {
-    console.warn('LNBits is not configured. Simulating successful payment.');
-    return { paid: true };
-  }
-
-  try {
-    const response = await axios.get(
-      `${LNBITS_URL}/api/v1/payments/${paymentHash}`,
-      {
-        headers: {
-          'X-Api-Key': INVOICE_READ_KEY as string
-        }
-      }
-    );
-
-    return {
-      paid: response.data.paid,
-      preimage: response.data.preimage || null,
-      details: response.data
-    };
-  } catch (error: any) {
-    console.error('Error checking payment with LNBits:', error.response?.data || error.message);
-    // For demo purposes, we'll assume the payment failed if there's an error
-    return { paid: false, error: error.message };
-  }
+  // In a real implementation, this would verify the payment with the Lightning node
+  // For demo purposes without a backend, we'll simulate payment status
+  
+  // Randomly determine if the payment was successful (80% chance)
+  const paid = Math.random() < 0.8;
+  
+  return {
+    paid,
+    preimage: paid ? Math.random().toString(36).substring(2, 15) : null,
+  };
 };
 
-// Create a fake invoice for testing without LNBits
-const createFakeInvoice = (amount: number, memo: string): InvoiceResponse => {
+// Create a fake invoice for testing
+const createFakeInvoice = async (amount: number, memo: string): Promise<InvoiceResponse> => {
   const paymentHash = Math.random().toString(36).substring(2, 15);
-  const fakeInvoice = `lnbcrt${amount}n1p38q70app5wkr9zr7heaxzrz0mfj8420fcn4ytp7j3h2fhk652jssmkscnypjhvsdqqcqzzsxqyz5vqsp5mw6nxs4c44ze2hsw40f3v54ztwe360hg76twx4dvu0etlkp8s6fq9qyyssqy2a5jk28hc3cfu6z056snfs7avjssywpnvwpgudj2ucl7l8n5c8dhjs4jf2u3049mkaeregutx87tzn54v88gft5pqeu5df2lg8fkkcpvp0yqf`;
+  const fakeInvoice = `lnbcrt${amount}n1p${paymentHash}app5wkr9zr7heaxzrz0mfj8420fcn4ytp7j3h2fhk652jssmkscnypjhvsdqqcqzzsxqyz5vqsp5mw6nxs4c44ze2hsw40f3v54ztwe360hg76twx4dvu0etlkp8s6fq9qyyssqy2a5jk28hc3cfu6z056snfs7avjssywpnvwpgudj2ucl7l8n5c8dhjs4jf2u3049mkaeregutx87tzn54v88gft5pqeu5df2lg8fkkcpvp0yqf`;
 
   // Generate QR code
-  let qrCodeDataUrl = '';
-  // Skip actual QR code generation in fake mode, you can implement if needed
+  const qrCodeDataUrl = await QRCode.toDataURL(fakeInvoice);
   
   return {
     id: paymentHash,

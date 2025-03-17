@@ -313,12 +313,37 @@ export const NostrProvider: React.FC<{children: ReactNode}> = ({ children }) => 
   // Get a user's profile
   const getUserProfile = async (npub: string): Promise<NDKUser | null> => {
     if (!ndk) {
+      console.error('NDK not initialized when fetching profile for:', npub);
       throw new Error('NDK not initialized');
     }
 
-    const user = ndk.getUser({ npub });
-    await user.fetchProfile();
-    return user;
+    try {
+      // Create user object from npub
+      const user = ndk.getUser({ npub });
+      
+      // Attempt to fetch profile with a timeout
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error('Profile fetch timed out')), 5000);
+      });
+      
+      // Race between fetch and timeout
+      await Promise.race([
+        user.fetchProfile(),
+        timeoutPromise
+      ]);
+      
+      if (!user.profile) {
+        console.warn(`No profile found for user ${npub}`);
+        return user; // Return user even without profile
+      }
+      
+      return user;
+    } catch (error) {
+      console.error(`Error fetching profile for ${npub}:`, error);
+      // Return a basic user object without profile in case of error
+      // This prevents the entire application from crashing
+      return ndk.getUser({ npub });
+    }
   };
 
   // Get users that a user follows

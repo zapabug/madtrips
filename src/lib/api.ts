@@ -1,9 +1,9 @@
-// API utility functions for interacting with backend
+// Decentralized data utilities for MadTrips
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:9090/api';
+import { NostrStorage } from './nostr-storage';
 
-// Mock data for packages since we've moved everything to the frontend
-const MOCK_PACKAGES = [
+// Static data for packages
+const PACKAGES = [
   {
     id: '1',
     title: 'Beach Day Experience',
@@ -33,97 +33,207 @@ const MOCK_PACKAGES = [
   }
 ];
 
-// Generic fetch function with error handling
-async function fetchAPI<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
-  // Special handling for packages endpoints that now use mock data
-  if (endpoint === '/packages') {
-    console.log('Using mock packages data instead of API call');
-    return { packages: MOCK_PACKAGES } as unknown as T;
+// Static data for businesses
+const BUSINESSES = [
+  {
+    id: 'biz-001',
+    name: 'Bitcoin Beach Bar',
+    description: 'Beachfront bar accepting Bitcoin and Lightning payments.',
+    location: { lat: 32.6451, lng: -16.9141 },
+    category: 'Food & Drink',
+    acceptsLightning: true,
+    image: '/assets/businesses/beach-bar.jpg'
+  },
+  {
+    id: 'biz-002',
+    name: 'Satoshi Coffee',
+    description: 'Specialty coffee shop with Bitcoin payments and regular meetups.',
+    location: { lat: 32.6506, lng: -16.9084 },
+    category: 'Food & Drink',
+    acceptsLightning: true,
+    image: '/assets/businesses/coffee-shop.jpg'
+  },
+  {
+    id: 'biz-003',
+    name: 'Bitcoin Surf School',
+    description: 'Learn to surf while paying with Bitcoin.',
+    location: { lat: 32.6442, lng: -16.9327 },
+    category: 'Activities',
+    acceptsLightning: false,
+    image: '/assets/businesses/surf-school.jpg'
   }
-  
-  if (endpoint.startsWith('/packages/')) {
-    const id = endpoint.split('/').pop();
-    const mockPackage = MOCK_PACKAGES.find(p => p.id === id);
-    
-    if (mockPackage) {
-      console.log(`Using mock data for package ${id}`);
-      return { package: mockPackage } as unknown as T;
-    } else {
-      throw new Error(`Package with ID ${id} not found`);
-    }
-  }
+];
 
-  // For other endpoints, proceed with API call
-  const url = `${API_BASE_URL}${endpoint}`;
-  console.log(`API Request: ${url}`);
-  
-  try {
-    const response = await fetch(url, {
-      ...options,
-      mode: 'cors',
-      credentials: 'same-origin',
-      headers: {
-        'Content-Type': 'application/json',
-        ...options.headers,
-      },
-    });
+// Create a singleton instance of NostrStorage
+const nostrStorage = new NostrStorage();
 
-    console.log(`API Response Status: ${response.status} ${response.statusText}`);
-
-    if (!response.ok) {
-      let errorMessage = `API Error: ${response.status} ${response.statusText}`;
-      try {
-        const error = await response.json();
-        errorMessage = error.message || errorMessage;
-      } catch (parseError) {
-        console.error('Failed to parse error response:', parseError);
-      }
-      throw new Error(errorMessage);
-    }
-
-    const data = await response.json();
-    console.log('API Response Data (first few items):', 
-      Array.isArray(data) ? data.slice(0, 2) : 
-      typeof data === 'object' ? Object.keys(data) : data
-    );
-    return data;
-  } catch (error) {
-    console.error(`API Fetch Error for ${url}:`, error);
-    throw error;
-  }
-}
-
-// API functions
+// API functions using decentralized approach
 export const api = {
   // Travel packages
   async getPackages() {
-    return fetchAPI<{ packages: any[] }>('/packages');
+    console.log('Fetching packages (static data)');
+    return { packages: PACKAGES };
   },
   
   async getPackage(id: string) {
-    return fetchAPI<{ package: any }>(`/packages/${id}`);
+    console.log(`Fetching package ${id} (static data)`);
+    const packageItem = PACKAGES.find(p => p.id === id);
+    if (!packageItem) {
+      throw new Error(`Package with ID ${id} not found`);
+    }
+    return { package: packageItem };
   },
   
   // Businesses
-  getBusinesses: () => fetchAPI('/businesses'),
+  async getBusinesses() {
+    console.log('Fetching businesses (static data)');
+    return { businesses: BUSINESSES };
+  },
 
   // Payments
-  async createPayment(amount: number, description: string) {
-    return fetchAPI<{ id: string; invoice: string; qrCode: string; expiry: number }>('/payments', {
-      method: 'POST',
-      body: JSON.stringify({ amount, description }),
-    });
+  async createPayment(amount: number, description: string, pubkey: string) {
+    console.log(`Creating payment of ${amount} sats for: ${description}`);
+    
+    // In a real implementation, this would integrate with LNBits, BTCPay, etc.
+    // For now, we'll simulate the creation of a Lightning invoice
+    
+    // Create a simple invoice ID
+    const id = `invoice_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`;
+    
+    // Create a mock BOLT11 invoice (in production, this would come from a real Lightning node)
+    const invoice = `lnbc${amount}n1pj${Math.random().toString(36).substring(2, 10)}qqqqqqqqqqqqqqq`;
+    
+    // In a real implementation, we'd generate a QR code from the invoice
+    const qrCode = `data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==`;
+    
+    // Store payment details in Nostr if user is authenticated
+    if (pubkey) {
+      const paymentData = {
+        id,
+        amount,
+        description,
+        invoice,
+        status: 'pending',
+        createdAt: new Date().toISOString()
+      };
+      
+      // We'd store this payment in the user's Nostr data
+      // For now, we'll just log it
+      console.log('Storing payment data in Nostr', pubkey, paymentData);
+    }
+    
+    return {
+      id,
+      invoice,
+      qrCode,
+      expiry: Date.now() + 15 * 60 * 1000 // 15 minutes
+    };
   },
   
   async checkPaymentStatus(paymentId: string) {
-    return fetchAPI<{ id: string; status: string; paid: boolean; paidAt: string | null }>(`/payments/${paymentId}`);
+    console.log(`Checking payment status for ${paymentId}`);
+    
+    // In a real implementation, this would check the status with a Lightning node
+    // For now, we'll simulate a successful payment
+    
+    // Randomly determine if the payment was successful (80% chance)
+    const paid = Math.random() < 0.8;
+    
+    return {
+      id: paymentId,
+      status: paid ? 'paid' : 'pending',
+      paid,
+      paidAt: paid ? new Date().toISOString() : null
+    };
   },
 
   // Bookings
   async createBooking(data: { packageId: string; nostrPubkey: string; invoice: string }) {
-    return fetchAPI<{ bookingId: string; status: string; message: string }>('/bookings', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    });
+    console.log(`Creating booking for package ${data.packageId} by ${data.nostrPubkey}`);
+    
+    // Generate a booking ID
+    const bookingId = `booking_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`;
+    
+    // Find the package
+    const packageItem = PACKAGES.find(p => p.id === data.packageId);
+    if (!packageItem) {
+      throw new Error(`Package with ID ${data.packageId} not found`);
+    }
+    
+    // Create booking data
+    const bookingData = {
+      id: bookingId,
+      packageId: data.packageId,
+      packageTitle: packageItem.title,
+      nostrPubkey: data.nostrPubkey,
+      invoice: data.invoice,
+      status: 'confirmed',
+      createdAt: new Date().toISOString()
+    };
+    
+    // In a real implementation, this would be stored in the user's Nostr data
+    // For now, we'll just log it
+    console.log('Booking created:', bookingData);
+    
+    return {
+      bookingId,
+      status: 'confirmed',
+      message: `Your booking for ${packageItem.title} has been confirmed!`
+    };
   },
+  
+  // User data (stored in Nostr)
+  async getUserData(pubkey: string) {
+    if (!pubkey) {
+      throw new Error('Public key is required to get user data');
+    }
+    
+    try {
+      // Get user selections from Nostr
+      const selections = await nostrStorage.getUserSelections(pubkey);
+      
+      // Get cart from Nostr
+      const cart = await nostrStorage.getCart(pubkey);
+      
+      // Get saved packages from Nostr
+      const savedPackages = await nostrStorage.getSavedPackages(pubkey);
+      
+      return {
+        selections,
+        cart,
+        savedPackages
+      };
+    } catch (error: any) {
+      console.error('Error getting user data from Nostr:', error);
+      throw new Error(`Failed to get user data: ${error.message}`);
+    }
+  },
+  
+  async saveUserData(pubkey: string, data: any) {
+    if (!pubkey) {
+      throw new Error('Public key is required to save user data');
+    }
+    
+    try {
+      // Store user selections in Nostr if provided
+      if (data.selections) {
+        await nostrStorage.storeUserSelections(pubkey, data.selections);
+      }
+      
+      // Store cart in Nostr if provided
+      if (data.cart) {
+        await nostrStorage.storeCart(pubkey, data.cart);
+      }
+      
+      // Store saved packages in Nostr if provided
+      if (data.savedPackages) {
+        await nostrStorage.storeSavedPackages(pubkey, data.savedPackages);
+      }
+      
+      return { success: true };
+    } catch (error: any) {
+      console.error('Error saving user data to Nostr:', error);
+      throw new Error(`Failed to save user data: ${error.message}`);
+    }
+  }
 }; 
