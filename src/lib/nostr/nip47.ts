@@ -5,6 +5,8 @@
 
 import { finalizeEvent, nip04, nip19, generateSecretKey, getPublicKey, type Event } from 'nostr-tools';
 import { v4 as uuidv4 } from 'uuid';
+import WebSocket from 'ws';
+import { Filter } from 'nostr-tools';
 
 // Interface for NIP-47 request
 export interface NIP47Request {
@@ -237,16 +239,61 @@ export class NIP47Client {
    */
   async connect(): Promise<void> {
     try {
-      // In a real-world implementation, you would:
-      // 1. Set up a relay connection (websocket)
-      // 2. Subscribe to events from the remote signer
-      // 3. Listen for responses
+      if (!this.relayUrl) {
+        throw new Error('Relay URL is required for NIP-47 connection');
+      }
 
-      // Since we don't have a complete implementation, we'll throw an error
-      // to prevent silent failures in production
-      throw new Error('NIP-47 connection is not fully implemented in production.');
+      // Create WebSocket connection to relay
+      const ws = new WebSocket(this.relayUrl);
       
-      // Set connection as established if successful
+      // Wait for connection to open
+      await new Promise<void>((resolve, reject) => {
+        ws.onopen = () => resolve();
+        ws.onerror = (error: WebSocket.ErrorEvent) => reject(error);
+      });
+
+      // Subscribe to responses from the remote signer
+      const filter: Filter = {
+        kinds: [24133], // NIP-47 response event kind
+        authors: [this.remotePubkey],
+        '#p': [this.clientPubkey]
+      };
+
+      // Send subscription request
+      ws.send(JSON.stringify(['REQ', uuidv4(), filter]));
+
+      // Handle incoming messages
+      ws.onmessage = async (event: WebSocket.MessageEvent) => {
+        try {
+          const [type, subId, messageEvent] = JSON.parse(event.data.toString());
+          
+          if (type === 'EVENT' && messageEvent.kind === 24133) {
+            // Decrypt the response
+            const decrypted = await nip04.decrypt(
+              this.clientPrivkey,
+              this.remotePubkey,
+              messageEvent.content
+            );
+            
+            const response = JSON.parse(decrypted);
+            
+            // Find and resolve the pending request
+            const pendingRequest = this.pendingRequests.get(response.id);
+            if (pendingRequest) {
+              if (response.error) {
+                pendingRequest.reject(new Error(response.error));
+              } else {
+                pendingRequest.resolve(response.result);
+              }
+              this.pendingRequests.delete(response.id);
+            }
+          }
+        } catch (error) {
+          console.error('Error processing message:', error);
+        }
+      };
+
+      // Set connection as established
       this.connectionEstablished = true;
     } catch (error) {
       console.error('Failed to connect to remote signer:', error);
