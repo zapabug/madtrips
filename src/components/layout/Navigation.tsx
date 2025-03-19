@@ -3,7 +3,7 @@
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { useEffect, useState, useCallback, useMemo } from 'react'
-import { NostrProfileHeader } from '@/components/community/NostrProfileHeader'
+import { NostrProfileHeader } from '../../components/community/NostrProfileHeader'
 
 // Extracted constants and reusable styles
 const MADTRIPS_NPUB = "npub1dxd02kcjhgpkyrx60qnkd6j42kmc72u5lum0rp2ud8x5zfhnk4zscjj6hh"
@@ -18,7 +18,7 @@ const navigation = [
       { name: 'Build Custom Package', href: '/packages/custom' },
     ] 
   },
-  { name: 'Map', href: '/#map', sectionId: 'map' },
+  { name: 'Map', href: '/map', sectionId: 'map' },
   { name: 'Community', href: '/community', sectionId: 'community' },
 ]
 
@@ -101,7 +101,9 @@ export function Navigation() {
   const handleSectionNavigation = useCallback((e: React.MouseEvent, sectionId: string) => {
     e.preventDefault()
     
-    if (pathname === '/') {
+    if (sectionId === 'map') {
+      router.push('/map')
+    } else if (pathname === '/') {
       const section = document.getElementById(sectionId)
       if (section) {
         section.scrollIntoView({ behavior: 'smooth' })
@@ -287,9 +289,6 @@ export function Navigation() {
                       href={item.name === 'Packages' ? '/packages' : item.href}
                       className={`${styles.mobileLinkBase} ${isActive(item) ? styles.activeMobileLink : styles.inactiveMobileLink}`}
                       onClick={() => {
-                        if (item.name === 'Map') {
-                          handleSectionNavigation({ preventDefault: () => {} } as React.MouseEvent, item.sectionId)
-                        }
                         setMobileMenuOpen(false)
                       }}
                     >

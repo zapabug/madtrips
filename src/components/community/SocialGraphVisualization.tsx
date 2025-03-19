@@ -1,10 +1,11 @@
 'use client'
 
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useState, useRef } from 'react'
 import dynamic from 'next/dynamic'
 import { GraphNode, GraphLink } from '../../types';
 import { preloadImages, handleNodeClick } from '../../utils/graphUtils';
 import { BRAND_COLORS } from '../../constants/brandColors';
+import { useMediaQuery } from '../../hooks/useMediaQuery';
 
 // Dynamically import ForceGraph2D with no SSR
 const ForceGraph2D = dynamic(() => import('react-force-graph-2d').then(mod => mod.default), { ssr: false })
@@ -15,7 +16,7 @@ interface SocialGraphVisualizationProps {
     links: GraphLink[]
   }
   width: number
-  height: number
+  height?: number
 }
 
 export const SocialGraphVisualization: React.FC<SocialGraphVisualizationProps> = ({
@@ -26,6 +27,36 @@ export const SocialGraphVisualization: React.FC<SocialGraphVisualizationProps> =
   // State to hold preloaded images
   const [nodeImages, setNodeImages] = useState<Map<string, HTMLImageElement>>(new Map())
   const [isLoadingImages, setIsLoadingImages] = useState(false)
+  const graphRef = useRef<any>(null)
+  
+  // Determine responsive height based on screen size
+  const isMobile = useMediaQuery('(max-width: 640px)')
+  const isTablet = useMediaQuery('(min-width: 641px) and (max-width: 1024px)')
+  
+  const responsiveHeight = isMobile ? 400 : isTablet ? 600 : 800
+  const actualHeight = height || responsiveHeight
+
+  // Handle zoom behavior for the graph on mobile
+  useEffect(() => {
+    if (!graphRef.current || !isMobile) return
+    
+    const graphElem = graphRef.current?._toolbarElem?.parentElement
+    if (!graphElem) return
+    
+    const handleTouchStart = (e: TouchEvent) => {
+      // Allow pinch zoom (two fingers)
+      if (e.touches.length >= 2) return
+      
+      // Prevent panning with single finger to make page scrolling easier
+      e.preventDefault()
+    }
+    
+    graphElem.addEventListener('touchstart', handleTouchStart, { passive: false })
+    
+    return () => {
+      graphElem.removeEventListener('touchstart', handleTouchStart)
+    }
+  }, [isMobile, graphRef.current])
 
   // Use the shared preloadImages function instead of the duplicate one
   useEffect(() => {
@@ -96,6 +127,7 @@ export const SocialGraphVisualization: React.FC<SocialGraphVisualizationProps> =
 
   return (
     <ForceGraph2D
+      ref={graphRef}
       graphData={data}
       nodeColor={(node: any) => node.isCoreNode ? BRAND_COLORS.bitcoinOrange : BRAND_COLORS.lightSand}
       nodeVal={(node: any) => node.isCoreNode ? 10 : 5}
@@ -103,7 +135,7 @@ export const SocialGraphVisualization: React.FC<SocialGraphVisualizationProps> =
       linkWidth={(link: any) => Math.sqrt(link.value || 1)}
       onNodeClick={handleNodeClickWrapper}
       width={width}
-      height={height}
+      height={actualHeight}
       backgroundColor="transparent"
       nodeCanvasObject={(node: any, ctx: CanvasRenderingContext2D, globalScale: number) => {
         const nodeSize = node.isCoreNode ? 10 : 5

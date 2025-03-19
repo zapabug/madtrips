@@ -23,8 +23,11 @@
       "@/types": ["./src/types/index.ts"],
       "@/types/*": ["./src/types/*"],
       "@/graph-types": ["./src/types/graph-types.ts"],
-      "@/package-types": ["./src/types/package-types.ts"]
-    }
+      "@/package-types": ["./src/types/package-types.ts"],
+      "@/components/*": ["./src/components/*"],
+      "@/lib/*": ["./src/lib/*"]
+    },
+    "baseUrl": "src"
   },
   "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
   "exclude": ["node_modules"]

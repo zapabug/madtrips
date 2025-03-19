@@ -1,4 +1,4 @@
-import { Package } from '@/types/index';
+import { Package } from '../types/index';
 
 // Shared packages data for use across the application
 export const PACKAGES: Package[] = [
@@ -67,7 +67,7 @@ export const formatSats = (sats: number, includeRaw = false) => {
 };
 
 // Featured packages - just first 4 packages
-export const FEATURED_PACKAGES = PACKAGES.slice(0, 4);
+export const FEATURED_PACKAGES = PACKAGES.slice(0, 3);
 
 // Get package by ID
 export const getPackageById = (id: string): Package | undefined => {

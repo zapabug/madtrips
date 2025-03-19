@@ -1,8 +1,8 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { useNostr } from '@/lib/contexts/NostrContext';
-import { getPaymentService } from '@/lib/services/PaymentService';
+import { useNostr } from '../lib/contexts/NostrContext';
+import { getPaymentService } from '../lib/services/PaymentService';
 
 // Define WebLN interface directly in this file
 interface WebLNProvider {
@@ -13,12 +13,7 @@ interface WebLNProvider {
   }>;
 }
 
-// Add a type declaration that is specific to this file
-declare global {
-  interface Window {
-    webln?: WebLNProvider;
-  }
-}
+// Note: Window interface is now defined in global.d.ts
 
 interface NostrPaymentProps {
   invoice: string;

@@ -3,8 +3,8 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
-import { PACKAGES, formatSats } from '@/data/packages';
-import { Package } from '@/types/index';
+import { PACKAGES, formatSats } from '../../data/packages';
+import { Package } from '../../types/index';
 
 export default function PackagesPage() {
   // No more API calls, using the direct hardcoded data

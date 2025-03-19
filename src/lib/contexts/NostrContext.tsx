@@ -1,11 +1,11 @@
 'use client';
 
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, ReactNode, useRef } from 'react';
 import NDK, { NDKEvent, NDKUser, NDKFilter, NDKSubscription, NostrEvent } from '@nostr-dev-kit/ndk';
 import { NDKNip07Signer } from '@nostr-dev-kit/ndk';
 import { nip19 } from 'nostr-tools';
-import { NIP47Client } from '@/lib/nostr/nip47';
-import { NIP47PaymentClient } from '@/lib/nostr/nip47-payments';
+import { NIP47Client } from '../nostr/nip47';
+import { NIP47PaymentClient } from '../nostr/nip47-payments';
 import { NDKNip46Signer } from '@nostr-dev-kit/ndk';
 
 // Utility function to shorten npub for display
@@ -69,6 +69,7 @@ export const NostrProvider: React.FC<{children: ReactNode}> = ({ children }) => 
   const [nip47Client, setNip47Client] = useState<NIP47Client | null>(null);
   const [paymentClient, setPaymentClient] = useState<NIP47PaymentClient | null>(null);
   const [canMakePayments, setCanMakePayments] = useState(false);
+  const ndkRef = useRef<NDK | null>(null);
 
   // Initialize NDK on component mount
   useEffect(() => {
@@ -90,7 +91,37 @@ export const NostrProvider: React.FC<{children: ReactNode}> = ({ children }) => 
           // Connect to relays
           await ndk.connect();
           setNdk(ndk);
+          ndkRef.current = ndk;
           console.log('NDK initialized without signer');
+          
+          // Check if nostr-login or extension is available and auto-login
+          if (window.nostr) {
+            console.log('Found window.nostr, attempting automatic login');
+            try {
+              // Create a signer that uses the window.nostr API
+              ndk.signer = new NDKNip07Signer();
+              
+              // Get the user's public key
+              const publicKey = await ndk.signer.user();
+              
+              if (publicKey) {
+                // Create an NDKUser from the public key
+                const user = ndk.getUser({ npub: publicKey.npub });
+                
+                // Fetch the user's profile
+                await user.fetchProfile();
+                
+                setUser(user);
+                setLoginMethod('nip07');
+                setViewOnlyProfile(null);
+                console.log('Automatic NIP-07 login successful:', user.npub);
+              }
+            } catch (e) {
+              console.error('Automatic login failed:', e);
+              // Continue without logged in user
+            }
+          }
+
           setLoading(false);
         }
       } catch (e) {
@@ -101,6 +132,48 @@ export const NostrProvider: React.FC<{children: ReactNode}> = ({ children }) => 
     };
 
     initializeNDK();
+
+    // Listen for auth events from nostr-login
+    const handleNostrLogin = async (e: any) => {
+      console.log('Nostr login event detected:', e);
+      if (window.nostr && ndkRef.current) {
+        try {
+          // Wait a brief moment for window.nostr to be fully ready
+          await new Promise(resolve => setTimeout(resolve, 500));
+          
+          // Create a signer that uses the window.nostr API
+          ndkRef.current.signer = new NDKNip07Signer();
+          
+          // Get the user's public key
+          const publicKey = await ndkRef.current.signer.user();
+          
+          if (publicKey) {
+            // Create an NDKUser from the public key
+            const user = ndkRef.current.getUser({ npub: publicKey.npub });
+            
+            // Fetch the user's profile
+            await user.fetchProfile();
+            
+            setUser(user);
+            setLoginMethod('nip07');
+            setViewOnlyProfile(null);
+            console.log('NIP-07 login via nostr-login successful:', user.npub);
+          }
+        } catch (e) {
+          console.error('Login via nostr-login event failed:', e);
+        }
+      }
+    };
+
+    if (typeof window !== 'undefined') {
+      document.addEventListener('nlAuth', handleNostrLogin);
+    }
+
+    return () => {
+      if (typeof window !== 'undefined') {
+        document.removeEventListener('nlAuth', handleNostrLogin);
+      }
+    };
   }, []);
 
   // Login function that handles different methods
@@ -259,9 +332,8 @@ export const NostrProvider: React.FC<{children: ReactNode}> = ({ children }) => 
           throw new Error(`Unsupported login method: ${method}`);
       }
     } catch (e) {
-      console.error(`Login error (${method}):`, e);
+      console.error('Login failed:', e);
       setError(e as Error);
-      throw e;
     } finally {
       setLoading(false);
     }

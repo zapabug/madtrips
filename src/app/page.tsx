@@ -1,8 +1,8 @@
 import { Metadata } from 'next'
-import { Hero } from '@/components/home/Hero'
-import { FeaturedPackages } from '@/components/home/FeaturedPackages'
-import { CallToAction } from '@/components/home/CallToAction'
-import { FunchalMap } from '@/components/home/FunchalMap'
+import { Hero } from '../components/home/Hero'
+import { FeaturedPackages } from '../components/home/FeaturedPackages'
+import { CallToAction } from '../components/home/CallToAction'
+import { FunchalMap } from '../components/home/FunchalMap'
 
 export const metadata: Metadata = {
   title: 'MadTrips - Bitcoin-Friendly Travel in Madeira',

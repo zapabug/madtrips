@@ -29,8 +29,4 @@ interface WebLNProvider {
   [key: string]: any;
 }
 
-declare global {
-  interface Window {
-    webln?: WebLNProvider;
-  }
-} 
+// Note: Window interface is now defined in global.d.ts 

@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
-import { useNostr } from '@/lib/contexts/NostrContext';
+import { useNostr } from '../lib/contexts/NostrContext';
 
 interface LightningPaymentButtonProps {
   invoice: string;

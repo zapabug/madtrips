@@ -75,13 +75,4 @@ interface MadTripsNostr {
     preimage: string;
     paymentHash: string;
   }>;
-}
-
-// Define global namespace augmentation
-declare global {
-  interface Window {
-    nostr?: NIP07Interface;
-    madtripsNostr?: MadTripsNostr;
-    // WebLN is now defined in webln.d.ts
-  }
 } 

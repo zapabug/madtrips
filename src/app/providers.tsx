@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { ThemeProvider as NextThemeProvider } from "next-themes";
-import { NostrProvider } from '@/lib/contexts/NostrContext';
+import { NostrProvider } from '../lib/contexts/NostrContext';
 
 interface ProvidersProps {
   children: React.ReactNode;

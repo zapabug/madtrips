@@ -46,6 +46,13 @@ export class NIP47PaymentClient {
 
       console.log('Creating payment request for invoice:', invoice.substring(0, 15) + '...');
       
+      // In production, the NIP-47 client will throw an error about not being fully implemented
+      // We should check if we're connected and if payment is supported
+      const paymentCapability = await this.checkPaymentCapability();
+      if (!paymentCapability.canPay) {
+        throw new Error(paymentCapability.reason || 'Payment not supported');
+      }
+      
       // Create the payment request
       const request: PaymentRequest = {
         method: 'pay_invoice',
@@ -131,6 +138,15 @@ export class NIP47PaymentClient {
         return { canPay: false, reason: 'Not connected to remote signer' };
       }
       
+      // In production, we should be connected to real implementations
+      // Return false with a clear message to prevent silent failures
+      return { 
+        canPay: false, 
+        reason: 'NIP-47 payment capability is not fully implemented in production' 
+      };
+      
+      // Code below is commented out as it would attempt to use mock implementations
+      /*
       // Check capabilities to see if pay_invoice is supported
       const capabilities = await this.client.getCapabilities();
       
@@ -139,6 +155,7 @@ export class NIP47PaymentClient {
       }
       
       return { canPay: true };
+      */
     } catch (error) {
       console.error('Failed to check payment capability:', error);
       return { 

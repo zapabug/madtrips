@@ -3,12 +3,14 @@
 import { useState, useEffect } from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
-import { useParams } from 'next/navigation';
-import { Package, PaymentData } from '@/types/index';
-import { useNostr } from '@/lib/contexts/NostrContext';
-import { NostrPayment } from '@/components/NostrPayment';
+import { useParams, useRouter } from 'next/navigation';
+import { Package, PaymentData } from '../../../types/index';
+import { useNostr } from '../../../lib/contexts/NostrContext';
+import { useCartStore } from '../../../lib/store/cart-store';
+import { NostrPayment } from '../../../components/NostrPayment';
 import React from 'react';
-import { getPackageById, formatSats } from '@/data/packages';
+import { getPackageById, formatSats } from '../../../data/packages';
+import CheckoutAuthWrapper from '../../../components/checkout/CheckoutAuthWrapper';
 
 // Real lnbits payment functions
 const createPayment = async (amount: number, description: string): Promise<PaymentData> => {
@@ -88,21 +90,23 @@ const createBooking = async (data: { packageId: string; nostrPubkey: string; inv
 export default function PackageDetailPage() {
   // Use the useParams hook to get route params in a client component
   const params = useParams();
+  const router = useRouter();
   const packageId = params.id as string;
   
   const [packageItem, setPackageItem] = useState<Package | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [selectedDate, setSelectedDate] = useState<Date | undefined>(undefined);
+  const [isFullyAuthenticated, setIsFullyAuthenticated] = useState(false);
   
-  // Booking and payment states
-  const [showBookingForm, setShowBookingForm] = useState(false);
-  const [showNostrPayment, setShowNostrPayment] = useState(false);
-  const [paymentData, setPaymentData] = useState<PaymentData | null>(null);
-  const [bookingComplete, setBookingComplete] = useState(false);
-  const [bookingId, setBookingId] = useState<string | null>(null);
+  // Cart store
+  const { addItem, items } = useCartStore();
   
   // Nostr state
   const { user, loginMethod } = useNostr();
+  
+  // Check if package is already in cart
+  const isInCart = items.some(item => item.packageId === packageId);
 
   useEffect(() => {
     // Find the package by ID from our centralized data
@@ -129,70 +133,22 @@ export default function PackageDetailPage() {
 
     findPackage();
   }, [packageId]);
-
-  const handleBookNow = () => {
-    setShowBookingForm(true);
-    // We'll handle the Nostr login separately
-  };
-
-  const handlePaymentRequest = async (e: React.FormEvent) => {
-    e.preventDefault();
-    
-    if (!packageItem) return;
-    
-    // Check if Nostr is connected
-    if (!user) {
-      setError('Please connect your Nostr wallet to continue with payment.');
-      return;
-    }
-    
-    try {
-      // Get a Lightning invoice from the API
-      const paymentResponse = await createPayment(
-        packageItem.price, 
-        `MadTrips: ${packageItem.title}`
-      );
-      
-      setPaymentData(paymentResponse);
-      setShowNostrPayment(true);
-      
-    } catch (err) {
-      console.error('Error generating payment:', err);
-      setError('Failed to generate payment. Please try again.');
-    }
+  
+  // Handle date selection
+  const handleDateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const date = new Date(e.target.value);
+    setSelectedDate(date);
   };
   
-  // Handle payment success
-  const handlePaymentSuccess = async (preimage: string) => {
-    if (!packageItem || !user || !paymentData) return;
+  // Handle add to cart
+  const handleAddToCart = () => {
+    if (!packageItem) return;
     
-    try {
-      // Create booking with the preimage as proof of payment
-      const bookingResponse = await createBooking({
-        packageId: packageItem.id,
-        nostrPubkey: user.npub,
-        invoice: paymentData.invoice,
-        preimage: preimage
-      });
-      
-      setBookingId(bookingResponse.bookingId);
-      setBookingComplete(true);
-      setShowNostrPayment(false);
-    } catch (err) {
-      console.error('Error creating booking:', err);
-      setError('Payment confirmed, but booking creation failed. Please contact support.');
-    }
-  };
-
-  // Handle payment error
-  const handlePaymentError = (error: Error) => {
-    setError(`Payment failed: ${error.message}`);
-    setShowNostrPayment(false);
-  };
-
-  // Handle payment cancel
-  const handlePaymentCancel = () => {
-    setShowNostrPayment(false);
+    // Add package to cart
+    addItem(packageItem, selectedDate);
+    
+    // Navigate to checkout
+    router.push('/checkout');
   };
 
   if (loading) {
@@ -206,193 +162,116 @@ export default function PackageDetailPage() {
   if (error || !packageItem) {
     return (
       <div className="container mx-auto px-4 py-12">
-        <div className="bg-red-50 p-4 rounded-md border border-red-200 text-red-700">
-          {error || 'Package not found'}
+        <div className="bg-red-100 p-4 rounded-lg">
+          <h2 className="text-xl font-bold text-red-800">Error</h2>
+          <p className="text-red-700">{error || 'Failed to load package'}</p>
+          <Link href="/packages" className="mt-4 inline-block text-blue-500 hover:underline">
+            Browse all packages
+          </Link>
         </div>
-        <Link href="/packages" className="mt-4 inline-block text-[#F7931A] hover:underline">
-          &larr; Back to packages
-        </Link>
       </div>
     );
   }
 
   return (
-    <div className="container mx-auto px-4 py-12">
-      <Link href="/packages" className="inline-block mb-8 text-[#F7931A] hover:underline">
-        &larr; Back to packages
-      </Link>
-      
-      {/* Package details */}
-      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-lg overflow-hidden">
-        <div className="relative h-96 w-full">
-          <Image
-            src={packageItem.image || '/assets/placeholder.jpg'}
-            alt={packageItem.title}
-            fill
-            className="object-cover"
-          />
-        </div>
-        
-        <div className="p-8">
-          <h1 className="text-3xl font-bold mb-4 text-ocean dark:text-[#F7931A]">{packageItem.title}</h1>
-          <p className="text-gray-600 dark:text-gray-400 text-lg mb-6">{packageItem.description}</p>
-          
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8">
-            <div>
-              <h2 className="text-xl font-semibold mb-3 text-gray-800 dark:text-white">Package Details</h2>
-              <div className="space-y-2">
-                <p className="text-gray-600 dark:text-gray-400">
-                  <span className="font-medium">Duration:</span> {packageItem.duration}
-                </p>
-                <p className="text-gray-600 dark:text-gray-400">
-                  <span className="font-medium">Price:</span> <span className="text-[#F7931A] font-semibold">{formatSats(packageItem.price)}</span>
-                </p>
-              </div>
-            </div>
-            
-            <div>
-              <h2 className="text-xl font-semibold mb-3 text-gray-800 dark:text-white">What's Included</h2>
-              <ul className="list-disc pl-5 text-gray-600 dark:text-gray-400 space-y-1">
-                {packageItem.includes.map((item, index) => (
-                  <li key={index}>{item}</li>
-                ))}
-              </ul>
-            </div>
+    <CheckoutAuthWrapper>
+      <main className="container mx-auto px-4 py-12">
+        <div className="max-w-6xl mx-auto">
+          {/* Breadcrumb navigation */}
+          <div className="mb-6">
+            <Link href="/packages" className="text-blue-500 hover:underline">
+              ← Back to packages
+            </Link>
           </div>
           
-          {!showBookingForm && !bookingComplete && (
-            <div className="text-center">
-              <button
-                onClick={handleBookNow}
-                className="px-8 py-3 bg-[#F7931A] hover:bg-[#F7931A]/80 text-white rounded-md font-semibold transition-colors"
-              >
-                Book Now with Bitcoin
-              </button>
-            </div>
-          )}
-          
-          {/* Booking Form */}
-          {showBookingForm && !paymentData && !bookingComplete && !showNostrPayment && (
-            <div className="mt-8 max-w-md mx-auto">
-              <h2 className="text-xl font-semibold mb-4 text-gray-800 dark:text-white">Ready to Book</h2>
-              
-              {error && (
-                <div className="mb-4 p-3 bg-red-100 dark:bg-red-900 text-red-700 dark:text-red-100 rounded">
-                  <p>{error}</p>
-                </div>
-              )}
-              
-              {!user ? (
-                <div className="text-center mb-6">
-                  <p className="text-gray-600 dark:text-gray-400 mb-4">
-                    Please connect your Nostr wallet to continue with payment.
-                  </p>
-                  <div className="bg-yellow-50 dark:bg-yellow-900/20 p-4 rounded-lg border border-yellow-200 dark:border-yellow-800 mb-4">
-                    <p className="text-sm text-yellow-700 dark:text-yellow-400">
-                      Use the Nostr login button in the bottom right corner to connect.
-                    </p>
-                  </div>
-                </div>
-              ) : (
-                <div>
-                  <div className="mb-4 p-4 bg-gray-50 dark:bg-gray-700 rounded-lg">
-                    <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">Connected with Nostr pubkey:</p>
-                    <p className="font-mono text-xs break-all">{user.npub}</p>
-                    <div className="mt-2 flex items-center text-green-600">
-                      <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-1" viewBox="0 0 20 20" fill="currentColor">
-                        <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                      </svg>
-                      <span className="text-xs">Connected with {loginMethod === 'nip07' ? 'Browser Extension' : loginMethod === 'nip47' ? 'Remote Signer' : 'View Only'}</span>
-                    </div>
-                  </div>
-                  <div className="pt-4">
-                    <button
-                      onClick={handlePaymentRequest}
-                      disabled={loginMethod === 'viewonly'}
-                      className="w-full px-4 py-2 bg-[#F7931A] hover:bg-[#F7931A]/80 text-white rounded-md font-semibold transition-colors disabled:opacity-50"
-                    >
-                      Proceed to Payment
-                    </button>
-                    
-                    {loginMethod === 'viewonly' && (
-                      <p className="mt-2 text-sm text-yellow-600 dark:text-yellow-400">
-                        You are in view-only mode. Please connect with a signing method to make payments.
-                      </p>
-                    )}
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-          
-          {/* NostrPayment Component - New Implementation */}
-          {showNostrPayment && paymentData && !bookingComplete && (
-            <div className="mt-8">
-              <NostrPayment
-                invoice={paymentData.invoice}
-                amount={formatSats(packageItem.price)}
-                description={`MadTrips: ${packageItem.title}`}
-                onSuccess={handlePaymentSuccess}
-                onError={handlePaymentError}
-                onCancel={handlePaymentCancel}
+          <div className="grid md:grid-cols-2 gap-8">
+            {/* Package image */}
+            <div className="relative h-80 md:h-auto overflow-hidden rounded-lg shadow-lg">
+              <Image
+                src={packageItem.image || '/assets/placeholder.jpg'}
+                alt={packageItem.title}
+                className="object-cover w-full h-full"
+                width={600}
+                height={400}
+                priority
               />
             </div>
-          )}
-          
-          {/* Legacy Payment QR Code - Only show as fallback if NostrPayment not available */}
-          {paymentData && !bookingComplete && !showNostrPayment && (
-            <div className="mt-8 max-w-md mx-auto text-center">
-              <h2 className="text-xl font-semibold mb-4 text-gray-800 dark:text-white">Pay with Bitcoin</h2>
-              <p className="text-gray-600 dark:text-gray-400 mb-4">
-                Scan the QR code with your Lightning wallet to complete payment.
-              </p>
-              <div className="bg-white p-4 rounded-lg inline-block mb-4">
-                <Image
-                  src={paymentData.qrCode}
-                  alt="Lightning Invoice QR Code"
-                  width={250}
-                  height={250}
-                />
-              </div>
-              <div className="text-xs text-gray-500 dark:text-gray-400 break-all mb-4">
-                <p className="font-medium mb-1">Lightning Invoice:</p>
-                <code className="bg-gray-100 dark:bg-gray-700 p-2 rounded block">
-                  {paymentData.invoice.substring(0, 30)}...
-                </code>
-              </div>
-              <p className="text-gray-600 dark:text-gray-400">
-                <span className="text-[#F7931A] font-semibold">Note:</span> This is a demo payment. In the MVP version, the payment will be automatically "confirmed" after 5 seconds.
-              </p>
-            </div>
-          )}
-          
-          {/* Booking Complete */}
-          {bookingComplete && bookingId && (
-            <div className="mt-8 max-w-md mx-auto text-center">
-              <div className="bg-green-50 dark:bg-green-900/20 p-6 rounded-lg border border-green-200 dark:border-green-800">
-                <svg className="w-16 h-16 text-green-500 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                </svg>
-                <h2 className="text-2xl font-bold text-gray-800 dark:text-white mb-2">Booking Confirmed!</h2>
-                <p className="text-gray-600 dark:text-gray-400 mb-4">
-                  Thank you for your booking. Your confirmation ID is: <span className="font-mono font-medium">{bookingId}</span>
-                </p>
-                <p className="text-gray-600 dark:text-gray-400">
-                  You will receive a confirmation email shortly with all the details of your trip.
-                </p>
-                <div className="mt-6">
-                  <Link 
-                    href="/packages" 
-                    className="px-6 py-2 bg-[#F7931A] hover:bg-[#F7931A]/80 text-white rounded-md font-medium transition-colors"
-                  >
-                    Browse More Packages
-                  </Link>
+            
+            {/* Package details */}
+            <div>
+              <h1 className="text-3xl font-bold mb-3">{packageItem.title}</h1>
+              
+              <div className="mb-6">
+                <p className="text-lg mb-4">{packageItem.description}</p>
+                
+                <div className="flex items-center text-lg font-bold mb-2">
+                  <span className="mr-2">Price:</span>
+                  <span className="text-[#F7931A]">{formatSats(packageItem.price)} sats</span>
+                </div>
+                
+                <div className="flex items-center mb-4">
+                  <span className="mr-2">Duration:</span>
+                  <span>{packageItem.duration}</span>
+                </div>
+                
+                <div className="mb-4">
+                  <h3 className="font-bold mb-2">What's included:</h3>
+                  <ul className="list-disc pl-5">
+                    {packageItem.includes.map((item, index) => (
+                      <li key={index}>{item}</li>
+                    ))}
+                  </ul>
                 </div>
               </div>
+              
+              {/* Booking form */}
+              <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-4">
+                <h2 className="text-xl font-bold mb-4">Book Now</h2>
+                
+                <div className="mb-4">
+                  <label className="block text-gray-700 dark:text-gray-300 mb-2">
+                    Select Date:
+                  </label>
+                  <input
+                    type="date"
+                    min={new Date().toISOString().split('T')[0]}
+                    className="w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600"
+                    onChange={handleDateChange}
+                  />
+                </div>
+                
+                {isInCart ? (
+                  <div className="mb-4">
+                    <div className="bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-200 p-3 rounded mb-4">
+                      This package is already in your cart.
+                    </div>
+                    <Link 
+                      href="/checkout"
+                      className="block w-full py-3 px-4 bg-[#F7931A] hover:bg-[#E87F17] text-white rounded-lg font-medium text-center"
+                    >
+                      Go to Checkout
+                    </Link>
+                  </div>
+                ) : (
+                  <button
+                    onClick={handleAddToCart}
+                    className="w-full py-3 px-4 bg-[#F7931A] hover:bg-[#E87F17] text-white rounded-lg font-medium"
+                  >
+                    Add to Cart
+                  </button>
+                )}
+                
+                {/* Authentication notice */}
+                {!isFullyAuthenticated && (
+                  <p className="mt-3 text-sm text-gray-600 dark:text-gray-400 text-center">
+                    You'll be asked to authenticate with Nostr when making a payment
+                  </p>
+                )}
+              </div>
             </div>
-          )}
+          </div>
         </div>
-      </div>
-    </div>
+      </main>
+    </CheckoutAuthWrapper>
   );
 } 

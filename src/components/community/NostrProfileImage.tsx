@@ -2,7 +2,7 @@
 
 import Image from 'next/image'
 import { useEffect, useState } from 'react'
-import { useNostr } from '@/lib/contexts/NostrContext'
+import { useNostr } from '../../lib/contexts/NostrContext'
 
 interface NostrProfileImageProps {
   npub: string

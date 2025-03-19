@@ -2,20 +2,27 @@
 
 import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
-import SocialGraph from '@/components/community/SocialGraph';
-import { NostrProfileImage } from '@/components/community/NostrProfileImage';
-import { useNostr } from '@/lib/contexts/NostrContext';
-import { BRAND_COLORS } from '@/constants/brandColors';
+import SocialGraph from '../../components/community/SocialGraph';
+import { NostrProfileImage } from '../../components/community/NostrProfileImage';
+import { NostrFeed } from '../../components/community/NostrFeed';
+import { useNostr } from '../../lib/contexts/NostrContext';
+import { BRAND_COLORS } from '../../constants/brandColors';
+import MultiUserNostrFeed from '../../components/community/MultiUserNostrFeed';
+import { MultiTipJar } from '../../components/tip/MultiTipJar';
 
 // Function to generate Nostr profile URL
-const getNostrProfileUrl = (npub: string) => {
-  // You can choose any popular Nostr web client
+const getNostrProfileUrl = (npub: string): string => {
   return `https://njump.me/${npub}`;
 };
 
-export default function CommunityPage() {
+interface CoreProfile {
+  npub: string;
+  description: string;
+}
+
+export default function CommunityPage(): React.ReactElement {
   // Define the core NPUBs with their descriptions
-  const coreProfiles = [
+  const coreProfiles: CoreProfile[] = [
     {
       npub: "npub1etgqcj9gc6yaxttuwu9eqgs3ynt2dzaudvwnrssrn2zdt2useaasfj8n6e",
       description: "Madeira Community focused on Bitcoin adoption and education."
@@ -37,15 +44,18 @@ export default function CommunityPage() {
   const [profileNames, setProfileNames] = useState<{[key: string]: string}>({});
   const { getUserProfile } = useNostr();
 
+  // Extract just the npubs for the feed
+  const npubs: string[] = coreProfiles.map(profile => profile.npub);
+
   // Fetch profile names using NDK
   useEffect(() => {
-    const fetchProfileNames = async () => {
+    const fetchProfileNames = async (): Promise<void> => {
       const names: {[key: string]: string} = {};
       
       for (const profile of coreProfiles) {
         try {
           const user = await getUserProfile(profile.npub);
-          if (user && user.profile?.name) {
+          if (user?.profile?.name) {
             names[profile.npub] = user.profile.displayName || user.profile.name;
           }
         } catch (err) {
@@ -56,52 +66,68 @@ export default function CommunityPage() {
       setProfileNames(names);
     };
 
-    fetchProfileNames();
-  }, [getUserProfile]);
+    void fetchProfileNames();
+  }, [getUserProfile, coreProfiles]);
 
   return (
-    <div className="container mx-auto px-4 py-8">
-      <h1 className="text-3xl font-bold mb-6"><span className="text-bitcoin">Bitcoin Madeira Community</span></h1>
-      
-      <div className="bg-forest text-white rounded-lg shadow-md p-4 mb-8">
-        <h3 className="text-xl font-semibold mb-4 text-sand">This visualization shows the connections between key community members</h3>
-        <div className="h-[600px] w-full mb-6">
-          <SocialGraph 
-            height={600} 
-            className="rounded-lg border border-gray-200"
-          />
+    <div className="flex justify-center px-4 py-8">
+      <div className="flex flex-col w-full max-w-[800px]">
+        <h1 className="text-3xl font-bold mb-6">
+          <span className="text-bitcoin">Bitcoin Madeira Community</span>
+        </h1>
+        
+        {/* Nostr Feed Section */}
+        <div className="mb-8 bg-white dark:bg-gray-800 rounded-lg shadow-lg p-4">
+          <h2 className="text-2xl font-bold mb-4 text-[#14857C]">Community Updates</h2>
+          <div className="w-full overflow-hidden border-2 border-forest rounded-lg" style={{ minHeight: '400px' }}>
+            <MultiUserNostrFeed 
+              npubs={npubs} 
+              limit={25} 
+              autoScroll={true} 
+              scrollInterval={5000} 
+            />
+          </div>
         </div>
         
-        <p className="mb-6">
-          The Bitcoin Madeira community is a network of individuals, businesses, and organizations 
-          committed to promoting Bitcoin adoption and education in Madeira.
-        </p>
+        {/* Social Graph Section */}
+        <div className="mb-8 bg-forest text-white rounded-lg shadow-md p-4">
+          <h3 className="text-xl font-semibold mb-4 text-sand">Community Connections</h3>
+          <div className="h-[400px] w-full mb-4">
+            <SocialGraph 
+              height={400} 
+              className="rounded-lg border border-gray-200"
+            />
+          </div>
+          
+          <p className="mb-4 text-sm">
+            The Bitcoin Madeira community is a network of individuals, businesses, and organizations 
+            committed to promoting Bitcoin adoption and education in Madeira.
+          </p>
+        </div>
         
-        <h2 className="text-2xl font-bold mb-4 text-sand">Community Members</h2>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-4">
-          {coreProfiles.map((profile) => (
-            <Link 
-              href={getNostrProfileUrl(profile.npub)} 
-              key={profile.npub}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="block transition-transform hover:scale-105 focus:scale-105 hover:shadow-lg focus:shadow-lg outline-none"
-            >
-              <div className="bg-white/10 rounded-lg p-5 flex flex-col items-center h-full border border-transparent hover:border-bitcoin focus:border-bitcoin transition-all duration-300" style={{ minHeight: '220px' }}>
-                <NostrProfileImage 
-                  npub={profile.npub} 
-                  width={80} 
-                  height={80} 
-                  className="mb-4"
-                  alt={profileNames[profile.npub] || "Community Member"}
-                />
-                <h3 className="text-lg font-semibold text-bitcoin mb-3">
-                  {profileNames[profile.npub] || "Loading..."}
-                </h3>
-                <p className="text-center text-sm text-sand">{profile.description}</p>
-              </div>
-            </Link>
-          ))}
+        {/* Add NostrFeed Section */}
+        <div className="mb-8">
+          <h3 className="text-xl font-semibold mb-4 text-bitcoin">Community Feed</h3>
+          <div className="w-full rounded-lg overflow-hidden">
+            <NostrFeed
+              npubs={npubs}
+              limit={12}
+              autoScroll={true}
+              scrollInterval={5000}
+              useCorePubs={true}
+            />
+          </div>
+        </div>
+        
+        {/* Support the community */}
+        <div className="mb-12 mt-8">
+          <div className="text-center mb-4">
+            <h2 className="text-2xl font-bold text-bitcoin">Support the Community</h2>
+            <p className="mt-2 text-gray-600 dark:text-gray-300">
+              Help grow the Bitcoin movement in Madeira
+            </p>
+          </div>
+          <MultiTipJar />
         </div>
       </div>
     </div>

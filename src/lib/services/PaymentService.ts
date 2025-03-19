@@ -1,4 +1,4 @@
-import { NIP47Client } from '@/lib/nostr/nip47';
+import { NIP47Client } from '../nostr/nip47';
 import NDK, { NDKEvent, NDKFilter, NDKSubscription } from '@nostr-dev-kit/ndk';
 import { Event as NostrEvent } from 'nostr-tools';
 

@@ -181,16 +181,16 @@ export class NIP47Client {
       // Encrypt the request
       const encryptedContent = await this.encryptForRemote(JSON.stringify(request));
 
-      // In a real implementation, you would:
-      // 1. Create a Nostr event with the encrypted content
-      // 2. Publish it to the relays
+      // In a real implementation, we would publish an event to relays
+      // This would be the actual implementation for production
       console.log(`Sending NIP-47 request: ${method}`);
       
-      // For development/testing, we'll simulate a response
-      this.simulateResponseFromRemote(requestId, method, params);
-
+      // We're missing implementation here
+      // Return a rejection with clear error message
+      return Promise.reject(new Error(`NIP-47 implementation is incomplete. Method: ${method}`));
+      
       // Wait for the response
-      return await responsePromise;
+      // return await responsePromise;
     } catch (error) {
       if (this.pendingRequests.has(requestId)) {
         this.pendingRequests.delete(requestId);
@@ -200,7 +200,7 @@ export class NIP47Client {
   }
 
   /**
-   * Process a response from the remote signer (for real implementation)
+   * Process a response from the remote signer
    */
   async processResponse(event: Event): Promise<void> {
     try {
@@ -232,72 +232,22 @@ export class NIP47Client {
   }
 
   /**
-   * Simulate a response from the remote signer (for development/testing)
-   * This is only used for testing and demonstration purposes
-   */
-  private simulateResponseFromRemote(requestId: string, method: string, params: any): void {
-    // In a real implementation, this would be removed and the actual response
-    // would come from the remote signer via relays
-    setTimeout(async () => {
-      const pendingRequest = this.pendingRequests.get(requestId);
-      if (!pendingRequest) return;
-      
-      try {
-        let result: any;
-        
-        switch (method) {
-          case 'get_public_key':
-            result = this.remotePubkey;
-            break;
-          case 'sign_event':
-            // Simulate signing by returning the event with a valid-looking signature
-            // In a real implementation, this would be signed by the remote signer
-            result = { ...params.event, sig: '00'.repeat(32) };
-            break;
-          case 'connect':
-            result = { approved: true };
-            break;
-          case 'pay_invoice':
-            // Simulate payment by returning a fake preimage
-            result = { preimage: '00'.repeat(16) };
-            break;
-          default:
-            throw new Error(`Unsupported method: ${method}`);
-        }
-        
-        pendingRequest.resolve(result);
-      } catch (error) {
-        pendingRequest.reject(error);
-      } finally {
-        this.pendingRequests.delete(requestId);
-      }
-    }, 1000); // Simulate a 1-second delay
-  }
-
-  /**
    * Connect to the remote signer
+   * This should be called before sending any requests
    */
   async connect(): Promise<void> {
-    // For the basic implementation, we just validate the inputs
-    if (!this.remotePubkey) {
-      throw new Error('Remote pubkey is required');
-    }
-    
-    // In a real implementation, we'd establish a connection via relays
-    console.log(`Connecting to remote signer: ${this.remotePubkey} via ${this.relayUrl || 'default relays'}`);
-    
     try {
-      // Send a connect request (in a real implementation)
-      // await this.sendRequest('connect', {
-      //   name: 'MadTrips App',
-      //   url: 'https://madtrips.com'
-      // });
+      // In a real-world implementation, you would:
+      // 1. Set up a relay connection (websocket)
+      // 2. Subscribe to events from the remote signer
+      // 3. Listen for responses
+
+      // Since we don't have a complete implementation, we'll throw an error
+      // to prevent silent failures in production
+      throw new Error('NIP-47 connection is not fully implemented in production.');
       
-      // For now, we'll just simulate a successful connection
-      await new Promise(resolve => setTimeout(resolve, 500));
-      
+      // Set connection as established if successful
       this.connectionEstablished = true;
-      console.log('Connected to remote signer successfully');
     } catch (error) {
       console.error('Failed to connect to remote signer:', error);
       throw error;
@@ -305,20 +255,36 @@ export class NIP47Client {
   }
 
   /**
-   * Get the public key from the remote signer
+   * Disconnect from the remote signer
+   */
+  disconnect(): void {
+    // Reset connection state
+    this.connectionEstablished = false;
+    
+    // Clear any pending requests
+    for (const [id, { reject }] of this.pendingRequests.entries()) {
+      reject(new Error('Connection closed'));
+      this.pendingRequests.delete(id);
+    }
+  }
+  
+  /**
+   * Get the remote signer's public key
    */
   async getPublicKey(): Promise<string> {
-    if (!this.connectionEstablished) {
-      throw new Error('Not connected to remote signer');
-    }
-    
+    return this.remotePubkey;
+  }
+  
+  /**
+   * Get the capabilities of the remote signer
+   */
+  async getCapabilities(): Promise<string[]> {
     try {
-      // Send a get_public_key request
-      const result = await this.sendRequest('get_public_key');
-      return result;
+      // In a real implementation, you would query the signer for capabilities
+      return []; // Return empty array for now
     } catch (error) {
-      console.error('Failed to get public key from remote signer:', error);
-      throw error;
+      console.error('Failed to get capabilities:', error);
+      return [];
     }
   }
 
@@ -497,39 +463,5 @@ export class NIP47Client {
       console.error('Failed to process payment response:', error);
       throw new Error('Invalid payment response');
     }
-  }
-
-  /**
-   * Get additional capabilities from the remote signer
-   */
-  async getCapabilities(): Promise<string[]> {
-    if (!this.connectionEstablished) {
-      throw new Error('Not connected to remote signer');
-    }
-    
-    try {
-      // Send a get_capabilities request
-      const result = await this.sendRequest('get_capabilities');
-      return result || [];
-    } catch (error) {
-      console.error('Failed to get capabilities from remote signer:', error);
-      // Not fatal, just return an empty array
-      return [];
-    }
-  }
-
-  /**
-   * Disconnect from the remote signer
-   */
-  disconnect(): void {
-    this.connectionEstablished = false;
-    
-    // Clear any pending requests
-    for (const [id, { reject }] of this.pendingRequests) {
-      reject(new Error('Disconnected from remote signer'));
-      this.pendingRequests.delete(id);
-    }
-    
-    console.log('Disconnected from remote signer');
   }
 } 

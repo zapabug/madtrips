@@ -1,6 +1,6 @@
 import { Metadata } from 'next'
 import Link from 'next/link'
-import CustomPackageBuilder from '@/components/packages/CustomPackageBuilder'
+import CustomPackageBuilder from '../../../components/packages/CustomPackageBuilder'
 
 export const metadata: Metadata = {
   title: 'Build Your Custom Package | MadTrips',

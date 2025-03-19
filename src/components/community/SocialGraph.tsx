@@ -3,7 +3,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import dynamic from 'next/dynamic';
 import * as d3 from 'd3';
-import { useNostr } from '@/lib/contexts/NostrContext';
+import { useNostr } from '../../lib/contexts/NostrContext';
 import { GraphNode, GraphLink } from '../../types';
 import { preloadImages, handleNodeClick } from '../../utils/graphUtils';
 import { BRAND_COLORS } from '../../constants/brandColors';

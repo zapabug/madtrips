@@ -28,6 +28,7 @@
     "next": "15.2.2",
     "next-themes": "^0.4.6",
     "ngit": "^0.0.0",
+    "nostr-login": "^1.7.11",
     "nostr-tools": "^2.11.0",
     "papaparse": "^5.5.2",
     "qrcode": "^1.5.4",

@@ -3,10 +3,10 @@
 import type { Metadata, Viewport } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
-import { Navigation } from "@/components/layout/Navigation";
-import { NostrLoginButton } from "@/components/NostrLoginButton";
+import { Navigation } from "../components/layout/Navigation";
+import { NostrLoginButton } from "../components/NostrLoginButton";
 import { Providers } from "./providers";
-import { NostrLink } from "@/components/NostrLink";
+import { NostrLink } from "../components/NostrLink";
 import Link from "next/link";
 import Image from "next/image";
 import Script from "next/script";
