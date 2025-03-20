@@ -1,94 +1,33 @@
-MadTrips - Bitcoin-Powered Travel in Madeira
+MadTrips
 
-Overview
+MadTrips is a decentralized travel platform that combines Bitcoin and Nostr to create a unique social experience for travelers. With features like a BTC map, a Nostr feed, a visual social graph, travel packages, a comment section, and secure P2P encrypted messaging, MadTrips lets you explore the world while staying connected and safe.
 
-MadTrips is an all-in-one travel solution for Bitcoiners living on a Bitcoin standard, offering curated travel experiences, Bitcoin-friendly business connections, and full-service trip planning in Madeira.
+Vision
+
+MadTrips is all about changing how people travel. It’s a platform where travelers can connect, find awesome travel experiences, and enjoy privacy and security using cool tech like Bitcoin and Nostr. The goal? To help you travel your way, without big companies watching over your shoulder.
 
 Features
 
-Bitcoin-Only Travel Packages: Adventure, luxury, and business retreats with full Bitcoin payment integration.
+BTC Map Integration: Find Bitcoin-friendly spots—like cafes, shops, or ATMs—anywhere you go, making travel easier with crypto.
 
-Bitcoin Business Directory & Map: Explore over 130+ Bitcoin-accepting businesses in Madeira.
+Nostr Feed: Share your travel adventures, photos with others in a decentralized social feed.
 
-Custom Tours & Airport Transfers: Bitcoin-accepted taxi and guided experiences.
+Visual Social Graph: See how you’re connected to other travelers in a fun, visual way.
 
-Bitcoin Circular Economy: Experience a 100% BTC-based lifestyle.
+Travel Packages: Check out or book travel packages put together by the community or even customize your own.
 
-Nostr Integration: Decentralized authentication, community engagement, and live updates.
+Contributing
 
-Services
+Hey, this is my first project, so I’m still learning! I’d love your help to make MadTrips better. Got ideas, found a bug, or want to add something cool? Please open an issue or send a pull request on GitHub. Your feedback means a lot!
 
-Travel Packages
+Contact
 
-Bitcoin & Business Teambuilding Retreats
+GitHub: zapabug
 
-Ultimate Madeira Adventure
+nostr:npub1dxd02kcjhgpkyrx60qnkd6j42kmc72u5lum0rp2ud8x5zfhnk4zscjj6hh
 
-Couples Escape
+Note: MadTrips is just getting started, and this README is a work in progress. Feel free to dive into the code and help me make it awesome!
 
-Bitcoin Pioneer Tour (100% BTC Lifestyle)
-
-VIP Experience (Luxury & Custom Trips)
-
-Additional Services
-
-Guided Bitcoin Economy Tours
-
-BTC-to-Fiat Exchange Facilitation
-
-Tech Stack
-
-Frontend: Next.js + TailwindCSS
-
-Backend: Bun + Node.js + Express
-
-Authentication & Data: Nostr (nsite & Blossom)
-
-Payments: Lightning Network (LNURL, BTCPay, LNBits)
-
-Getting Started
-
-Book Your Trip: Select from pre-designed packages or build your own.
-
-Pay in Bitcoin: Secure transactions via LNURL or On-Chain BTC.
-
-Enjoy Madeira: Use Bitcoin to pay for food, transport, and experiences.
-
-Contact & Community
-
-Website: https://mad-trips.npub.pro/ [nsite comming soon]
-
-Nostr: npub1dxd02kcjhgpkyrx60qnkd6j42kmc72u5lum0rp2ud8x5zfhnk4zscjj6hh
-
-Community: Join NOSTR! 
-
-🚀 MadTrips – Experience the Future of Travel with Bitcoin!
-
-## Architecture Overview
-
-MadTrips uses an optimized architecture that leverages Next.js App Router and API Routes to eliminate the need for a separate Express.js server.
-
-### Key Features
-
-- **Serverless API Routes**: All backend functionality is implemented through Next.js API Routes, eliminating the need for a separate server.
-- **Client-side Nostr Integration**: Where possible, Nostr operations are performed directly in the browser using NIP-07 compatible extensions.
-- **Server Components**: Using React Server Components for improved performance and reduced client-side JavaScript.
-- **Minimal Server-Side Logic**: Server-side operations are limited only to those requiring secrets or security (like payment processing).
-
-### Folder Structure
-
-- `/src/app/api/*` - Next.js API Routes replacing Express.js endpoints
-- `/src/lib/*` - Shared libraries for both client and server
-- `/src/components/*` - React components, including client-side Nostr integration
-
-### API Routes
-
-- `GET /api/packages` - List all travel packages
-- `GET /api/packages/[id]` - Get a specific travel package
-- `GET /api/businesses` - List Bitcoin-accepting businesses
-- `POST /api/payments` - Create a Lightning invoice
-- `GET /api/payments/[id]` - Check payment status
-- `POST /api/bookings` - Create a new booking
 
 ### Benefits of This Architecture
 
