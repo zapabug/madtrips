@@ -10,6 +10,7 @@ import { BRAND_COLORS } from '../../constants/brandColors';
 import { DEFAULT_PROFILE_IMAGE, shortenNpub } from '../../utils/profileUtils';
 import { nip19 } from 'nostr-tools';
 import { NDKEvent, NDKFilter } from '@nostr-dev-kit/ndk';
+import defaultGraphData from './socialgraph.json';
 
 // Dynamically import the ForceGraph2D component with no SSR
 const ForceGraph2D = dynamic(() => import('react-force-graph-2d').then(mod => mod.default), { ssr: false });
@@ -84,19 +85,19 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
   className = '',
   data,
 }) => {
+  const { ndk } = useNostr();
   const [graphData, setGraphData] = useState<GraphData | null>(null);
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
   const [nodeImages, setNodeImages] = useState<Map<string, HTMLImageElement>>(new Map());
   const [loadingImages, setLoadingImages] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const { ndk, user, getSocialGraph } = useNostr();
   const containerRef = useRef<HTMLDivElement>(null);
   const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
   const [loadingMessageIndex, setLoadingMessageIndex] = useState(0);
 
   // Ensure user is not null before accessing properties
-  const isUserLoggedIn = user !== null && !!user;
+  const isUserLoggedIn = ndk !== null && !!ndk;
 
   // Rotate loading messages with slower timing
   useEffect(() => {
@@ -113,23 +114,20 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
     };
   }, [isLoading]);
 
-  // Fetch real data from Nostr
-  const fetchNostrData = async () => {
-    if (!ndk) {
-      console.error("NDK not available");
-      return;
+  // Load data from provided data prop or defaultGraphData
+  useEffect(() => {
+    if (data) {
+      setGraphData(data);
+    } else {
+      try {
+        // Use the imported JSON as fallback when no live data
+        setGraphData(defaultGraphData as GraphData);
+      } catch (err) {
+        console.error('Failed to load graph data:', err);
+        setError('Failed to load social graph data');
+      }
     }
-    
-    // Create proper filters for social graph data
-    const filters: NDKFilter[] = [
-      { kinds: [3], authors: [centerNpub], limit: maxConnections }
-    ];
-    
-    const events = await ndk.fetchEvents(filters);
-    
-    // Process with proper nostr-tools encoding
-    // ...
-  };
+  }, [data]);
 
   // Initialize data on component mount
   useEffect(() => {
@@ -160,7 +158,7 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
     
     // Note: This might result in longer loading times, but will ensure
     // we're always showing real data rather than mock/static data
-  }, [isUserLoggedIn, user?.npub]);
+  }, [isUserLoggedIn, ndk?.getUserFromNip05]);
 
   // Initialize data when dependencies change
   useEffect(() => {
@@ -304,6 +302,21 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
       }
     }
   }, [graphData]);
+
+  const fetchNostrData = async () => {
+    if (!ndk) {
+      console.error('SocialGraph: NDK not initialized');
+      return;
+    }
+    
+    try {
+      // Your existing code to fetch Nostr data
+      // Make sure to use ndk from context
+    } catch (err) {
+      console.error('Error fetching Nostr graph data:', err);
+      setError('Failed to fetch social graph data');
+    }
+  };
 
   // Render appropriate UI based on loading/error state
   if (isLoading) {

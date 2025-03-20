@@ -21,7 +21,7 @@ export default function MapPage() {
         </div>
         
         <div className="w-full overflow-hidden">
-          <BitcoinBusinessMap width="100%" height={600} />
+          <BitcoinBusinessMap height={600} />
         </div>
         
         <div className="mt-8 max-w-3xl mx-auto text-center">

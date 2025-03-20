@@ -116,6 +116,34 @@ export const SocialGraphVisualization: React.FC<SocialGraphVisualizationProps> =
     }
   }, [data]);
 
+  // Add proper data validation
+  useEffect(() => {
+    if (!data || !data.nodes || !data.links) {
+      console.error('Invalid graph data provided to SocialGraphVisualization');
+      return;
+    }
+  }, [data]);
+  
+  // Add error boundary
+  const [renderError, setRenderError] = useState<string | null>(null);
+  
+  if (renderError) {
+    return (
+      <div className="p-4 border border-red-500 rounded bg-red-100 text-red-800">
+        <h3 className="font-bold">Error rendering social graph</h3>
+        <p>{renderError}</p>
+      </div>
+    );
+  }
+  
+  if (!data || !data.nodes || !data.links) {
+    return (
+      <div className="flex items-center justify-center p-8">
+        <p>No graph data available</p>
+      </div>
+    );
+  }
+
   console.log(`Rendering social graph with ${data?.nodes?.length || 0} nodes and ${data?.links?.length || 0} links`)
 
   // Ensure node.npub is defined before using it

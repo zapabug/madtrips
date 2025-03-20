@@ -109,11 +109,12 @@ export const NostrFeed: React.FC<NostrFeedProps> = ({
   // Fetch notes using real NDK implementation
   const fetchNotes = async () => {
     if (!ndk) {
-      setError("Nostr connection not available");
+      console.error('NostrFeed: NDK not initialized');
+      setError('Nostr client not initialized');
       setLoading(false);
       return;
     }
-    
+
     if (effectiveNpubs.length === 0) {
       setError("No Nostr accounts specified");
       setLoading(false);
@@ -162,14 +163,14 @@ export const NostrFeed: React.FC<NostrFeedProps> = ({
       setNotes(fetchedNotes.slice(0, limit));
       setLoading(false);
     } catch (err) {
-      console.error('Error fetching notes:', err);
-      setError('Failed to load posts. Please try again later.');
+      console.error('Error fetching Nostr notes:', err);
+      setError('Failed to load Nostr feed');
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchNotes();
+        fetchNotes();
   }, [ndk, effectiveNpubs]);
 
   // Auto-scrolling mechanism
@@ -404,8 +405,8 @@ export const NostrFeed: React.FC<NostrFeedProps> = ({
                   />
                 </div>
               )}
-            </div>
-          ))}
+          </div>
+        ))}
         </div>
       )}
     </div>
