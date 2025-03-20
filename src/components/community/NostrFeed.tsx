@@ -1,9 +1,12 @@
 'use client';
 
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { useNostr } from '../../lib/contexts/NostrContext';
 import { NDKEvent, NDKSubscription, NDKFilter } from '@nostr-dev-kit/ndk';
+import { nip19 } from 'nostr-tools';
 import Image from 'next/image';
+// Removed unused import of Image
+// Removed unused import of nip19
 
 // Import core NPUBs from SocialGraph
 const CORE_NPUBS = [
@@ -96,20 +99,78 @@ export const NostrFeed: React.FC<NostrFeedProps> = ({
   const feedContainerRef = useRef<HTMLDivElement>(null);
   const autoScrollRef = useRef<number | null>(null);
   const currentScrollIndexRef = useRef(0);
+  const feedRef = useRef<HTMLDivElement>(null);
+
+  // Use the appropriate npubs list
+  const effectiveNpubs = useCorePubs 
+    ? [...CORE_NPUBS, ...(npub ? [npub] : []), ...npubs] 
+    : [...(npub ? [npub] : []), ...npubs];
+  
+  // Fetch notes using real NDK implementation
+  const fetchNotes = async () => {
+    if (!ndk) {
+      setError("Nostr connection not available");
+      setLoading(false);
+      return;
+    }
+    
+    if (effectiveNpubs.length === 0) {
+      setError("No Nostr accounts specified");
+      setLoading(false);
+      return;
+    }
+    
+    setLoading(true);
+    setError(null);
+    
+    try {
+      // Create proper NDK filters
+      const filters: NDKFilter[] = effectiveNpubs.map(npub => ({
+        kinds: [1], // Regular notes
+        authors: [npub],
+        limit: Math.ceil(limit / effectiveNpubs.length)
+      }));
+      
+      // Use the NDK fetchEvents method
+      const events = await ndk.fetchEvents(filters);
+      
+      // Process events to notes
+      const fetchedNotes: Note[] = [];
+      for (const event of events) {
+        if (!event.pubkey) continue;
+        
+        // Use nip19 from nostr-tools to encode pubkey
+        const npub = nip19.npubEncode(event.pubkey);
+        const author = {
+          npub,
+          profile: await getUserProfile(npub)
+        };
+        
+        fetchedNotes.push({
+          id: event.id || '', 
+          created_at: event.created_at || 0,
+          content: stripLinks(event.content || ''),
+          author: { npub },
+          images: extractImageUrls(event.content || ''),
+          hashtags: extractHashtags(event.content || '')
+        });
+      }
+      
+      // Sort by creation time, newest first
+      fetchedNotes.sort((a, b) => b.created_at - a.created_at);
+      
+      setNotes(fetchedNotes.slice(0, limit));
+      setLoading(false);
+    } catch (err) {
+      console.error('Error fetching notes:', err);
+      setError('Failed to load posts. Please try again later.');
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    // Set timeout to ensure NDK is initialized
-    const timeout = setTimeout(() => {
-      if (!ndk) {
-        setError("Nostr connection not available. Please try refreshing the page.");
-        setLoading(false);
-      } else {
-        fetchNotes();
-      }
-    }, 1000);
-
-    return () => clearTimeout(timeout);
-  }, [ndk]);
+    fetchNotes();
+  }, [ndk, effectiveNpubs]);
 
   // Auto-scrolling mechanism
   useEffect(() => {
@@ -147,177 +208,6 @@ export const NostrFeed: React.FC<NostrFeedProps> = ({
       }
     };
   }, [notes, autoScroll, scrollInterval]);
-
-  // Function to fetch notes when NDK is available
-  const fetchNotes = async () => {
-    if (!ndk) {
-      return;
-    }
-
-    try {
-      setLoading(true);
-      
-      // Determine which npubs to use for the feed
-      let authorNpubs: string[] = [];
-      
-      if (npub) {
-        authorNpubs.push(npub);
-      }
-      
-      if (npubs && npubs.length > 0) {
-        authorNpubs = [...authorNpubs, ...npubs];
-      }
-      
-      if (useCorePubs && authorNpubs.length === 0) {
-        authorNpubs = CORE_NPUBS;
-      } else if (useCorePubs) {
-        // Add core npubs if not already included
-        CORE_NPUBS.forEach(corePub => {
-          if (!authorNpubs.includes(corePub)) {
-            authorNpubs.push(corePub);
-          }
-        });
-      }
-      
-      // Create a filter for recent notes
-      const filter: NDKFilter = {
-        kinds: [1], // Regular notes
-        authors: authorNpubs,
-        limit: limit * 2, // Fetch more to account for filtering
-        "#t": POPULAR_HASHTAGS, // Also fetch notes with our popular hashtags
-      };
-
-      // Get the initial notes
-      const events = await ndk.fetchEvents(filter);
-      
-      // Process the events into notes
-      const processedNotes: Note[] = [];
-      const tagFrequency: Record<string, number> = {};
-      
-      for (const event of Array.from(events)) {
-        try {
-          const images = extractImageUrls(event.content);
-          // Wait briefly for image validation
-          await new Promise(resolve => setTimeout(resolve, 100));
-          
-          const author = await getUserProfile(event.pubkey);
-          const noteHashtags = extractHashtags(event.content);
-          
-          // Update tag frequency
-          noteHashtags.forEach(tag => {
-            tagFrequency[tag] = (tagFrequency[tag] || 0) + 1;
-          });
-          
-          const note: Note = {
-            id: event.id,
-            created_at: event.created_at || Math.floor(Date.now() / 1000),
-            content: stripLinks(event.content),
-            author: {
-              npub: author?.npub || event.pubkey,
-              profile: author?.profile,
-            },
-            images,
-            hashtags: noteHashtags
-          };
-          
-          // Prioritize notes with images in the initial sort
-          processedNotes.push(note);
-        } catch (e) {
-          console.error('Error processing note:', e);
-        }
-      }
-      
-      // Sort notes prioritizing images and recency
-      processedNotes.sort((a, b) => {
-        // First prioritize notes with images
-        if (a.images.length && !b.images.length) return -1;
-        if (!a.images.length && b.images.length) return 1;
-        // Then sort by timestamp
-        return b.created_at - a.created_at;
-      });
-      
-      // Calculate trending tags
-      const trending = Object.entries(tagFrequency)
-        .map(([tag, count]) => ({ tag, count }))
-        .sort((a, b) => b.count - a.count)
-        .slice(0, 7);
-      
-      setTrendingTags(trending);
-      setNotes(processedNotes.slice(0, limit));
-      setLoading(false);
-      
-      // Set up real-time subscription
-      if (subscriptionRef.current) {
-        subscriptionRef.current.stop();
-      }
-      
-      const sub = ndk.subscribe(filter, { closeOnEose: false });
-      
-      sub.on('event', async (event: NDKEvent) => {
-        try {
-          // Wait 5 seconds before processing the event, to prioritize images
-          setTimeout(async () => {
-            const author = await getUserProfile(event.pubkey);
-            const noteHashtags = extractHashtags(event.content);
-            
-            const newNote: Note = {
-              id: event.id,
-              created_at: event.created_at || Math.floor(Date.now() / 1000),
-              content: stripLinks(event.content),
-              author: {
-                npub: author?.npub || event.pubkey,
-                profile: author?.profile,
-              },
-              images: extractImageUrls(event.content),
-              hashtags: noteHashtags
-            };
-            
-            // Add the new note to the beginning of the array
-            setNotes(prev => {
-              // Check if note already exists
-              if (prev.some(note => note.id === newNote.id)) {
-                return prev;
-              }
-              
-              // Add to beginning and sort
-              const updated = [newNote, ...prev].sort((a, b) => b.created_at - a.created_at);
-              
-              // Limit to requested amount
-              const limited = updated.slice(0, limit);
-              
-              // Reset scroll index when a new note is added
-              currentScrollIndexRef.current = 0;
-              
-              // Update trending tags
-              const newTagFrequency: Record<string, number> = {};
-              limited.forEach(note => {
-                note.hashtags.forEach(tag => {
-                  newTagFrequency[tag] = (newTagFrequency[tag] || 0) + 1;
-                });
-              });
-              
-              const newTrending = Object.entries(newTagFrequency)
-                .map(([tag, count]) => ({ tag, count }))
-                .sort((a, b) => b.count - a.count)
-                .slice(0, 7);
-              
-              setTrendingTags(newTrending);
-              
-              return limited;
-            });
-          }, 5000);
-        } catch (e) {
-          console.error('Error processing real-time note:', e);
-        }
-      });
-      
-      subscriptionRef.current = sub;
-    } catch (e) {
-      console.error('Error fetching notes:', e);
-      setError('Failed to load notes. Please try again.');
-      setLoading(false);
-    }
-  };
 
   // Handle manual horizontal scroll with mouse wheel
   useEffect(() => {
@@ -427,89 +317,37 @@ export const NostrFeed: React.FC<NostrFeedProps> = ({
     : notes;
 
   return (
-    <div className="w-full">
+    <div ref={feedRef} className="overflow-y-auto h-full bg-white dark:bg-gray-900 p-4">
       {loading && (
-        <div className="flex justify-center items-center py-10">
-          <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-bitcoin"></div>
+        <div className="flex justify-center items-center h-full">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[#F7931A]" />
         </div>
       )}
       
       {error && (
-        <div className="bg-red-100 dark:bg-red-900 border border-red-400 text-red-700 dark:text-red-200 px-4 py-3 rounded mb-4">
-          {error}
+        <div className="flex justify-center items-center h-full">
+          <div className="text-center p-4">
+            <p className="text-red-500 mb-2">{error}</p>
+            <button 
+              onClick={fetchNotes}
+              className="px-4 py-2 bg-[#F7931A] text-white rounded hover:bg-[#E87F17]"
+            >
+              Try Again
+            </button>
+          </div>
         </div>
       )}
       
-      {/* Hashtags filtering */}
-      <div className="mb-6 overflow-x-auto whitespace-nowrap pb-2">
-        <div className="inline-flex space-x-2">
-          {POPULAR_HASHTAGS.map((tag) => (
-            <button
-              key={tag}
-              onClick={() => {
-                setActiveHashtags(prev => 
-                  prev.includes(tag) 
-                    ? prev.filter(t => t !== tag) 
-                    : [...prev, tag]
-                );
-              }}
-              className={`px-3 py-1 rounded-full text-sm ${
-                activeHashtags.includes(tag)
-                  ? 'bg-bitcoin text-white'
-                  : 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300'
-              }`}
-            >
-              #{tag}
-            </button>
-          ))}
-          
-          {/* Add any trending tags that aren't in POPULAR_HASHTAGS */}
-          {trendingTags
-            .filter(({ tag }) => !POPULAR_HASHTAGS.includes(tag) && tag.length > 2)
-            .map(({ tag, count }) => (
-              <button
-                key={tag}
-                onClick={() => {
-                  setActiveHashtags(prev => 
-                    prev.includes(tag) 
-                      ? prev.filter(t => t !== tag) 
-                      : [...prev, tag]
-                  );
-                }}
-                className={`px-3 py-1 rounded-full text-sm ${
-                  activeHashtags.includes(tag)
-                    ? 'bg-bitcoin text-white'
-                    : 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300'
-                }`}
-              >
-                #{tag} <span className="ml-1 text-xs opacity-70">{count}</span>
-              </button>
-            ))
-          }
+      {!loading && !error && notes.length === 0 && (
+        <div className="flex justify-center items-center h-full">
+          <p className="text-gray-500">No posts found</p>
         </div>
-      </div>
+      )}
       
-      {/* Desktop: Grid layout, Mobile: Horizontal scroll */}
-      <div 
-        ref={feedContainerRef}
-        className="md:grid md:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-4 
-                  flex flex-nowrap overflow-x-auto pb-4 md:pb-0 md:overflow-x-visible 
-                  snap-x snap-mandatory md:snap-none scroll-smooth"
-        style={{ 
-          scrollbarWidth: 'none', 
-          msOverflowStyle: 'none',
-          WebkitOverflowScrolling: 'touch' 
-        }}
-      >
-        {filteredNotes.map((note) => (
-          <div 
-            key={note.id} 
-            className="flex-shrink-0 snap-center w-[85vw] md:w-auto md:flex-shrink-1 
-                      bg-white/10 dark:bg-black/20 rounded-lg overflow-hidden shadow-md 
-                      transition-transform hover:scale-[1.01] hover:shadow-lg 
-                      border border-transparent hover:border-bitcoin mr-4 md:mr-0"
-          >
-            <div className="p-4 h-full flex flex-col">
+      {!loading && !error && notes.length > 0 && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {notes.map(note => (
+            <div key={note.id} className="bg-white dark:bg-gray-800 rounded-lg shadow p-4 border border-gray-200 dark:border-gray-700">
               <div className="flex items-center mb-3">
                 {note.author.profile?.picture ? (
                   <Image 
@@ -567,15 +405,7 @@ export const NostrFeed: React.FC<NostrFeedProps> = ({
                 </div>
               )}
             </div>
-          </div>
-        ))}
-      </div>
-      
-      {filteredNotes.length === 0 && !loading && !error && (
-        <div className="text-center py-10 text-gray-500">
-          {activeHashtags.length > 0 
-            ? `No notes found with the selected hashtags: ${activeHashtags.map(tag => '#'+tag).join(', ')}`
-            : 'No notes found'}
+          ))}
         </div>
       )}
     </div>

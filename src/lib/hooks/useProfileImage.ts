@@ -131,7 +131,7 @@ export function useProfileImage(npub: string | null, initialProfilePic?: string 
     };
 
     loadProfileImage();
-  }, [npub, profilePic, loading]);
+  }, [npub, profilePic, loading, setProfilePic, setLoading, setError, setSource]);
 
   return { profilePic, loading, source, error };
 } 

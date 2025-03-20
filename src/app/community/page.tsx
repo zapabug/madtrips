@@ -76,10 +76,10 @@ export default function CommunityPage(): React.ReactElement {
           <span className="text-bitcoin">Bitcoin Madeira Community</span>
         </h1>
         
-        {/* Nostr Feed Section */}
+        {/* Nostr Feed Section - Fixed with better sizing and grid layout */}
         <div className="mb-8 bg-white dark:bg-gray-800 rounded-lg shadow-lg p-4">
           <h2 className="text-2xl font-bold mb-4 text-[#14857C]">Community Updates</h2>
-          <div className="w-full overflow-hidden border-2 border-forest rounded-lg" style={{ minHeight: '400px' }}>
+          <div className="w-full h-[500px] overflow-hidden border-2 border-forest rounded-lg">
             <MultiUserNostrFeed 
               npubs={npubs} 
               limit={25} 
@@ -105,10 +105,10 @@ export default function CommunityPage(): React.ReactElement {
           </p>
         </div>
         
-        {/* Add NostrFeed Section */}
+        {/* Second NostrFeed - Fixed with grid display and sizing */}
         <div className="mb-8">
           <h3 className="text-xl font-semibold mb-4 text-bitcoin">Community Feed</h3>
-          <div className="w-full rounded-lg overflow-hidden">
+          <div className="w-full h-[600px] rounded-lg overflow-hidden border-2 border-forest">
             <NostrFeed
               npubs={npubs}
               limit={12}

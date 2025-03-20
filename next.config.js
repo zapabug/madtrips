@@ -16,9 +16,10 @@ const nextConfig = {
         hostname: '**',
       },
     ],
+    unoptimized: true,
   },
   // Optimize for production
-  output: 'standalone',
+  output: 'export',
 }
 
 module.exports = nextConfig 

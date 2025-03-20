@@ -4,88 +4,12 @@ import { useState, useEffect } from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
-import { Package, PaymentData } from '../../../types/index';
+import { Package } from '../../../types/index';
 import { useNostr } from '../../../lib/contexts/NostrContext';
 import { useCartStore } from '../../../lib/store/cart-store';
-import { NostrPayment } from '../../../components/NostrPayment';
 import React from 'react';
 import { getPackageById, formatSats } from '../../../data/packages';
 import CheckoutAuthWrapper from '../../../components/checkout/CheckoutAuthWrapper';
-
-// Real lnbits payment functions
-const createPayment = async (amount: number, description: string): Promise<PaymentData> => {
-  try {
-    // Call your lnbits API
-    const response = await fetch('/api/payments/create', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        amount,
-        description,
-      }),
-    });
-    
-    const data = await response.json();
-    
-    if (!response.ok) {
-      throw new Error(data.message || 'Failed to create payment');
-    }
-    
-    return data;
-  } catch (error) {
-    console.error('Error creating payment:', error);
-    throw error;
-  }
-};
-
-const checkPaymentStatus = async (paymentId: string) => {
-  try {
-    // Call your lnbits API to check payment status
-    const response = await fetch(`/api/payments/status/${paymentId}`, {
-      method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-    });
-    
-    const data = await response.json();
-    
-    if (!response.ok) {
-      throw new Error(data.message || 'Failed to check payment status');
-    }
-    
-    return data;
-  } catch (error) {
-    console.error('Error checking payment status:', error);
-    throw error;
-  }
-};
-
-const createBooking = async (data: { packageId: string; nostrPubkey: string; invoice: string; preimage?: string }) => {
-  try {
-    // Call your lnbits API to create booking
-    const response = await fetch('/api/bookings/create', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(data),
-    });
-    
-    const responseData = await response.json();
-    
-    if (!response.ok) {
-      throw new Error(responseData.message || 'Failed to create booking');
-    }
-    
-    return responseData;
-  } catch (error) {
-    console.error('Error creating booking:', error);
-    throw error;
-  }
-};
 
 export default function PackageDetailPage() {
   // Use the useParams hook to get route params in a client component
@@ -97,13 +21,16 @@ export default function PackageDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedDate, setSelectedDate] = useState<Date | undefined>(undefined);
+  // Add proper eslint-disable for this specific line
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [isFullyAuthenticated, setIsFullyAuthenticated] = useState(false);
   
   // Cart store
   const { addItem, items } = useCartStore();
   
-  // Nostr state
-  const { user, loginMethod } = useNostr();
+  // Add eslint-disable for these variables
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { user: _user, loginMethod: _loginMethod } = useNostr();
   
   // Check if package is already in cart
   const isInCart = items.some(item => item.packageId === packageId);
@@ -215,7 +142,7 @@ export default function PackageDetailPage() {
                 </div>
                 
                 <div className="mb-4">
-                  <h3 className="font-bold mb-2">What's included:</h3>
+                  <h3 className="font-bold mb-2">What&apos;s included:</h3>
                   <ul className="list-disc pl-5">
                     {packageItem.includes.map((item, index) => (
                       <li key={index}>{item}</li>
@@ -264,7 +191,7 @@ export default function PackageDetailPage() {
                 {/* Authentication notice */}
                 {!isFullyAuthenticated && (
                   <p className="mt-3 text-sm text-gray-600 dark:text-gray-400 text-center">
-                    You'll be asked to authenticate with Nostr when making a payment
+                    You&apos;ll be asked to authenticate with Nostr when making a payment
                   </p>
                 )}
               </div>

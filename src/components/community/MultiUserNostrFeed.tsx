@@ -5,6 +5,8 @@ import { useNostr } from '../../lib/contexts/NostrContext';
 import { NDKEvent, NDKFilter } from '@nostr-dev-kit/ndk';
 import Image from 'next/image';
 import { BRAND_COLORS } from '../../constants/brandColors';
+import { nip19 } from 'nostr-tools';
+import NDK from '@nostr-dev-kit/ndk';
 
 interface MultiUserNostrFeedProps {
   npubs: string[];
@@ -59,7 +61,7 @@ export const MultiUserNostrFeed: React.FC<MultiUserNostrFeedProps> = ({
   // Fetch notes when component mounts
   useEffect(() => {
     fetchNotes();
-  }, [ndk, npubs]);
+  }, [ndk, npubs, limit, getUserProfile]);
   
   // Handle auto-scrolling
   useEffect(() => {
@@ -121,94 +123,57 @@ export const MultiUserNostrFeed: React.FC<MultiUserNostrFeedProps> = ({
   // Function to fetch notes when NDK is available
   const fetchNotes = async () => {
     if (!ndk) {
+      setError("Nostr connection not available");
+      setLoading(false);
       return;
     }
-
-    try {
-      setLoading(true);
-      
-      // Create a filter for recent notes from all provided npubs
-      const filter: NDKFilter = {
-        kinds: [1], // Regular notes
-        authors: npubs,
-        limit: limit,
-      };
-
-      // Get the initial notes
-      const events = await ndk.fetchEvents(filter);
-      
-      // Process the events into notes
-      const processedNotes: Note[] = [];
-      for (const event of Array.from(events)) {
-        try {
-          const author = await getUserProfile(event.pubkey);
-          
-          const note: Note = {
-            id: event.id,
-            created_at: event.created_at || Math.floor(Date.now() / 1000),
-            content: stripLinks(event.content),
-            author: {
-              npub: author?.npub || event.pubkey,
-              profile: author?.profile,
-            },
-            images: extractImageUrls(event.content),
-          };
-          
-          processedNotes.push(note);
-        } catch (e) {
-          console.error('Error processing note:', e);
-        }
-      }
-      
-      // Sort notes by timestamp (newest first)
-      processedNotes.sort((a, b) => b.created_at - a.created_at);
-      
-      setNotes(processedNotes);
+    
+    if (npubs.length === 0) {
+      setError("No Nostr accounts specified");
       setLoading(false);
+      return;
+    }
+    
+    setLoading(true);
+    setError(null);
+    
+    try {
+      // Create proper NDK filters
+      const filters: NDKFilter[] = npubs.map(npub => ({
+        kinds: [1],
+        authors: [npub],
+        limit: Math.ceil(limit / npubs.length)
+      }));
       
-      // Set up real-time subscription
-      const sub = ndk.subscribe(filter, { closeOnEose: false });
+      // Use NDK to fetch events
+      const events = await ndk.fetchEvents(filters);
       
-      sub.on('event', async (event: NDKEvent) => {
-        try {
-          // Wait 5 seconds before processing the event, to prioritize images
-          setTimeout(async () => {
-            const author = await getUserProfile(event.pubkey);
-            
-            const newNote: Note = {
-              id: event.id,
-              created_at: event.created_at || Math.floor(Date.now() / 1000),
-              content: stripLinks(event.content),
-              author: {
-                npub: author?.npub || event.pubkey,
-                profile: author?.profile,
-              },
-              images: extractImageUrls(event.content),
-            };
-            
-            // Add the new note to the beginning of the array
-            setNotes(prev => {
-              // Check if note already exists
-              if (prev.some(note => note.id === newNote.id)) {
-                return prev;
-              }
-              
-              // Add new note to the beginning and keep the list limited
-              const updated = [newNote, ...prev].slice(0, limit);
-              return updated;
-            });
-          }, 5000);
-        } catch (e) {
-          console.error('Error handling real-time note:', e);
-        }
-      });
+      // Process events using nostr-tools for encoding
+      const fetchedNotes: Note[] = [];
+      for (const event of events) {
+        if (!event.pubkey) continue;
+        
+        const npub = nip19.npubEncode(event.pubkey);
+        const author = {
+          npub,
+          profile: await getUserProfile(npub)
+        };
+        
+        fetchedNotes.push({
+          id: event.id || '', 
+          created_at: event.created_at || 0,
+          content: stripLinks(event.content || ''),
+          author: { npub },
+          images: extractImageUrls(event.content || '')
+        });
+      }
+      fetchedNotes.sort((b, a) => b.created_at - a.created_at);
       
-      return () => {
-        sub.stop();
-      };
-    } catch (error) {
-      console.error('Error fetching notes:', error);
-      setError('Failed to load notes. Please try again later.');
+      setNotes(fetchedNotes.slice(0, limit));
+      setLoading(false);
+    } catch (err) {
+      console.error('Error fetching notes:', err);
+      setError('Failed to load posts. Please try again later.');
       setLoading(false);
     }
   };
@@ -216,34 +181,35 @@ export const MultiUserNostrFeed: React.FC<MultiUserNostrFeedProps> = ({
   return (
     <div className="w-full h-full bg-white dark:bg-gray-900 relative">
       {loading && (
-        <div className="flex justify-center items-center py-10 absolute inset-0 bg-white/80 dark:bg-gray-900/80 z-10">
-          <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-bitcoin"></div>
+        <div className="flex justify-center items-center h-full">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[#F7931A]" />
         </div>
       )}
       
       {error && (
-        <div className="bg-red-100 dark:bg-red-900 border border-red-400 text-red-700 dark:text-red-200 px-4 py-3 rounded mb-4">
-          {error}
+        <div className="flex justify-center items-center h-full">
+          <div className="text-center p-4">
+            <p className="text-red-500 mb-2">{error}</p>
+            <button 
+              onClick={fetchNotes}
+              className="px-4 py-2 bg-[#F7931A] text-white rounded hover:bg-[#E87F17]"
+            >
+              Try Again
+            </button>
+          </div>
         </div>
       )}
       
-      {/* Scrollable feed container optimized for mobile */}
-      <div 
-        ref={feedContainerRef}
-        className="flex flex-col gap-3 p-3 overflow-y-auto"
-        style={{ 
-          scrollbarWidth: 'none', 
-          msOverflowStyle: 'none',
-          WebkitOverflowScrolling: 'touch',
-          height: '400px'
-        }}
-      >
-        {notes.map((note) => (
-          <div 
-            key={note.id} 
-            className="flex-none bg-white dark:bg-gray-800 rounded-lg overflow-hidden shadow-md 
-                     border border-gray-200 dark:border-gray-700 hover:border-blueGreen"
-          >
+      {!loading && !error && notes.length === 0 && (
+        <div className="flex justify-center items-center h-full">
+          <p className="text-gray-500">No posts found</p>
+        </div>
+      )}
+      
+      {!loading && !error && notes.length > 0 && (
+        <div className="grid grid-cols-1 gap-4">
+          {notes.map(note => (
+            <div key={note.id} className="bg-white dark:bg-gray-800 rounded-lg shadow p-4 border border-gray-200 dark:border-gray-700">
             <div className="p-3 flex flex-col">
               <div className="flex items-center mb-2">
                 {note.author.profile?.picture ? (
@@ -294,14 +260,8 @@ export const MultiUserNostrFeed: React.FC<MultiUserNostrFeedProps> = ({
             </div>
           </div>
         ))}
-        
-        {notes.length === 0 && !loading && !error && (
-          <div className="text-center py-10 text-gray-500 dark:text-gray-400">
-            <p className="text-lg">No notes found</p>
-            <p className="text-sm mt-2">Check back later for community updates</p>
           </div>
         )}
-      </div>
     </div>
   );
 };

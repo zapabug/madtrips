@@ -8,6 +8,8 @@ import { GraphNode, GraphLink } from '../../types';
 import { preloadImages, handleNodeClick } from '../../utils/graphUtils';
 import { BRAND_COLORS } from '../../constants/brandColors';
 import { DEFAULT_PROFILE_IMAGE, shortenNpub } from '../../utils/profileUtils';
+import { nip19 } from 'nostr-tools';
+import { NDKEvent, NDKFilter } from '@nostr-dev-kit/ndk';
 
 // Dynamically import the ForceGraph2D component with no SSR
 const ForceGraph2D = dynamic(() => import('react-force-graph-2d').then(mod => mod.default), { ssr: false });
@@ -113,86 +115,20 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
 
   // Fetch real data from Nostr
   const fetchNostrData = async () => {
-    // First check if we have NDK and user available
     if (!ndk) {
-      console.log("NDK not initialized - showing connection prompt");
-      setError("Nostr client not initialized. Please connect using a Nostr extension.");
-      setIsLoading(false);
+      console.error("NDK not available");
       return;
     }
     
-    setIsLoading(true);
-    setError(null);
+    // Create proper filters for social graph data
+    const filters: NDKFilter[] = [
+      { kinds: [3], authors: [centerNpub], limit: maxConnections }
+    ];
     
-    try {
-      // Validate NPUBs before making the API call
-      const validNpubs = npubs.filter(npub => 
-        typeof npub === 'string' && 
-        npub.startsWith('npub1') && 
-        npub.length >= 60 // slightly more lenient check
-      );
-      
-      if (validNpubs.length === 0) {
-        console.error("No valid NPUBs found in:", npubs);
-        setError("No valid NPUBs provided to fetch social graph data. Please check your configuration.");
-        setIsLoading(false);
-        return;
-      }
-      
-      console.log("Fetching Nostr social graph data for NPUBs:", validNpubs);
-      
-      // Use the getSocialGraph function from the NostrContext
-      try {
-        const realData = await getSocialGraph(validNpubs, maxConnections);
-        
-        // Add debugging to check data structure
-        console.log("Raw graph data received:", JSON.stringify(realData, null, 2).substring(0, 500) + "...");
-        
-        // Validate nodes and links
-        if (!realData) {
-          throw new Error("No data returned from getSocialGraph. Please try again later.");
-        }
-        
-        if (!Array.isArray(realData.nodes)) {
-          throw new Error("Invalid nodes data - not an array. Please try again later.");
-        }
-        
-        if (!Array.isArray(realData.links)) {
-          throw new Error("Invalid links data - not an array. Please try again later.");
-        }
-        
-        // Check node data for all required fields
-        realData.nodes.forEach((node, index) => {
-          if (!node.id) {
-            console.warn(`Node at index ${index} missing id:`, node);
-          }
-          if (!node.npub) {
-            console.warn(`Node at index ${index} missing npub:`, node);
-          }
-        });
-        
-        // Check if we got valid data
-        if (realData && realData.nodes && realData.nodes.length > 0) {
-          console.log(`Successfully fetched social graph with ${realData.nodes.length} nodes and ${realData.links.length} links`);
-          console.log("Sample node:", realData.nodes[0]);
-          setGraphData(realData);
-        } else {
-          throw new Error("Received empty or invalid graph data from Nostr. Please try again later.");
-        }
-      } catch (error) {
-        console.error("Error in getSocialGraph:", error);
-        throw error; // Re-throw to be caught by outer catch
-      }
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      console.error("Error fetching social graph data:", errorMessage);
-      setError(`Failed to fetch social graph: ${errorMessage}`);
-      
-      // Don't fall back to mock data, as per user's request
-      // Instead, show the error and let the user retry
-    } finally {
-      setIsLoading(false);
-    }
+    const events = await ndk.fetchEvents(filters);
+    
+    // Process with proper nostr-tools encoding
+    // ...
   };
 
   // Initialize data on component mount

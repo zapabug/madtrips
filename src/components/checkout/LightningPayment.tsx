@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
+import { nip19 } from 'nostr-tools';
+import { NDKEvent } from '@nostr-dev-kit/ndk';
 
 interface LightningPaymentProps {
   amount: number;
