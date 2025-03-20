@@ -1,5 +1,6 @@
 import { Metadata } from 'next'
 import { MultiTipJar } from '../../components/tip/MultiTipJar'
+import BitcoinBusinessMap from '../../components/map/BitcoinBusinessMap'
 
 export const metadata: Metadata = {
   title: 'Bitcoin Business Map | MadTrips',
@@ -7,8 +8,6 @@ export const metadata: Metadata = {
 }
 
 export default function MapPage() {
-  const mapUrl = 'https://btcmap.org/map/#11/32.650/-16.908'
-
   return (
     <div className="bg-gradient-to-b from-sand/30 to-white dark:from-ocean/10 dark:to-gray-900 min-h-screen">
       <div className="container mx-auto px-4 py-8">
@@ -22,26 +21,12 @@ export default function MapPage() {
         </div>
         
         <div className="w-full overflow-hidden">
-          <div className="w-full border-4 border-forest dark:border-forest/80 rounded-lg shadow-xl overflow-hidden relative">
-            <div className="w-full h-[600px]">
-              <iframe 
-                src={mapUrl} 
-                width="100%" 
-                height="100%" 
-                frameBorder="0"
-                title="Bitcoin-friendly businesses in Funchal"
-                className="w-full h-full"
-                loading="lazy"
-                allow="geolocation"
-                sandbox="allow-scripts allow-same-origin allow-popups allow-forms"
-              ></iframe>
-            </div>
-          </div>
+          <BitcoinBusinessMap width="100%" height={600} />
         </div>
         
         <div className="mt-8 max-w-3xl mx-auto text-center">
           <li>Bitcoin & Lightning enabled businesses in Madeira</li>
-          <li>Data is added by community members</li>
+          <li>Data is added by community members</li>          
         </div>
         
         {/* MultiTipJar component */}
