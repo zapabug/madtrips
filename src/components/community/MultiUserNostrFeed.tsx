@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useState, useRef } from 'react';
-import { useNostr } from '../../lib/contexts/NostrContext';
+import { useNostr } from '../../lib/nostr/NostrContext';
 import { NDKEvent, NDKFilter } from '@nostr-dev-kit/ndk';
 import Image from 'next/image';
 import { BRAND_COLORS } from '../../constants/brandColors';

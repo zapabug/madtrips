@@ -1,32 +1,36 @@
 'use client'
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import dynamic from 'next/dynamic';
-import * as d3 from 'd3';
 import { useNostr } from '../../lib/contexts/NostrContext';
-import { GraphNode, GraphLink } from '../../types';
-import { preloadImages, handleNodeClick } from '../../utils/graphUtils';
+import { GraphNode, GraphLink, GraphData } from '../../types/graph-types';
 import { BRAND_COLORS } from '../../constants/brandColors';
-import { DEFAULT_PROFILE_IMAGE, shortenNpub } from '../../utils/profileUtils';
+import { DEFAULT_PROFILE_IMAGE } from '../../utils/profileUtils';
 import { nip19 } from 'nostr-tools';
-import { NDKEvent, NDKFilter } from '@nostr-dev-kit/ndk';
 import defaultGraphData from './socialgraph.json';
+import { CORE_NPUBS } from './utils';
 
 // Dynamically import the ForceGraph2D component with no SSR
 const ForceGraph2D = dynamic(() => import('react-force-graph-2d').then(mod => mod.default), { ssr: false });
 
-// Define the core NPUBs that we want to focus on
-const CORE_NPUBS = [
-  "npub1etgqcj9gc6yaxttuwu9eqgs3ynt2dzaudvwnrssrn2zdt2useaasfj8n6e", // Free Madeira
-  "npub1s0veng2gvfwr62acrxhnqexq76sj6ldg3a5t935jy8e6w3shr5vsnwrmq5", // Bitcoin Madeira
-  "npub1dxd02kcjhgpkyrx60qnkd6j42kmc72u5lum0rp2ud8x5zfhnk4zscjj6hh", // Madtrips
-  "npub1funchalx8v747rsee6ahsuyrcd2s3rnxlyrtumfex9lecpmgwars6hq8kc", // Funchal
-];
+// Process the imported JSON to match our GraphData structure
+const processImportedGraphData = (jsonData: any): GraphData => {
+  // Map over nodes and ensure they have the required fields for GraphNode
+  const processedNodes = jsonData.nodes.map((node: any) => ({
+    id: node.id,
+    pubkey: node.id, // Use ID as pubkey if not provided
+    npub: node.npub,
+    name: node.name,
+    picture: node.picture,
+    isCoreNode: node.type === 'core' || CORE_NPUBS.includes(node.npub)
+  }));
 
-interface GraphData {
-  nodes: GraphNode[];
-  links: GraphLink[];
-}
+  // Return the processed data
+  return {
+    nodes: processedNodes,
+    links: jsonData.links
+  };
+};
 
 interface SocialGraphProps {
   // Primary NPUB to center the graph on (optional, defaults to first core NPUB)
@@ -85,7 +89,7 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
   className = '',
   data,
 }) => {
-  const { ndk } = useNostr();
+  const { ndk, getUserProfile, shortenNpub } = useNostr();
   const [graphData, setGraphData] = useState<GraphData | null>(null);
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
   const [nodeImages, setNodeImages] = useState<Map<string, HTMLImageElement>>(new Map());
@@ -120,8 +124,9 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
       setGraphData(data);
     } else {
       try {
-        // Use the imported JSON as fallback when no live data
-        setGraphData(defaultGraphData as GraphData);
+        // Process the imported JSON data to match our GraphData structure
+        const processedData = processImportedGraphData(defaultGraphData);
+        setGraphData(processedData);
       } catch (err) {
         console.error('Failed to load graph data:', err);
         setError('Failed to load social graph data');
@@ -150,6 +155,222 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
     return () => window.removeEventListener('resize', updateDimensions);
   }, []);
 
+  // Add at the top of the component
+  const DATA_FETCH_RETRY_LIMIT = 2;
+  const fetchRetries = useRef(0);
+  const isMounted = useRef(true);
+
+  // Update the fetchNostrData function to take no arguments for button click handlers
+  const fetchNostrData = useCallback(async () => {
+    setIsLoading(true);
+    setError(null);
+    
+    const controller = new AbortController();
+    
+    try {
+      console.log(`Attempting fetch (retry ${fetchRetries.current}/${DATA_FETCH_RETRY_LIMIT})`);
+      
+      if (!ndk) {
+        throw new Error('Nostr connection not available');
+      }
+
+      // Helper functions for fetching follows and network data
+      const fetchFollows = async () => {
+        const followData: GraphNode[] = [];
+        
+        try {
+          // Process each npub in our list
+          for (const npub of npubs) {
+            // Get hex pubkey from npub
+            let pubkey;
+            try {
+              pubkey = npub.startsWith('npub1') ? nip19.decode(npub).data : npub;
+            } catch (err) {
+              console.error('Invalid npub format:', npub);
+              continue;
+            }
+            
+            // Get user profile
+            const profile = await getUserProfile(npub);
+            
+            // Create base node
+            const baseNode: GraphNode = {
+              id: npub,
+              pubkey: typeof pubkey === 'string' ? pubkey : '',
+              npub: npub,
+              name: profile?.name || profile?.displayName || shortenNpub(npub),
+              picture: profile?.picture || DEFAULT_PROFILE_IMAGE,
+              isCoreNode: CORE_NPUBS.includes(npub),
+            };
+            
+            followData.push(baseNode);
+          }
+          
+          return followData;
+        } catch (err) {
+          console.error('Error in fetchFollows:', err);
+          throw err;
+        }
+      };
+      
+      const fetchNetwork = async () => {
+        const networkLinks: GraphLink[] = [];
+        
+        try {
+          // Create dummy connections for demonstration
+          // In a real implementation, this would fetch follows/relationships from relays
+          for (let i = 0; i < npubs.length; i++) {
+            for (let j = i + 1; j < npubs.length; j++) {
+              networkLinks.push({
+                source: npubs[i],
+                target: npubs[j],
+                value: 1,
+                type: 'mutual',
+              });
+            }
+          }
+          
+          return networkLinks;
+        } catch (err) {
+          console.error('Error in fetchNetwork:', err);
+          throw err;
+        }
+      };
+      
+      const [follows, network] = await Promise.all([
+        fetchWithTimeout(15000, fetchFollows(), controller.signal),
+        fetchWithTimeout(15000, fetchNetwork(), controller.signal)
+      ]);
+
+      const validateResponse = (follows: any[], network: any[]): boolean => {
+        return (
+          Array.isArray(follows) &&
+          follows.length > 0 &&
+          Array.isArray(network) &&
+          network.every(link => 
+            typeof link.source === 'string' && 
+            typeof link.target === 'string' &&
+            typeof link.value === 'number'
+          )
+        );
+      };
+
+      if (!validateResponse(follows, network)) {
+        throw new Error('Invalid data structure from Nostr');
+      }
+
+      // Process the data into the format needed for the graph
+      const processData = (follows: any[], network: any[]): GraphData => {
+        // Process follows into nodes
+        const nodes = follows.map(follow => ({
+          ...follow,
+          isCoreNode: CORE_NPUBS.includes(follow.npub),
+          val: CORE_NPUBS.includes(follow.npub) ? 15 : 5,
+          color: CORE_NPUBS.includes(follow.npub) ? 
+            BRAND_COLORS.bitcoinOrange : 
+            BRAND_COLORS.lightSand,
+        }));
+        
+        // Process network data into links
+        const links = network.map(link => ({
+          ...link,
+          color: link.type === 'mutual' ? 
+            BRAND_COLORS.bitcoinOrange : 
+            BRAND_COLORS.lightSand + '99',
+        }));
+        
+        return { nodes, links };
+      };
+      
+      const processedData = processData(follows, network);
+      
+      if (isMounted.current && !controller.signal.aborted) {
+        setGraphData(processedData);
+        fetchRetries.current = 0; // Reset retry counter on success
+        setIsLoading(false);
+      }
+      
+      return processedData;
+    } catch (err) {
+      if (isMounted.current && !controller.signal.aborted) {
+        if (fetchRetries.current < DATA_FETCH_RETRY_LIMIT) {
+          fetchRetries.current += 1;
+          console.warn(`Retrying fetch (${fetchRetries.current})...`);
+          return fetchNostrData();
+        }
+        setError(err instanceof Error ? err.message : 'Data loading failed');
+        setIsLoading(false);
+      }
+      return { nodes: [], links: [] };
+    }
+  }, [ndk, npubs, getUserProfile, shortenNpub]);
+
+  // New fetchWithTimeout utility
+  const fetchWithTimeout = useCallback(<T,>(timeout: number, promise: Promise<T>, signal: AbortSignal): Promise<T> => {
+    return Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        setTimeout(() => {
+          if (!signal.aborted) {
+            reject(new Error('Request timeout'));
+          }
+        }, timeout);
+      })
+    ]);
+  }, []);
+
+  // Custom handler for node clicks to support our GraphNode type
+  const handleNodeClicked = useCallback((node: any) => {
+    const graphNode = node as GraphNode;
+    setSelectedNode(graphNode);
+    
+    // Open in a new tab if it's a URL
+    if (graphNode.npub) {
+      window.open(`https://njump.me/${graphNode.npub}`, '_blank');
+    }
+  }, []);
+
+  // Updated useEffect with complete cleanup
+  useEffect(() => {
+    isMounted.current = true;
+    const controller = new AbortController();
+    let observer: IntersectionObserver | null = null;
+    let timeoutId: NodeJS.Timeout;
+
+    const handleVisibilityChange = (isVisible: boolean) => {
+      if (isVisible && isMounted.current) {
+        timeoutId = setTimeout(async () => {
+          try {
+            await fetchNostrData();
+          } catch (err) {
+            if (!controller.signal.aborted) {
+              console.error('Final fetch error:', err);
+            }
+          }
+        }, 3000);
+      }
+    };
+
+    if (containerRef.current) {
+      observer = new IntersectionObserver(([entry]) => {
+        handleVisibilityChange(!!entry?.isIntersecting);
+      }, { threshold: 0.1 });
+      
+      observer.observe(containerRef.current);
+    }
+
+    return () => {
+      isMounted.current = false;
+      controller.abort();
+      clearTimeout(timeoutId);
+      if (observer && containerRef.current) {
+        observer.unobserve(containerRef.current);
+        observer.disconnect();
+      }
+      fetchRetries.current = 0;
+    };
+  }, [fetchNostrData]);
+
   // Update graph data based on login status
   useEffect(() => {
     // Always attempt to fetch real data from Nostr
@@ -158,7 +379,7 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
     
     // Note: This might result in longer loading times, but will ensure
     // we're always showing real data rather than mock/static data
-  }, [isUserLoggedIn, ndk?.getUserFromNip05]);
+  }, [isUserLoggedIn, ndk]);
 
   // Initialize data when dependencies change
   useEffect(() => {
@@ -176,7 +397,7 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
     };
     
     initializeData();
-  }, [ndk, npubs.join(','), centerNpub, maxConnections]); // Re-fetch when these dependencies change
+  }, [ndk, npubs.join(','), centerNpub, maxConnections, data, fetchNostrData]); // Re-fetch when these dependencies change
 
   // Update preloadImages call with better error handling
   useEffect(() => {
@@ -302,21 +523,6 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
       }
     }
   }, [graphData]);
-
-  const fetchNostrData = async () => {
-    if (!ndk) {
-      console.error('SocialGraph: NDK not initialized');
-      return;
-    }
-    
-    try {
-      // Your existing code to fetch Nostr data
-      // Make sure to use ndk from context
-    } catch (err) {
-      console.error('Error fetching Nostr graph data:', err);
-      setError('Failed to fetch social graph data');
-    }
-  };
 
   // Render appropriate UI based on loading/error state
   if (isLoading) {
@@ -449,7 +655,7 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
                 <div className="w-10 h-10 rounded-full overflow-hidden mr-3 border-2" style={{ borderColor: BRAND_COLORS.bitcoinOrange }}>
                   <img 
                     src={selectedNode.picture || DEFAULT_PROFILE_IMAGE} 
-                    alt={selectedNode.name || shortenNpub(selectedNode.npub)}
+                    alt={selectedNode.name || shortenNpub(selectedNode.npub || '')}
                     className="w-full h-full object-cover"
                     onError={(e) => {
                       (e.target as HTMLImageElement).src = DEFAULT_PROFILE_IMAGE;
@@ -457,8 +663,8 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
                   />
                 </div>
                 <div>
-                  <div className="font-medium" style={{ color: BRAND_COLORS.lightSand }}>{selectedNode.name || shortenNpub(selectedNode.npub)}</div>
-                  <div className="text-xs" style={{ color: BRAND_COLORS.lightSand + '99' }}>{shortenNpub(selectedNode.npub)}</div>
+                  <div className="font-medium" style={{ color: BRAND_COLORS.lightSand }}>{selectedNode.name || (selectedNode.npub ? shortenNpub(selectedNode.npub) : '')}</div>
+                  <div className="text-xs" style={{ color: BRAND_COLORS.lightSand + '99' }}>{selectedNode.npub ? shortenNpub(selectedNode.npub) : ''}</div>
                 </div>
               </div>
               <div className="mt-2 flex justify-end">
@@ -479,15 +685,12 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
         <div className="w-full h-full">
           {graphData && (
             <ForceGraph2D
-              graphData={convertGraphData(graphData)}
+              graphData={convertGraphData(graphData) as any}
               nodeColor={(node: any) => node.color || BRAND_COLORS.lightSand}
               nodeVal={(node: any) => node.val || 1}
               linkColor={(link: any) => link.color || BRAND_COLORS.lightSand + '99'}
               linkWidth={(link: any) => Math.sqrt(link.value || 1) * 1.5}
-              onNodeClick={(node: any, event: MouseEvent) => {
-                setSelectedNode(node as GraphNode);
-                handleNodeClick(node as GraphNode);
-              }}
+              onNodeClick={handleNodeClicked}
               width={dimensions.width}
               height={dimensions.height}
               nodeCanvasObject={(node: any, ctx: CanvasRenderingContext2D, globalScale: number) => {

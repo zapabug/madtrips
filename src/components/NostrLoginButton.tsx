@@ -1,5 +1,5 @@
 'use client';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { useNostr } from '../lib/contexts/NostrContext';
 import Image from 'next/image';
 
@@ -7,6 +7,8 @@ export const NostrLoginButton: React.FC = () => {
   const { user, login, logout, loginMethod } = useNostr();
   const [profileImage, setProfileImage] = useState<string>("/assets/nostrloginicon.gif");
   const [isInitialized, setIsInitialized] = useState(false);
+  const initAttempted = useRef<boolean>(false);
+  const authController = useRef<AbortController>();
 
   // Initialize nostr-login on client side only
   useEffect(() => {
@@ -52,7 +54,47 @@ export const NostrLoginButton: React.FC = () => {
     }
   }, [user]);
 
+  const initializeNostrLogin = async () => {
+    if (initAttempted.current) return;
+    initAttempted.current = true;
+
+    try {
+      const { init } = await import('nostr-login');
+      
+      // Clean up any existing instance
+      if (window.__nlInitialized) {
+        document.dispatchEvent(new Event("nlLogout"));
+      }
+
+      // Create new abort controller for this auth session
+      authController.current = new AbortController();
+      const { signal } = authController.current;
+
+      init({
+        theme: 'ocean',
+        bunkers: 'nsec.app,highlighter.com',
+        perms: 'sign_event:1,nip04_encrypt',
+        darkMode: window.matchMedia('(prefers-color-scheme: dark)').matches,
+        noBanner: true,
+        methods: 'connect,extension,readOnly',
+        onAuth: (npub, options) => {
+          if (signal.aborted) return;
+          console.log('Auth successful:', npub);
+          // NostrContext will detect window.nostr automatically
+        }
+      });
+
+    } catch (error) {
+      console.error('Failed to initialize nostr-login:', error);
+    }
+  };
+
   const handleLogin = async () => {
+    // Abort any existing auth flow
+    if (authController.current) {
+      authController.current.abort();
+    }
+
     if (!isInitialized) {
       console.warn('Nostr login not initialized yet');
       return;
@@ -67,12 +109,32 @@ export const NostrLoginButton: React.FC = () => {
         // Import dynamically to avoid SSR issues
         const { launch } = await import('nostr-login');
         // Launch the nostr-login UI
-        launch({ startScreen: 'welcome' });
+        const instance = launch({ startScreen: 'welcome' });
+        
+        // Cleanup on unmount
+        return () => {
+          if (instance) {
+            instance.close();
+            document.dispatchEvent(new Event("nlLogout"));
+          }
+          if (authController.current) {
+            authController.current.abort();
+          }
+        };
       }
     } catch (error) {
       console.error('Login action failed:', error);
     }
   };
+
+  // Add cleanup on component unmount
+  useEffect(() => {
+    return () => {
+      if (authController.current) {
+        authController.current.abort();
+      }
+    };
+  }, []);
 
   return (
     <div className="fixed bottom-4 right-4 z-50">

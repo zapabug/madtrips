@@ -1,0 +1,40 @@
+src/
+├── app/                        # Next.js pages directory (routes)
+│   ├── community/              # Community page route
+│   │   ├── page.tsx            # Community page component
+│   ├── checkout/               # Checkout page route
+│   ├── packages/               # Packages page route
+│   ├── api/                    # API routes
+│   ├── layout.tsx              # Root layout
+│   └── page.tsx                # Home page
+├── components/                 # Reusable UI components
+│   ├── community/              # Community components
+│   │   ├── SocialGraph.tsx     # Social graph visualization (665 lines)
+│   │   ├── NostrFeed.tsx       # Nostr feed component
+│   │   ├── MultiUserNostrFeed.tsx # Multi-user Nostr feed
+│   │   └── NostrProfileImage.tsx  # Profile image component
+│   ├── checkout/               # Checkout components
+│   ├── tip/                    # Tipping components
+│   ├── map/                    # Map components
+│   ├── layout/                 # Layout components
+│   └── NostrLoginButton.tsx    # Nostr login button
+├── constants/                  # App-wide constants
+│   ├── nostr.ts                # Nostr-related constants
+│   └── brandColors.ts          # Brand color definitions
+├── types/                      # TypeScript type definitions
+│   ├── nostr.d.ts              # Nostr-related types
+│   ├── graph-types.ts          # Graph visualization types
+│   └── cart-types.ts           # Shopping cart types
+├── hooks/                      # Custom React hooks
+├── data/                       # Data files/mocks
+│   └── packages.ts             # Package data
+├── lib/ (missing - should be created)  # Library code
+│   ├── contexts/               # React contexts
+│   │   └── NostrContext.tsx    # Nostr context provider (referenced but missing)
+│   ├── services/               # Service modules
+│   │   └── NostrMessagingService.ts # Nostr messaging service
+│   └── store/                  # State management
+│       └── cart-store.ts       # Cart store
+└── utils/ (missing - should be created) # Utility functions
+    ├── graphUtils.ts           # Graph utility functions (referenced but missing)
+    └── profileUtils.ts         # Profile utilities (referenced but missing)
