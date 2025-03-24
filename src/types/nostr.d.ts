@@ -75,4 +75,101 @@ interface MadTripsNostr {
     preimage: string;
     paymentHash: string;
   }>;
+}
+
+// Nostr protocol type definitions
+
+// Nostr Event Types
+export interface NostrEvent {
+  id: string;
+  pubkey: string;
+  created_at: number;
+  kind: number;
+  tags: string[][];
+  content: string;
+  sig?: string;
+}
+
+// User Profile Types
+export interface NostrProfile {
+  name?: string;
+  displayName?: string;
+  about?: string;
+  picture?: string;
+  banner?: string;
+  website?: string;
+  lud06?: string; // Lightning address
+  lud16?: string; // LNURL
+  nip05?: string; // NIP-05 identifier
+  npub: string;   // User npub
+  pubkey: string; // User pubkey in hex
+}
+
+// Feed Types
+export interface NostrPost {
+  id: string;
+  pubkey: string;
+  content: string;
+  created_at: number;
+  kind: number;
+  tags: string[][];
+  sig?: string;
+  profile?: NostrProfile;
+}
+
+// Social Graph Types
+export interface NostrFollows {
+  pubkey: string;
+  follows: string[];
+  lastUpdated: number;
+}
+
+// Relay Connection Types
+export interface NostrRelay {
+  url: string;
+  status: 'connected' | 'connecting' | 'disconnected' | 'error';
+  error?: string;
+}
+
+// Event Subscription Types
+export interface NostrSubscription {
+  id: string;
+  filters: NostrFilter[];
+  relays: string[];
+  active: boolean;
+}
+
+export interface NostrFilter {
+  ids?: string[];
+  authors?: string[];
+  kinds?: number[];
+  '#e'?: string[];
+  '#p'?: string[];
+  '#t'?: string[];
+  since?: number;
+  until?: number;
+  limit?: number;
+}
+
+// Graph Metadata
+export interface NostrGraphData {
+  nodes: NostrGraphNode[];
+  links: NostrGraphLink[];
+  lastUpdated: number;
+}
+
+export interface NostrGraphNode {
+  id: string;
+  pubkey: string;
+  npub: string;
+  name?: string;
+  picture?: string;
+  followers: number;
+  following: number;
+}
+
+export interface NostrGraphLink {
+  source: string;
+  target: string;
+  value: number;
 } 

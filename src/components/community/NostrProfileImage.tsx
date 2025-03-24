@@ -1,8 +1,7 @@
 'use client'
 
 import Image from 'next/image'
-import { useEffect, useState } from 'react'
-import { useNostr } from '../../lib/contexts/NostrContext'
+import { useNostrProfile } from '../../hooks/useNostrProfile'
 
 interface NostrProfileImageProps {
   npub: string
@@ -19,42 +18,8 @@ export function NostrProfileImage({
   className = '', 
   alt = 'Nostr Profile' 
 }: NostrProfileImageProps) {
-  const [profilePic, setProfilePic] = useState<string | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const { ndk, getUserProfile } = useNostr()
-
-  useEffect(() => {
-    const fetchProfileData = async () => {
-      if (!ndk || !npub) {
-        setLoading(false)
-        return
-      }
-
-      setLoading(true)
-      setError(null)
-
-      try {
-        // Use the getUserProfile function from NostrContext
-        const user = await getUserProfile(npub)
-        
-        if (user && user.profile?.picture) {
-          setProfilePic(user.profile.picture)
-        } else {
-          // If no profile picture is found, use bitcoin image as fallback
-          setProfilePic('/assets/bitcoin.png')
-        }
-      } catch (err) {
-        console.error(`Failed to fetch profile for ${npub}:`, err)
-        setError('Failed to load profile')
-        setProfilePic('/assets/bitcoin.png')
-      } finally {
-        setLoading(false)
-      }
-    }
-
-    fetchProfileData()
-  }, [ndk, npub, getUserProfile])
+  const { profile, loading, error } = useNostrProfile(npub);
+  const profilePic = profile?.picture || '/assets/bitcoin.png';
 
   return (
     <div className={`relative ${className}`}>
@@ -63,13 +28,20 @@ export function NostrProfileImage({
       ) : (
         <div className="rounded-full overflow-hidden" style={{ width, height }}>
           <Image
-            src={profilePic || '/assets/bitcoin.png'} // Fallback to bitcoin image if no profile pic
+            src={profilePic}
             alt={alt}
             width={width}
             height={height} 
             className="object-cover w-full h-full"
             priority
             unoptimized
+            onError={() => {
+              // Fallback for image load errors
+              if (profilePic !== '/assets/bitcoin.png') {
+                // Only set error if not already on fallback
+                console.log('Profile image failed to load, using fallback');
+              }
+            }}
           />
         </div>
       )}

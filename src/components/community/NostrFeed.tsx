@@ -5,25 +5,13 @@ import { useNostr } from '../../lib/contexts/NostrContext';
 import { NDKEvent, NDKSubscription, NDKFilter } from '@nostr-dev-kit/ndk';
 import { nip19 } from 'nostr-tools';
 import Image from 'next/image';
-// Removed unused import of Image
-// Removed unused import of nip19
-
-// Import core NPUBs from SocialGraph
-const CORE_NPUBS = [
-  "npub1etgqcj9gc6yaxttuwu9eqgs3ynt2dzaudvwnrssrn2zdt2useaasfj8n6e", // Free Madeira
-  "npub1s0veng2gvfwr62acrxhnqexq76sj6ldg3a5t935jy8e6w3shr5vsnwrmq5", // Bitcoin Madeira
-  "npub1dxd02kcjhgpkyrx60qnkd6j42kmc72u5lum0rp2ud8x5zfhnk4zscjj6hh", // Madtrips
-  "npub1funchalx8v747rsee6ahsuyrcd2s3rnxlyrtumfex9lecpmgwars6hq8kc", // Funchal
-];
-
-// Define popular hashtags
-const POPULAR_HASHTAGS = [
-  "madeira",
-  "travelmadeira",
-  "visitmadeira", 
-  "funchal",
-  "soveng"
-];
+import { 
+  CORE_NPUBS, 
+  POPULAR_HASHTAGS, 
+  stripLinks, 
+  extractImageUrls, 
+  extractHashtags 
+} from './utils';
 
 interface NostrFeedProps {
   npub?: string;
@@ -33,36 +21,6 @@ interface NostrFeedProps {
   scrollInterval?: number;
   useCorePubs?: boolean;
 }
-
-// Helper function to strip links from content
-const stripLinks = (content: string): string => {
-  // Remove all URLs but preserve text
-  return content.replace(/https?:\/\/\S+/g, '')
-    .replace(/\s+/g, ' ') // Clean up extra spaces
-    .trim();
-};
-
-// Helper function to detect image URLs
-const extractImageUrls = (content: string): string[] => {
-  const imgRegex = /(https?:\/\/.*\.(?:png|jpg|jpeg|gif|webp)(?:\?[^"']*)?)/gi;
-  const matches = content.match(imgRegex) || [];
-  // Filter out any obviously invalid image URLs
-  return matches.filter(url => {
-    try {
-      new URL(url);
-      return true;
-    } catch {
-      return false;
-    }
-  });
-};
-
-// Helper function to extract hashtags
-const extractHashtags = (content: string): string[] => {
-  const hashtagRegex = /#(\w+)/g;
-  const matches = content.match(hashtagRegex) || [];
-  return matches.map(tag => tag.slice(1).toLowerCase());
-};
 
 // Define the note interface
 interface Note {
@@ -98,6 +56,7 @@ export const NostrFeed: React.FC<NostrFeedProps> = ({
   const subscriptionRef = useRef<NDKSubscription | null>(null);
   const feedContainerRef = useRef<HTMLDivElement>(null);
   const autoScrollRef = useRef<number | null>(null);
+  const shouldPauseScrolling = useRef<boolean>(false);
   const currentScrollIndexRef = useRef(0);
   const feedRef = useRef<HTMLDivElement>(null);
 

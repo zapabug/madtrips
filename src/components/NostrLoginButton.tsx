@@ -1,20 +1,33 @@
 'use client';
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useCallback, memo } from 'react';
 import { useNostr } from '../lib/contexts/NostrContext';
 import Image from 'next/image';
 
-export const NostrLoginButton: React.FC = () => {
-  const { user, login, logout, loginMethod } = useNostr();
+// Memoize the component to reduce unnecessary rerenders
+const NostrLoginButton: React.FC = memo(() => {
+  const { user, login, logout, userProfilePicture, ndkReady, reconnect } = useNostr();
   const [profileImage, setProfileImage] = useState<string>("/assets/nostrloginicon.gif");
   const [isInitialized, setIsInitialized] = useState(false);
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
+  const [loginError, setLoginError] = useState<string | null>(null);
   const initAttempted = useRef<boolean>(false);
-  const authController = useRef<AbortController>();
+  const authController = useRef<AbortController | null>(null);
+  const loginInProgress = useRef<boolean>(false);
 
-  // Initialize nostr-login on client side only
+  // Initialize nostr-login on client side only - with error handling
   useEffect(() => {
-    // Dynamically import nostr-login to avoid SSR issues
-    import('nostr-login')
-      .then(({ init }) => {
+    // Prevent multiple initializations
+    if (isInitialized) return; 
+
+    let timeoutId: NodeJS.Timeout | null = null;
+
+    const initialize = async () => {
+      if (initAttempted.current) return;
+      initAttempted.current = true;
+      
+      try {
+        const { init } = await import('nostr-login');
+        
         init({
           theme: 'ocean',
           bunkers: 'nsec.app,highlighter.com',
@@ -22,9 +35,13 @@ export const NostrLoginButton: React.FC = () => {
           darkMode: window.matchMedia('(prefers-color-scheme: dark)').matches,
           noBanner: true,
           methods: 'connect,extension,readOnly',
-          onAuth: (npub, options) => {
+          onAuth: (npub) => {
             console.log('Auth successful:', npub);
-            // NostrContext will detect window.nostr automatically
+            setLoginError(null);
+          },
+          onError: (err) => {
+            console.error('Nostr login error:', err);
+            setLoginError('Login failed');
           }
         });
         
@@ -33,124 +50,222 @@ export const NostrLoginButton: React.FC = () => {
         // Add event listener for auth events
         const handleAuth = (e: any) => {
           console.log('Auth event:', e.detail);
-          // No need to call our login() as NostrContext will detect window.nostr
+          setLoginError(null);
+          
+          if (timeoutId) clearTimeout(timeoutId);
+          
+          timeoutId = setTimeout(() => {
+            if (window.nostr && ndkReady && !loginInProgress.current) {
+              loginInProgress.current = true;
+              setIsLoggingIn(true);
+              
+              login()
+                .then(() => {
+                  setLoginError(null);
+                })
+                .catch(err => {
+                  console.error('Login failed:', err);
+                  setLoginError('Login failed. Please try again.');
+                })
+                .finally(() => {
+                  loginInProgress.current = false;
+                  setIsLoggingIn(false);
+                });
+            }
+          }, 500);
         };
         
         document.addEventListener('nlAuth', handleAuth);
         
         return () => {
           document.removeEventListener('nlAuth', handleAuth);
+          if (timeoutId) clearTimeout(timeoutId);
         };
-      })
-      .catch(error => console.error('Failed to load nostr-login:', error));
-  }, []);
+      } catch (error) {
+        console.error('Failed to load nostr-login:', error);
+        initAttempted.current = false; // Allow retry
+        
+        // Allow retry after 2 seconds if initialization failed
+        setTimeout(() => {
+          setIsInitialized(false);
+        }, 2000);
+      }
+    };
+
+    initialize();
+  }, [isInitialized, ndkReady, login]);
 
   // Update profile image based on user state
   useEffect(() => {
-    if (user && user.profile?.picture) {
-      setProfileImage(user.profile.picture);
+    if (user && userProfilePicture) {
+      setProfileImage(userProfilePicture);
     } else {
       setProfileImage("/assets/nostrloginicon.gif");
     }
-  }, [user]);
+  }, [user, userProfilePicture]);
 
-  const initializeNostrLogin = async () => {
-    if (initAttempted.current) return;
-    initAttempted.current = true;
-
-    try {
-      const { init } = await import('nostr-login');
-      
-      // Clean up any existing instance
-      if (window.__nlInitialized) {
-        document.dispatchEvent(new Event("nlLogout"));
-      }
-
-      // Create new abort controller for this auth session
-      authController.current = new AbortController();
-      const { signal } = authController.current;
-
-      init({
-        theme: 'ocean',
-        bunkers: 'nsec.app,highlighter.com',
-        perms: 'sign_event:1,nip04_encrypt',
-        darkMode: window.matchMedia('(prefers-color-scheme: dark)').matches,
-        noBanner: true,
-        methods: 'connect,extension,readOnly',
-        onAuth: (npub, options) => {
-          if (signal.aborted) return;
-          console.log('Auth successful:', npub);
-          // NostrContext will detect window.nostr automatically
-        }
+  // Try to reconnect relays if necessary
+  useEffect(() => {
+    if (!ndkReady && !loginInProgress.current) {
+      reconnect().catch(err => {
+        console.warn('Relay reconnect failed:', err);
       });
-
-    } catch (error) {
-      console.error('Failed to initialize nostr-login:', error);
     }
-  };
+  }, [ndkReady, reconnect]);
 
-  const handleLogin = async () => {
-    // Abort any existing auth flow
-    if (authController.current) {
-      authController.current.abort();
-    }
-
-    if (!isInitialized) {
-      console.warn('Nostr login not initialized yet');
+  // Memoize the handler to prevent recreating it on every render
+  const handleLogin = useCallback(async () => {
+    if (loginInProgress.current || isLoggingIn) {
+      console.log('Login already in progress, ignoring click');
       return;
     }
     
+    setLoginError(null);
+    
+    // Abort any existing auth flow
+    if (authController.current) {
+      authController.current.abort();
+      authController.current = null;
+    }
+
     try {
       if (user) {
         // If already logged in, log out
         document.dispatchEvent(new Event("nlLogout"));
         logout();
       } else {
-        // Import dynamically to avoid SSR issues
-        const { launch } = await import('nostr-login');
-        // Launch the nostr-login UI
-        const instance = launch({ startScreen: 'welcome' });
+        // Create new abort controller for this auth session
+        authController.current = new AbortController();
         
-        // Cleanup on unmount
-        return () => {
-          if (instance) {
-            instance.close();
+        if (!isInitialized) {
+          console.warn('Nostr login not initialized yet');
+          // Clean up any existing instance
+          if (typeof window !== 'undefined' && window.nostrLogin && window.nostrLogin.__nlInitialized) {
             document.dispatchEvent(new Event("nlLogout"));
           }
-          if (authController.current) {
-            authController.current.abort();
+            
+          // Dynamically import and initialize if needed
+          const { init, launch } = await import('nostr-login');
+          
+          init({
+            theme: 'ocean',
+            bunkers: 'nsec.app,highlighter.com',
+            perms: 'sign_event:1,nip04_encrypt',
+            darkMode: window.matchMedia('(prefers-color-scheme: dark)').matches,
+            noBanner: true,
+            methods: 'connect,extension,readOnly',
+          });
+          
+          setIsInitialized(true);
+          
+          // Try reconnecting relays if needed
+          if (!ndkReady) {
+            await reconnect();
           }
-        };
+          
+          // Launch after initialization
+          launch({ startScreen: 'welcome' });
+        } else {
+          // Try reconnecting relays if needed
+          if (!ndkReady) {
+            await reconnect();
+          }
+          
+          // Import dynamically to avoid SSR issues
+          const { launch } = await import('nostr-login');
+          // Launch the nostr-login UI
+          launch({ startScreen: 'welcome' });
+        }
+        
+        // Set loading state
+        setIsLoggingIn(true);
+        loginInProgress.current = true;
+        
+        // One-time check if window.nostr is populated after a delay
+        setTimeout(() => {
+          if (authController.current?.signal.aborted) {
+            setIsLoggingIn(false);
+            loginInProgress.current = false;
+            return;
+          }
+          
+          if (typeof window !== 'undefined' && window.nostr && ndkReady) {
+            login()
+              .then(() => {
+                setLoginError(null);
+              })
+              .catch(err => {
+                console.error('Login failed:', err);
+                setLoginError('Login failed. Please try again.');
+              })
+              .finally(() => {
+                setIsLoggingIn(false);
+                loginInProgress.current = false;
+                authController.current = null;
+              });
+          } else {
+            // If window.nostr isn't available after timeout, reset loading state
+            setIsLoggingIn(false);
+            loginInProgress.current = false;
+          }
+        }, 1000);
       }
     } catch (error) {
       console.error('Login action failed:', error);
+      setIsLoggingIn(false);
+      loginInProgress.current = false;
+      authController.current = null;
+      setLoginError('Login failed');
     }
-  };
+  }, [user, logout, isInitialized, ndkReady, login, reconnect, isLoggingIn]);
 
   // Add cleanup on component unmount
   useEffect(() => {
     return () => {
       if (authController.current) {
         authController.current.abort();
+        authController.current = null;
       }
+      
+      loginInProgress.current = false;
+      setIsLoggingIn(false);
     };
   }, []);
 
   return (
     <div className="fixed bottom-4 right-4 z-50">
+      {loginError && (
+        <div className="absolute bottom-full right-0 mb-2 p-2 bg-red-500 text-white text-xs rounded shadow">
+          {loginError}
+        </div>
+      )}
       <button 
         onClick={handleLogin}
         className="transition-transform hover:scale-110 active:scale-95 focus:outline-none"
         title={user ? "Logged in - Click to logout" : "Login with Nostr"}
+        disabled={isLoggingIn || loginInProgress.current}
       >
-        <Image 
-          src={profileImage} 
-          alt={user ? "Your profile" : "Login with Nostr"}
-          width={70}
-          height={70}
-          className="rounded-lg"
-        />
+        <div className="relative">
+          <Image 
+            src={profileImage} 
+            alt={user ? "Your profile" : "Login with Nostr"}
+            width={70}
+            height={70}
+            className={`rounded-lg ${(isLoggingIn || loginInProgress.current) ? 'opacity-70' : ''}`}
+          />
+          {(isLoggingIn || loginInProgress.current) && (
+            <div className="absolute inset-0 flex items-center justify-center">
+              <div className="animate-spin h-6 w-6 border-2 border-white border-t-transparent rounded-full"></div>
+            </div>
+          )}
+        </div>
       </button>
     </div>
   );
-}; 
+});
+
+// Explicitly set displayName for the memoized component
+NostrLoginButton.displayName = 'NostrLoginButton';
+
+// Export memoized component
+export { NostrLoginButton }; 

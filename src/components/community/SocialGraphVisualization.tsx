@@ -1,233 +1,156 @@
 'use client'
 
-import React, { useEffect, useState, useRef } from 'react'
+import React, { useEffect, useRef, useState, useCallback } from 'react'
 import dynamic from 'next/dynamic'
-import { GraphNode, GraphLink } from '../../types';
-import { preloadImages, handleNodeClick } from '../../utils/graphUtils';
-import { BRAND_COLORS } from '../../constants/brandColors';
-import { useMediaQuery } from '../../hooks/useMediaQuery';
+import { BRAND_COLORS } from '../../constants/brandColors'
+import { processGraphData, GraphNode, GraphData } from './utils'
+import defaultGraphData from './socialgraph.json'
 
-// Dynamically import ForceGraph2D with no SSR
-const ForceGraph2D = dynamic(() => import('react-force-graph-2d').then(mod => mod.default), { ssr: false })
+// Dynamically import the ForceGraph2D component with no SSR
+const ForceGraph2D = dynamic(() => import('react-force-graph-2d').then(mod => mod.default), { ssr: false, loading: () => <GraphPlaceholder /> })
+
+// Add a placeholder component for when the graph is loading
+const GraphPlaceholder = () => (
+  <div className="w-full h-full flex items-center justify-center" 
+       style={{ background: `linear-gradient(135deg, ${BRAND_COLORS.deepBlue} 0%, ${BRAND_COLORS.forestGreen} 100%)` }}>
+    <div className="text-center">
+      <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-bitcoin mx-auto mb-4"></div>
+      <p className="text-lightSand text-sm">Loading social graph visualization...</p>
+    </div>
+  </div>
+)
 
 interface SocialGraphVisualizationProps {
-  data: {
-    nodes: GraphNode[]
-    links: GraphLink[]
-  }
-  width: number
-  height?: number
+  height?: number | string
+  width?: number | string
+  className?: string
 }
 
 export const SocialGraphVisualization: React.FC<SocialGraphVisualizationProps> = ({
-  data,
-  width,
-  height
+  height = 600,
+  width = '100%',
+  className = '',
 }) => {
-  // State to hold preloaded images
-  const [nodeImages, setNodeImages] = useState<Map<string, HTMLImageElement>>(new Map())
-  const [isLoadingImages, setIsLoadingImages] = useState(false)
+  const [graphData, setGraphData] = useState<GraphData | null>(null)
+  const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null)
+  const [graphError, setGraphError] = useState<string | null>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
+  const [dimensions, setDimensions] = useState({ width: 800, height: 600 })
   const graphRef = useRef<any>(null)
-  
-  // Determine responsive height based on screen size
-  const isMobile = useMediaQuery('(max-width: 640px)')
-  const isTablet = useMediaQuery('(min-width: 641px) and (max-width: 1024px)')
-  
-  const responsiveHeight = isMobile ? 400 : isTablet ? 600 : 800
-  const actualHeight = height || responsiveHeight
 
-  // Handle zoom behavior for the graph on mobile
+  // Load static data
   useEffect(() => {
-    if (!graphRef.current || !isMobile) return
-    
-    const graphElem = graphRef.current?._toolbarElem?.parentElement
-    if (!graphElem) return
-    
-    const handleTouchStart = (e: TouchEvent) => {
-      // Allow pinch zoom (two fingers)
-      if (e.touches.length >= 2) return
+    try {
+      const processedData = processGraphData(defaultGraphData)
       
-      // Prevent panning with single finger to make page scrolling easier
-      e.preventDefault()
+      if (processedData.nodes.length === 0) {
+        setGraphError('No social graph data available')
+      } else {
+        setGraphData(processedData)
+        setGraphError(null)
+      }
+    } catch (err) {
+      console.error('Failed to load graph data:', err)
+      setGraphError('Failed to load social graph data')
     }
-    
-    graphElem.addEventListener('touchstart', handleTouchStart, { passive: false })
-    
-    return () => {
-      graphElem.removeEventListener('touchstart', handleTouchStart)
-    }
-  }, [isMobile, graphRef.current])
+  }, [])
 
-  // Use the shared preloadImages function instead of the duplicate one
+  // Update dimensions on resize
   useEffect(() => {
-    if (data && data.nodes && data.nodes.length > 0) {
-      setIsLoadingImages(true);
-      
-      const imageMap = new Map<string, HTMLImageElement>();
-      
-      // Create a function to update the nodeImages state when images are loaded
-      const handleImagesLoaded = () => {
-        setNodeImages(imageMap);
-        setIsLoadingImages(false);
-        console.log(`Successfully loaded ${imageMap.size} images`);
-      };
-      
-      // Create a function to handle errors
-      const handleImageError = (error: any) => {
-        console.error('Error preloading images:', error);
-        setIsLoadingImages(false);
-      };
-      
-      // Process nodes with pictures and npub
-      const nodesWithImages = data.nodes.filter(node => 
-        node.picture && node.npub && typeof node.npub === 'string'
-      );
-      
-      // Create a custom preload function that updates our local imageMap
-      const customPreload = (nodes: GraphNode[], onLoad: () => void, onError: (error: any) => void) => {
-        let loadedImages = 0;
-        let validNodes = 0;
-        
-        nodes.forEach((node) => {
-          if (node.picture && node.npub) {
-            validNodes++;
-            const img = new Image();
-            img.src = node.picture;
-            img.onload = () => {
-              if (node.npub) {
-                imageMap.set(node.npub, img);
-              }
-              loadedImages += 1;
-              if (loadedImages === validNodes) {
-                onLoad();
-              }
-            };
-            img.onerror = onError;
-          }
-        });
-        
-        if (validNodes === 0) {
-          onLoad();
-        }
-      };
-      
-      // Use our custom preload function
-      customPreload(nodesWithImages, handleImagesLoaded, handleImageError);
+    const updateDimensions = () => {
+      if (containerRef.current) {
+        setDimensions({
+          width: containerRef.current.offsetWidth,
+          height: containerRef.current.offsetHeight || 600,
+        })
+      }
     }
-  }, [data]);
 
-  // Add proper data validation
-  useEffect(() => {
-    if (!data || !data.nodes || !data.links) {
-      console.error('Invalid graph data provided to SocialGraphVisualization');
-      return;
-    }
-  }, [data]);
-  
-  // Add error boundary
-  const [renderError, setRenderError] = useState<string | null>(null);
-  
-  if (renderError) {
-    return (
-      <div className="p-4 border border-red-500 rounded bg-red-100 text-red-800">
-        <h3 className="font-bold">Error rendering social graph</h3>
-        <p>{renderError}</p>
-      </div>
-    );
-  }
-  
-  if (!data || !data.nodes || !data.links) {
-    return (
-      <div className="flex items-center justify-center p-8">
-        <p>No graph data available</p>
-      </div>
-    );
-  }
+    // Initial dimensions update
+    updateDimensions()
+    
+    // Add resize listener
+    window.addEventListener('resize', updateDimensions)
+    
+    // Cleanup
+    return () => window.removeEventListener('resize', updateDimensions)
+  }, [])
 
-  console.log(`Rendering social graph with ${data?.nodes?.length || 0} nodes and ${data?.links?.length || 0} links`)
-
-  // Ensure node.npub is defined before using it
-  const handleNodeClickWrapper = (node: any, event: MouseEvent) => {
-    if (node.npub && typeof node.npub === 'string') {
-      handleNodeClick(node as GraphNode);
-    }
-  };
+  // Handle node clicks - fixed type signature to match ForceGraph2D requirements
+  const handleNodeClick = useCallback((node: any, event: MouseEvent) => {
+    setSelectedNode(node as GraphNode)
+  }, [])
 
   return (
-    <ForceGraph2D
-      ref={graphRef}
-      graphData={data}
-      nodeColor={(node: any) => node.isCoreNode ? BRAND_COLORS.bitcoinOrange : BRAND_COLORS.lightSand}
-      nodeVal={(node: any) => node.isCoreNode ? 10 : 5}
-      linkColor={(link: any) => link.type === 'mutual' ? BRAND_COLORS.forestGreen : '#adb5bd'}
-      linkWidth={(link: any) => Math.sqrt(link.value || 1)}
-      onNodeClick={handleNodeClickWrapper}
-      width={width}
-      height={actualHeight}
-      backgroundColor="transparent"
-      nodeCanvasObject={(node: any, ctx: CanvasRenderingContext2D, globalScale: number) => {
-        const nodeSize = node.isCoreNode ? 10 : 5
-        const imageSource = nodeImages.get(node.npub)
-        
-        // Draw the node - with profile image if available
-        if (imageSource) {
-          try {
-            // Create circular clipping path
-            ctx.save()
-            ctx.beginPath()
-            ctx.arc(node.x as number, node.y as number, nodeSize, 0, 2 * Math.PI)
-            ctx.clip()
-            
-            // Draw the profile image
-            const imgSize = nodeSize * 2
-            ctx.drawImage(
-              imageSource,
-              (node.x as number) - nodeSize,
-              (node.y as number) - nodeSize,
-              imgSize,
-              imgSize
-            )
-            
-            // Draw a border
-            ctx.beginPath()
-            ctx.arc(node.x as number, node.y as number, nodeSize, 0, 2 * Math.PI)
-            ctx.strokeStyle = node.isCoreNode ? BRAND_COLORS.bitcoinOrange : BRAND_COLORS.deepBlue
-            ctx.lineWidth = 1.5
-            ctx.stroke()
-            
-            ctx.restore()
-          } catch (err) {
-            // Fallback to circle if image drawing fails
-            console.warn('Failed to draw node image, falling back to circle', err)
-            ctx.beginPath()
-            ctx.fillStyle = node.isCoreNode ? BRAND_COLORS.bitcoinOrange : BRAND_COLORS.lightSand
-            ctx.arc(node.x as number, node.y as number, nodeSize, 0, 2 * Math.PI)
-            ctx.fill()
-          }
-        } else {
-          // Fallback to plain circle if no image
-          ctx.beginPath()
-          ctx.fillStyle = node.isCoreNode ? BRAND_COLORS.bitcoinOrange : BRAND_COLORS.lightSand
-          ctx.arc(node.x as number, node.y as number, nodeSize, 0, 2 * Math.PI)
-          ctx.fill()
-        }
-        
-        // Draw node label if we're zoomed in enough
-        const label = node.name || (node.npub ? `${node.npub.substring(0, 6)}...` : node.id)
-        if (globalScale > 1.5) {
-          ctx.font = '8px Arial'
-          ctx.textAlign = 'center'
-          ctx.textBaseline = 'middle'
-          ctx.fillStyle = BRAND_COLORS.lightSand
-          ctx.strokeStyle = BRAND_COLORS.deepBlue
-          ctx.lineWidth = 2
-          
-          // Draw text outline for better visibility
-          ctx.strokeText(label, node.x as number, (node.y as number) + nodeSize + 8)
-          ctx.fillText(label, node.x as number, (node.y as number) + nodeSize + 8)
-        }
+    <div 
+      ref={containerRef}
+      className={`rounded-lg shadow-lg overflow-hidden w-full h-full ${className}`}
+      style={{ 
+        height: typeof height === 'number' ? `${height}px` : height,
+        width: typeof width === 'number' ? `${width}px` : width,
+        background: `linear-gradient(135deg, ${BRAND_COLORS.deepBlue} 0%, ${BRAND_COLORS.forestGreen} 100%)`,
       }}
-      cooldownTicks={100}
-    />
+    >
+      <div className="w-full h-full relative">
+        {graphError && (
+          <div className="absolute inset-0 flex items-center justify-center">
+            <div className="bg-white/10 backdrop-blur-sm rounded-lg p-4 max-w-xs text-center">
+              <p className="text-lightSand">{graphError}</p>
+            </div>
+          </div>
+        )}
+      
+        {selectedNode && (
+          <div className="absolute bottom-0 left-0 z-10 p-2 w-full">
+            <div className="shadow-sm p-3 max-w-xs mx-auto border border-gray-200 rounded-lg" 
+                 style={{ backgroundColor: BRAND_COLORS.deepBlue }}>
+              <div className="flex items-center">
+                <div className="w-10 h-10 rounded-full overflow-hidden mr-3 border-2" 
+                     style={{ borderColor: BRAND_COLORS.bitcoinOrange }}>
+                  <img 
+                    src={selectedNode.picture || '/assets/bitcoin.png'} 
+                    alt={selectedNode.name || 'User'} 
+                    className="w-full h-full object-cover"
+                    onError={(e) => {
+                      (e.target as HTMLImageElement).src = '/assets/bitcoin.png'
+                    }}
+                  />
+                </div>
+                <div>
+                  <div className="font-medium" style={{ color: BRAND_COLORS.lightSand }}>
+                    {selectedNode.name || 'Unknown User'}
+                  </div>
+                  {selectedNode.npub && (
+                    <div className="text-xs" style={{ color: BRAND_COLORS.lightSand + '99' }}>
+                      {selectedNode.npub.substring(0, 8)}...{selectedNode.npub.substring(selectedNode.npub.length - 4)}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        <div className="w-full h-full">
+          {graphData && !graphError && (
+            <ForceGraph2D
+              ref={graphRef}
+              graphData={graphData}
+              nodeColor={(node: any) => node.color}
+              nodeVal={(node: any) => node.val || 5}
+              linkColor={(link: any) => link.color}
+              linkWidth={(link: any) => Math.sqrt(link.value || 1) * 1.5}
+              onNodeClick={handleNodeClick}
+              width={dimensions.width}
+              height={dimensions.height}
+              cooldownTicks={100}
+              nodeRelSize={6}
+              linkDirectionalParticles={2}
+              linkDirectionalParticleSpeed={0.005}
+            />
+          )}
+        </div>
+      </div>
+    </div>
   )
 } 

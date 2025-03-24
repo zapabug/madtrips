@@ -1,8 +1,8 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback, memo } from 'react';
 import Link from 'next/link';
-import SocialGraph from '../../components/community/SocialGraph';
+import { SocialGraphVisualization } from '../../components/community/SocialGraphVisualization';
 import { NostrProfileImage } from '../../components/community/NostrProfileImage';
 import { NostrFeed } from '../../components/community/NostrFeed';
 import { useNostr } from '../../lib/contexts/NostrContext';
@@ -10,64 +10,130 @@ import { BRAND_COLORS } from '../../constants/brandColors';
 import MultiUserNostrFeed from '../../components/community/MultiUserNostrFeed';
 import { MultiTipJar } from '../../components/tip/MultiTipJar';
 
-// Function to generate Nostr profile URL
-const getNostrProfileUrl = (npub: string): string => {
-  return `https://njump.me/${npub}`;
-};
+// Extract Core Profiles to avoid recreating on each render
+const CORE_PROFILES = [
+  {
+    npub: "npub1etgqcj9gc6yaxttuwu9eqgs3ynt2dzaudvwnrssrn2zdt2useaasfj8n6e",
+    description: "Madeira Community focused on Bitcoin adoption and education."
+  },
+  {
+    npub: "npub1s0veng2gvfwr62acrxhnqexq76sj6ldg3a5t935jy8e6w3shr5vsnwrmq5",
+    description: "The Sovereign Individual"
+  },
+  {
+    npub: "npub1dxd02kcjhgpkyrx60qnkd6j42kmc72u5lum0rp2ud8x5zfhnk4zscjj6hh",
+    description: "Pleb Travel Solutions."
+  },
+  {
+    npub: "npub1funchalx8v747rsee6ahsuyrcd2s3rnxlyrtumfex9lecpmgwars6hq8kc",
+    description: "Descentralized Community Ads Madeira"
+  }
+];
 
-interface CoreProfile {
-  npub: string;
-  description: string;
-}
+// Extract just the npubs array once
+const CORE_NPUBS = CORE_PROFILES.map(profile => profile.npub);
+
+// Memoized Community Updates section
+const CommunityUpdates = memo(() => (
+  <div className="mb-8 bg-white dark:bg-gray-800 rounded-lg shadow-lg p-4">
+    <h2 className="text-2xl font-bold mb-4 text-[#14857C]">Community Updates</h2>
+    <div className="w-full h-[500px] overflow-hidden border-2 border-forest rounded-lg">
+      <MultiUserNostrFeed 
+        npubs={CORE_NPUBS} 
+        limit={25} 
+        autoScroll={true} 
+        scrollInterval={5000} 
+      />
+    </div>
+  </div>
+));
+
+CommunityUpdates.displayName = 'CommunityUpdates';
+
+// Memoized Social Graph section
+const SocialGraphSection = memo(() => (
+  <div className="mb-8 bg-forest text-white rounded-lg shadow-md p-4">
+    <h3 className="text-xl font-semibold mb-4 text-sand">Community Connections</h3>
+    <div className="h-[400px] w-full mb-4">
+      <SocialGraphVisualization 
+        height={400} 
+        className="rounded-lg border border-gray-200"
+      />
+    </div>
+    
+    <p className="mb-4 text-sm">
+      The Bitcoin Madeira community is a network of individuals, businesses, and organizations 
+      committed to promoting Bitcoin adoption and education in Madeira.
+    </p>
+  </div>
+));
+
+SocialGraphSection.displayName = 'SocialGraphSection';
+
+// Memoized Community Feed section
+const CommunityFeed = memo(() => (
+  <div className="mb-8">
+    <h3 className="text-xl font-semibold mb-4 text-bitcoin">Community Feed</h3>
+    <div className="w-full h-[600px] rounded-lg overflow-hidden border-2 border-forest">
+      <NostrFeed
+        npubs={CORE_NPUBS}
+        limit={12}
+        autoScroll={true}
+        scrollInterval={5000}
+        useCorePubs={true}
+      />
+    </div>
+  </div>
+));
+
+CommunityFeed.displayName = 'CommunityFeed';
 
 export default function CommunityPage(): React.ReactElement {
-  // Define the core NPUBs with their descriptions
-  const coreProfiles: CoreProfile[] = [
-    {
-      npub: "npub1etgqcj9gc6yaxttuwu9eqgs3ynt2dzaudvwnrssrn2zdt2useaasfj8n6e",
-      description: "Madeira Community focused on Bitcoin adoption and education."
-    },
-    {
-      npub: "npub1s0veng2gvfwr62acrxhnqexq76sj6ldg3a5t935jy8e6w3shr5vsnwrmq5",
-      description: "The Sovereign Individual"
-    },
-    {
-      npub: "npub1dxd02kcjhgpkyrx60qnkd6j42kmc72u5lum0rp2ud8x5zfhnk4zscjj6hh",
-      description: "Pleb Travel Solutions."
-    },
-    {
-      npub: "npub1funchalx8v747rsee6ahsuyrcd2s3rnxlyrtumfex9lecpmgwars6hq8kc",
-      description: "Descentralized Community Ads Madeira"
-    }
-  ];
-
+  const { getUserProfile, reconnect, ndkReady } = useNostr();
   const [profileNames, setProfileNames] = useState<{[key: string]: string}>({});
-  const { getUserProfile } = useNostr();
 
-  // Extract just the npubs for the feed
-  const npubs: string[] = coreProfiles.map(profile => profile.npub);
-
-  // Fetch profile names using NDK
+  // Reconnect to Nostr relays if needed
   useEffect(() => {
+    if (!ndkReady) {
+      reconnect().catch(err => {
+        console.warn('Failed to reconnect to Nostr relays:', err);
+      });
+    }
+  }, [ndkReady, reconnect]);
+
+  // Fetch profile names using NDK - optimized to avoid unnecessary re-fetches
+  useEffect(() => {
+    let isMounted = true;
+    
     const fetchProfileNames = async (): Promise<void> => {
+      if (!ndkReady) return;
+      
       const names: {[key: string]: string} = {};
       
-      for (const profile of coreProfiles) {
-        try {
-          const user = await getUserProfile(profile.npub);
-          if (user?.profile?.name) {
-            names[profile.npub] = user.profile.displayName || user.profile.name;
+      await Promise.all(
+        CORE_PROFILES.map(async (profile) => {
+          try {
+            const userProfile = await getUserProfile(profile.npub);
+            if (userProfile?.name || userProfile?.displayName) {
+              names[profile.npub] = userProfile.displayName || userProfile.name || '';
+            }
+          } catch (err) {
+            console.error(`Failed to fetch name for ${profile.npub}:`, err);
           }
-        } catch (err) {
-          console.error(`Failed to fetch name for ${profile.npub}:`, err);
-        }
-      }
+        })
+      );
       
-      setProfileNames(names);
+      if (isMounted) {
+        setProfileNames(names);
+      }
     };
 
-    void fetchProfileNames();
-  }, [getUserProfile, coreProfiles]);
+    fetchProfileNames();
+    
+    return () => {
+      isMounted = false;
+    };
+  }, [getUserProfile, ndkReady]);
 
   return (
     <div className="flex justify-center px-4 py-8">
@@ -76,48 +142,10 @@ export default function CommunityPage(): React.ReactElement {
           <span className="text-bitcoin">Bitcoin Madeira Community</span>
         </h1>
         
-        {/* Nostr Feed Section - Fixed with better sizing and grid layout */}
-        <div className="mb-8 bg-white dark:bg-gray-800 rounded-lg shadow-lg p-4">
-          <h2 className="text-2xl font-bold mb-4 text-[#14857C]">Community Updates</h2>
-          <div className="w-full h-[500px] overflow-hidden border-2 border-forest rounded-lg">
-            <MultiUserNostrFeed 
-              npubs={npubs} 
-              limit={25} 
-              autoScroll={true} 
-              scrollInterval={5000} 
-            />
-          </div>
-        </div>
-        
-        {/* Social Graph Section */}
-        <div className="mb-8 bg-forest text-white rounded-lg shadow-md p-4">
-          <h3 className="text-xl font-semibold mb-4 text-sand">Community Connections</h3>
-          <div className="h-[400px] w-full mb-4">
-            <SocialGraph 
-              height={400} 
-              className="rounded-lg border border-gray-200"
-            />
-          </div>
-          
-          <p className="mb-4 text-sm">
-            The Bitcoin Madeira community is a network of individuals, businesses, and organizations 
-            committed to promoting Bitcoin adoption and education in Madeira.
-          </p>
-        </div>
-        
-        {/* Second NostrFeed - Fixed with grid display and sizing */}
-        <div className="mb-8">
-          <h3 className="text-xl font-semibold mb-4 text-bitcoin">Community Feed</h3>
-          <div className="w-full h-[600px] rounded-lg overflow-hidden border-2 border-forest">
-            <NostrFeed
-              npubs={npubs}
-              limit={12}
-              autoScroll={true}
-              scrollInterval={5000}
-              useCorePubs={true}
-            />
-          </div>
-        </div>
+        {/* Use memoized components */}
+        <CommunityUpdates />
+        <SocialGraphSection />
+        <CommunityFeed />
         
         {/* Support the community */}
         <div className="mb-12 mt-8">
