@@ -9,7 +9,7 @@ src/
 │   └── page.tsx                # Home page
 ├── components/                 # Reusable UI components
 │   ├── community/              # Community components
-│   │   ├── SocialGraph.tsx     # Social graph visualization (665 lines)
+│   │   ├── SocialGraph.tsx     # Social graph visualization
 │   │   ├── NostrFeed.tsx       # Nostr feed component
 │   │   ├── MultiUserNostrFeed.tsx # Multi-user Nostr feed
 │   │   └── NostrProfileImage.tsx  # Profile image component
@@ -26,15 +26,17 @@ src/
 │   ├── graph-types.ts          # Graph visualization types
 │   └── cart-types.ts           # Shopping cart types
 ├── hooks/                      # Custom React hooks
+│   └── useNostrProfile.ts      # Hook for fetching Nostr profiles
 ├── data/                       # Data files/mocks
 │   └── packages.ts             # Package data
-├── lib/ (missing - should be created)  # Library code
+├── lib/                        # Library code
 │   ├── contexts/               # React contexts
-│   │   └── NostrContext.tsx    # Nostr context provider (referenced but missing)
+│   │   └── NostrContext.tsx    # Nostr context provider
 │   ├── services/               # Service modules
 │   │   └── NostrMessagingService.ts # Nostr messaging service
 │   └── store/                  # State management
 │       └── cart-store.ts       # Cart store
-└── utils/ (missing - should be created) # Utility functions
-    ├── graphUtils.ts           # Graph utility functions (referenced but missing)
-    └── profileUtils.ts         # Profile utilities (referenced but missing)
+└── utils/                      # Utility functions
+    ├── graphUtils.ts           # Graph utility functions
+    ├── profileUtils.ts         # Profile utilities
+    └── images.ts               # Image utility functions

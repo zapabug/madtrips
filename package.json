@@ -25,7 +25,7 @@
     "date-fns": "^4.1.0",
     "dotenv": "^16.4.7",
     "lucide-react": "^0.479.0",
-    "next": "15.2.2",
+    "next": "^15.2.3",
     "next-themes": "^0.4.6",
     "ngit": "^0.0.0",
     "nostr-login": "^1.7.11",
