@@ -91,22 +91,57 @@ CommunityFeed.displayName = 'CommunityFeed';
 export default function CommunityPage(): React.ReactElement {
   const { getUserProfile, reconnect, ndkReady } = useNostr();
   const [profileNames, setProfileNames] = useState<{[key: string]: string}>({});
+  const [connected, setConnected] = useState(false);
+
+  // Reconnect to Nostr relays on page load
+  useEffect(() => {
+    // Always try to reconnect when the page loads to ensure fresh relay connections
+    const initializeNostr = async () => {
+      try {
+        console.log('Community page: Initializing Nostr connections');
+        const success = await reconnect();
+        setConnected(success);
+        
+        if (!success) {
+          console.warn('Community page: Initial relay connection failed, retrying in 2s');
+          // Try again after 2 seconds
+          setTimeout(async () => {
+            const retrySuccess = await reconnect();
+            setConnected(retrySuccess);
+            if (!retrySuccess) {
+              console.error('Community page: Failed to connect to relays after retry');
+            }
+          }, 2000);
+        }
+      } catch (err) {
+        console.error('Community page: Error initializing Nostr:', err);
+      }
+    };
+    
+    initializeNostr();
+  }, [reconnect]);
 
   // Reconnect to Nostr relays if needed
   useEffect(() => {
-    if (!ndkReady) {
-      reconnect().catch(err => {
-        console.warn('Failed to reconnect to Nostr relays:', err);
+    if (!ndkReady && !connected) {
+      reconnect().then(success => {
+        setConnected(success);
+        console.log('Community page: Reconnection attempt result:', success);
+      }).catch(err => {
+        console.warn('Community page: Failed to reconnect to Nostr relays:', err);
       });
     }
-  }, [ndkReady, reconnect]);
+  }, [ndkReady, reconnect, connected]);
 
   // Fetch profile names using NDK - optimized to avoid unnecessary re-fetches
   useEffect(() => {
     let isMounted = true;
     
     const fetchProfileNames = async (): Promise<void> => {
-      if (!ndkReady) return;
+      if (!ndkReady) {
+        console.log('Community page: NDK not ready, deferring profile fetch');
+        return;
+      }
       
       const names: {[key: string]: string} = {};
       

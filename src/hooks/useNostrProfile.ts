@@ -10,27 +10,29 @@ const profileCache = new Map<string, {
 
 interface UseNostrProfileOptions {
   skipCache?: boolean;
+  retryAttempts?: number;
 }
 
 /**
  * Hook for fetching and caching Nostr profiles
  */
 export function useNostrProfile(npub: string | null, options: UseNostrProfileOptions = {}) {
-  const { skipCache = false } = options;
+  const { skipCache = false, retryAttempts = 2 } = options;
   const [profile, setProfile] = useState<any>(null);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
-  const { getUserProfile, ndkReady } = useNostr();
+  const { getUserProfile, ndkReady, reconnect } = useNostr();
+  const [retryCount, setRetryCount] = useState(0);
   
-  const fetchProfile = useCallback(async () => {
+  const fetchProfile = useCallback(async (forceRefresh = false) => {
     if (!npub || !npub.startsWith('npub1')) {
       setLoading(false);
       setError('Invalid npub format');
       return;
     }
     
-    // Check cache first unless skipCache is true
-    if (!skipCache) {
+    // Check cache first unless skipCache is true or forceRefresh is true
+    if (!skipCache && !forceRefresh) {
       const cachedProfile = profileCache.get(npub);
       if (cachedProfile && (Date.now() - cachedProfile.timestamp) < PROFILE_CACHE_TTL) {
         setProfile(cachedProfile.profile);
@@ -45,7 +47,18 @@ export function useNostrProfile(npub: string | null, options: UseNostrProfileOpt
     try {
       // Wait for NDK to be ready
       if (!ndkReady) {
-        return; // Will retry due to ndkReady dependency in useEffect
+        if (retryCount < retryAttempts) {
+          setRetryCount(prev => prev + 1);
+          // Try to reconnect to relays before giving up
+          await reconnect();
+          // Retry after a small delay
+          setTimeout(() => fetchProfile(forceRefresh), 1000);
+          return;
+        } else {
+          setError('Nostr connection not available');
+          setLoading(false);
+          return;
+        }
       }
       
       // Fetch the profile
@@ -60,27 +73,55 @@ export function useNostrProfile(npub: string | null, options: UseNostrProfileOpt
           timestamp: Date.now()
         });
       } else {
-        setError('Profile not found');
+        // Try to reconnect if profile not found - might be a relay connection issue
+        if (retryCount < retryAttempts) {
+          setRetryCount(prev => prev + 1);
+          // Try to reconnect
+          await reconnect();
+          // Retry after a small delay
+          setTimeout(() => fetchProfile(forceRefresh), 1000);
+          return;
+        } else {
+          setError('Profile not found');
+          setLoading(false);
+        }
       }
     } catch (err) {
       console.error('Error fetching profile:', err);
-      setError('Failed to fetch profile');
+      
+      // Try to reconnect and retry on error
+      if (retryCount < retryAttempts) {
+        setRetryCount(prev => prev + 1);
+        // Try to reconnect
+        await reconnect();
+        // Retry after a small delay
+        setTimeout(() => fetchProfile(forceRefresh), 1000 * Math.min(retryCount + 1, 3));
+        return;
+      } else {
+        setError('Failed to fetch profile');
+      }
     } finally {
       setLoading(false);
     }
-  }, [npub, getUserProfile, ndkReady, skipCache]);
+  }, [npub, getUserProfile, ndkReady, skipCache, retryCount, retryAttempts, reconnect]);
   
   useEffect(() => {
     if (npub) {
+      // Reset retry count when npub changes
+      setRetryCount(0);
       fetchProfile();
     }
-  }, [fetchProfile, npub, ndkReady]);
+  }, [fetchProfile, npub]);
   
-  const refetch = useCallback(() => {
-    // Clear from cache first
+  const refetch = useCallback((forceRefresh = true) => {
+    // Clear from cache first if force refresh
     if (npub) {
-      profileCache.delete(npub);
-      fetchProfile();
+      if (forceRefresh) {
+        profileCache.delete(npub);
+      }
+      // Reset retry count for a fresh start
+      setRetryCount(0);
+      fetchProfile(forceRefresh);
     }
   }, [npub, fetchProfile]);
   

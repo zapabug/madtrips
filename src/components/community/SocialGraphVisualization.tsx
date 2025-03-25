@@ -55,6 +55,24 @@ export const SocialGraphVisualization: React.FC<SocialGraphVisualizationProps> =
     }
   }, [])
 
+  // Add a function to retry loading data
+  const reloadGraphData = useCallback(() => {
+    try {
+      console.log('Reloading social graph data')
+      const processedData = processGraphData(defaultGraphData)
+      
+      if (processedData.nodes.length === 0) {
+        setGraphError('No social graph data available')
+      } else {
+        setGraphData(processedData)
+        setGraphError(null)
+      }
+    } catch (err) {
+      console.error('Failed to reload graph data:', err)
+      setGraphError('Failed to reload social graph data')
+    }
+  }, [])
+
   // Update dimensions on resize
   useEffect(() => {
     const updateDimensions = () => {
@@ -95,7 +113,13 @@ export const SocialGraphVisualization: React.FC<SocialGraphVisualizationProps> =
         {graphError && (
           <div className="absolute inset-0 flex items-center justify-center">
             <div className="bg-white/10 backdrop-blur-sm rounded-lg p-4 max-w-xs text-center">
-              <p className="text-lightSand">{graphError}</p>
+              <p className="text-lightSand mb-3">{graphError}</p>
+              <button 
+                onClick={reloadGraphData}
+                className="bg-white/20 hover:bg-white/30 text-lightSand px-3 py-1 rounded-lg text-sm"
+              >
+                Reload Graph
+              </button>
             </div>
           </div>
         )}
@@ -149,6 +173,19 @@ export const SocialGraphVisualization: React.FC<SocialGraphVisualizationProps> =
               linkDirectionalParticleSpeed={0.005}
             />
           )}
+        </div>
+
+        {/* Add a reload button to the bottom right */}
+        <div className="absolute bottom-3 right-3 z-10">
+          <button 
+            onClick={reloadGraphData}
+            className="bg-white/10 hover:bg-white/20 text-lightSand p-2 rounded-full shadow-lg" 
+            title="Reload Graph"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            </svg>
+          </button>
         </div>
       </div>
     </div>

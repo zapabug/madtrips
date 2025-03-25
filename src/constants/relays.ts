@@ -1,10 +1,12 @@
+import { NDKRelay } from '@nostr-dev-kit/ndk';
+
 export const RELAYS = {
   // Primary relays - essential for core app functionality
   PRIMARY: [
-    "wss://relay.damus.io",
-    "wss://nostr.wine",
+    "wss://relay.primal.net",
     "wss://relay.nostr.band",
     "wss://relay.snort.social",
+    "wss://relay.olas.app"
   ],
   
   // Community-focused relays
@@ -25,6 +27,7 @@ export const RELAYS = {
   FAST: [
     "wss://relay.primal.net",
     "wss://nostr.zebedee.cloud",
+    "wss://relay.eupurplerelay.net",
   ],
 };
 
@@ -48,4 +51,14 @@ export const getAllRelays = () => {
     ...RELAYS.BACKUP,
     ...RELAYS.FAST,
   ];
+};
+
+// Helper function to create an NDKRelay from a URL string
+export const createRelay = (url: string): NDKRelay => {
+  return { url } as NDKRelay;
+};
+
+// Function to create an array of NDKRelay objects from a list of URLs
+export const createRelays = (urls: string[]): NDKRelay[] => {
+  return urls.map(url => createRelay(url));
 }; 

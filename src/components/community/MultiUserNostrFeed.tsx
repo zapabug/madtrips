@@ -76,6 +76,22 @@ export const MultiUserNostrFeed: React.FC<MultiUserNostrFeedProps> = ({
       }
     }
     
+    // Check if we have any connected relays by examining the pool
+    const hasConnectedRelays = Array.from(ndk.pool.relays.values()).some(relay => relay.status === 1);
+    
+    if (!hasConnectedRelays) {
+      console.log('No connected relays found, attempting to reconnect...');
+      setError("No connected relays. Attempting to reconnect...");
+      
+      // Try to reconnect to relays
+      const reconnected = await reconnect();
+      if (!reconnected) {
+        setError("Failed to connect to any Nostr relays. Please try again later.");
+        setLoading(false);
+        return;
+      }
+    }
+    
     if (npubs.length === 0) {
       setError("No Nostr accounts specified");
       setLoading(false);
@@ -197,7 +213,9 @@ export const MultiUserNostrFeed: React.FC<MultiUserNostrFeedProps> = ({
         setTimeout(() => resolve({}), 5000);
       });
       
-      const profileMap = await Promise.race([fetchProfiles(), profileTimeoutPromise]);
+      // Define the type for profileMap
+      const profileMap: Record<string, { name?: string; displayName?: string; picture?: string } | null> = 
+        await Promise.race([fetchProfiles(), profileTimeoutPromise as Promise<Record<string, any>>]);
       
       // Populate author info
       const completeNotes = processedNotes.map(note => ({
@@ -304,99 +322,99 @@ export const MultiUserNostrFeed: React.FC<MultiUserNostrFeedProps> = ({
   }, [notes, autoScroll, scrollInterval]);
 
   return (
-    <div className="w-full h-full bg-white dark:bg-gray-900 relative overflow-auto" ref={feedContainerRef}>
-      {loading && (
-        <div className="flex justify-center items-center h-40 mt-4">
-          <div className="animate-spin rounded-full h-10 w-10 border-t-2 border-b-2 border-bitcoin" />
+    <div className="w-full" ref={feedContainerRef}>
+      {loading && notes.length === 0 && (
+        <div className="flex justify-center items-center h-32">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-bitcoin"></div>
+          <p className="ml-3 text-bitcoin">Loading posts from Nostr...</p>
         </div>
       )}
       
       {error && (
-        <div className="flex justify-center items-center p-4">
-          <div className="text-center p-4 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800">
-            <p className="text-red-700 dark:text-red-400 mb-2">{error}</p>
-            <button 
-              onClick={() => fetchNotes(true)}
-              className="px-4 py-2 bg-bitcoin text-white rounded-lg shadow hover:bg-bitcoin/90 transition-colors"
-            >
-              Try Again
-            </button>
-          </div>
+        <div className="text-center p-4 bg-red-50 dark:bg-red-900 rounded-lg">
+          <p className="text-red-600 dark:text-red-300">{error}</p>
+          <button
+            onClick={() => fetchNotes(true)}
+            className="mt-2 px-4 py-2 bg-bitcoin text-white rounded-lg hover:bg-bitcoin/80"
+          >
+            Try Again
+          </button>
         </div>
       )}
       
       {!loading && !error && notes.length === 0 && (
-        <div className="flex justify-center items-center p-8">
-          <p className="text-gray-500 dark:text-gray-400">No posts found from these accounts</p>
+        <div className="text-center p-6 bg-gray-50 dark:bg-gray-800 rounded-lg">
+          <p className="text-gray-600 dark:text-gray-300">No posts found from these users</p>
         </div>
       )}
       
-      {!loading && !error && notes.length > 0 && (
-        <div className="grid grid-cols-1 gap-4 p-4">
-          {notes.map(note => (
-            <div key={note.id} className="bg-white dark:bg-gray-800 rounded-lg shadow p-4 border border-gray-200 dark:border-gray-700">
-              <div className="flex flex-col">
-                <div className="flex items-center mb-2">
-                  {note.author.picture ? (
-                    <div className="relative w-10 h-10 rounded-full mr-3 overflow-hidden border border-gray-200 dark:border-gray-700">
-                      <Image 
-                        src={note.author.picture} 
-                        alt={note.author.name || shortenNpub(note.npub)}
-                        width={40}
-                        height={40}
-                        className="object-cover"
-                        onError={(e) => {
-                          (e.target as HTMLImageElement).src = '/assets/bitcoin.png';
-                        }}
-                      />
-                    </div>
-                  ) : (
-                    <div className="w-10 h-10 bg-gray-200 dark:bg-gray-700 rounded-full mr-3 flex items-center justify-center text-gray-600 dark:text-gray-300 font-bold">
-                      {(note.author.name || shortenNpub(note.npub))[0]?.toUpperCase() || 'N'}
-                    </div>
-                  )}
-                  <div className="flex-1 min-w-0">
-                    <h3 className="font-semibold text-gray-900 dark:text-gray-100 truncate">
-                      {note.author.displayName || note.author.name || shortenNpub(note.npub)}
-                    </h3>
-                    <p className="text-xs text-gray-500 dark:text-gray-400">
-                      {new Date(note.created_at * 1000).toLocaleString(undefined, { 
-                        month: 'short', 
-                        day: 'numeric', 
-                        hour: '2-digit', 
-                        minute: '2-digit' 
-                      })}
-                    </p>
+      <div
+        className={`grid grid-cols-1 gap-4 md:${
+          autoScroll ? "flex md:flex-nowrap md:space-x-4 overflow-x-auto" : "grid-cols-2 xl:grid-cols-3"
+        }`}
+      >
+        {notes.map(note => (
+          <div key={note.id} className="bg-white dark:bg-gray-800 rounded-lg shadow p-4 border border-gray-200 dark:border-gray-700">
+            <div className="flex flex-col w-full">
+              <div className="flex items-center mb-3">
+                <div className="w-12 h-12 rounded-full overflow-hidden mr-3 relative border-2 border-bitcoin">
+                  <Image 
+                    src={note.author.picture || '/assets/bitcoin.png'} 
+                    alt="Profile"
+                    width={48}
+                    height={48}
+                    className="object-cover"
+                    priority={true}
+                    onError={(e) => {
+                      // If image fails to load, replace with default
+                      (e.target as HTMLImageElement).src = '/assets/bitcoin.png';
+                    }}
+                  />
+                </div>
+                <div>
+                  <p className="text-xs text-gray-500 dark:text-gray-400">
+                    {new Date(note.created_at * 1000).toLocaleString(undefined, {
+                      month: 'short',
+                      day: 'numeric',
+                      hour: '2-digit',
+                      minute: '2-digit'
+                    })}
+                  </p>
+                </div>
+              </div>
+              
+              <p className="text-gray-800 dark:text-gray-200 text-sm mb-3">{note.content}</p>
+              
+              {note.images.length > 0 && (
+                <div className="mt-2">
+                  <div className="relative w-full h-48 rounded-lg overflow-hidden">
+                    <Image 
+                      src={note.images[0]} 
+                      alt="Note image"
+                      fill
+                      sizes="(max-width: 768px) 100vw, 50vw"
+                      className="object-cover"
+                      onError={(e) => {
+                        // Handle image loading error by using a fallback instead of hiding
+                        const imgElement = e.target as HTMLImageElement;
+                        imgElement.src = '/assets/bitcoin.png';
+                        // Add a small label to indicate it's a fallback
+                        const parent = imgElement.parentElement;
+                        if (parent) {
+                          const label = document.createElement('div');
+                          label.className = 'absolute bottom-0 right-0 bg-black/50 text-white text-xs p-1';
+                          label.textContent = 'Image unavailable';
+                          parent.appendChild(label);
+                        }
+                      }}
+                    />
                   </div>
                 </div>
-                
-                <p className="text-gray-800 dark:text-gray-200 text-sm mb-3">{note.content}</p>
-                
-                {note.images.length > 0 && (
-                  <div className="mt-2">
-                    <div className="relative w-full h-48 rounded-lg overflow-hidden">
-                      <Image 
-                        src={note.images[0]} 
-                        alt="Attached image"
-                        fill
-                        sizes="(max-width: 768px) 100vw, 50vw"
-                        className="object-cover"
-                        onError={(e) => {
-                          // Remove the image container if loading fails
-                          const parent = (e.target as HTMLImageElement).parentElement;
-                          if (parent?.parentElement) {
-                            parent.parentElement.style.display = 'none';
-                          }
-                        }}
-                      />
-                    </div>
-                  </div>
-                )}
-              </div>
+              )}
             </div>
-          ))}
-        </div>
-      )}
+          </div>
+        ))}
+      </div>
     </div>
   );
 };

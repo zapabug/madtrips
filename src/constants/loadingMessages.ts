@@ -1,49 +1,37 @@
 export const LOADING_MESSAGES = {
-  // General loading messages
-  GENERAL: [
-    "Loading the nostr-verse...",
-    "Gathering sats from the digital ocean...",
-    "Connecting to the decentralized web...",
-    "Pinging the Bitcoin timechain...",
-    "Checking signal across relays...",
+  // graph loading messages
+  GRAPH: [
+    "Negotiating TLS handshakes with paranoid relays...",
+    "Brewing relay coffee in the protocol percolator...",
+    "Riding NPUB submarines through relay channels...",
+    "Chasing kind:1 events through the stratosphere...",
+    "Bribing NIP-05 validators for VIP access...",
   ],
 
   // Feed-specific loading messages
   FEED: [
-    "Fetching the latest updates from your nostr friends...",
-    "Catching up with the conversation...",
-    "Surfing the nostr wave for fresh content...",
-    "Looking for interesting zaps and posts...",
-    "Tuning into the global nostr frequency...",
-  ],
-
-  // Community updates loading messages
-  COMMUNITY: [
-    "Gathering the latest from the MadTrips community...",
-    "Checking what's happening in the community...",
-    "Finding exciting community adventures...",
-    "Discovering new community events and meetups...",
-    "Loading community highlights and announcements...",
-  ],
-
-  // Profile loading messages
-  PROFILE: [
-    "Loading nostr identity...",
-    "Grabbing your digital self from the nostr network...",
-    "Checking your nostr presence...",
-    "Syncing your profile across relays...",
-    "Retrieving your latest activity...",
+    "Hitching a ride on digital levada waterways...",
+    "Asking local poncha makers for data recipes...",
+    "Riding cable cars up to the cloud servers...",
+    "Chasing festival fireworks to light up your feed...",
+    "Bribing Madeira monk seals to fetch bytes...",
+    "Mixing a fresh batch of poncha while we wait...",
+    "Herding free-range Madeira bananas into the feed...",
+    "Synchronizing sardine grill timers for festival season...",
+    "Buffering... (Nacional scored again)",
+    "Calibrating Laurisilva forest humidity levels...",
+    "Waiting for the last cable car down from Monte...",
+    "Consulting the Bordão da Madeira wisdom...",
   ],
 };
-
 // Function to get a random loading message from a specific category
-export const getRandomLoadingMessage = (category: keyof typeof LOADING_MESSAGES = 'GENERAL') => {
+export const getRandomLoadingMessage = (category: keyof typeof LOADING_MESSAGES = 'GRAPH') => {
   const messages = LOADING_MESSAGES[category];
   return messages[Math.floor(Math.random() * messages.length)];
 };
 
 // Function to get a sequence of loading messages
-export const getLoadingMessageSequence = (category: keyof typeof LOADING_MESSAGES = 'GENERAL', count: number = 3) => {
+export const getLoadingMessageSequence = (category: keyof typeof LOADING_MESSAGES = 'FEED', count: number = 3) => {
   const messages = LOADING_MESSAGES[category];
   const sequence = [];
   const messagesCopy = [...messages];

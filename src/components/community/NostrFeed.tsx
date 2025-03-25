@@ -12,6 +12,7 @@ import {
   extractImageUrls, 
   extractHashtags 
 } from './utils';
+import { getRandomLoadingMessage, getLoadingMessageSequence } from '../../constants/loadingMessages';
 
 interface NostrFeedProps {
   npub?: string;
@@ -47,7 +48,7 @@ export const NostrFeed: React.FC<NostrFeedProps> = ({
   scrollInterval = 3000,
   useCorePubs = true
 }) => {
-  const { ndk, getUserProfile, shortenNpub } = useNostr();
+  const { ndk, getUserProfile, shortenNpub, reconnect, ndkReady } = useNostr();
   const [notes, setNotes] = useState<Note[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -59,19 +60,96 @@ export const NostrFeed: React.FC<NostrFeedProps> = ({
   const shouldPauseScrolling = useRef<boolean>(false);
   const currentScrollIndexRef = useRef(0);
   const feedRef = useRef<HTMLDivElement>(null);
+  const [retryCount, setRetryCount] = useState(0);
+  const fetchInProgress = useRef<boolean>(false);
+  const [loadingMessage, setLoadingMessage] = useState<string>("");
+  const [loadingMessages, setLoadingMessages] = useState<string[]>([]);
+  const loadingMessageInterval = useRef<NodeJS.Timeout | null>(null);
+
+  // Use loading messages from the loadingMessages.ts file
+  useEffect(() => {
+    if (loading) {
+      // Initial loading message
+      const messages = getLoadingMessageSequence('FEED', 5);
+      setLoadingMessages(messages);
+      setLoadingMessage(messages[0]);
+
+      // Rotate through messages every 4 seconds
+      let currentIndex = 0;
+      loadingMessageInterval.current = setInterval(() => {
+        currentIndex = (currentIndex + 1) % messages.length;
+        setLoadingMessage(messages[currentIndex]);
+      }, 4000);
+    } else {
+      // Clear interval when not loading
+      if (loadingMessageInterval.current) {
+        clearInterval(loadingMessageInterval.current);
+        loadingMessageInterval.current = null;
+      }
+    }
+
+    return () => {
+      if (loadingMessageInterval.current) {
+        clearInterval(loadingMessageInterval.current);
+        loadingMessageInterval.current = null;
+      }
+    };
+  }, [loading]);
 
   // Use the appropriate npubs list
   const effectiveNpubs = useCorePubs 
     ? [...CORE_NPUBS, ...(npub ? [npub] : []), ...npubs] 
     : [...(npub ? [npub] : []), ...npubs];
   
-  // Fetch notes using real NDK implementation
-  const fetchNotes = async () => {
+  // Fetch notes using real NDK implementation with retry logic
+  const fetchNotes = useCallback(async (forceRefresh = false) => {
+    if (fetchInProgress.current) {
+      console.log('NostrFeed: Fetch already in progress, skipping duplicate request');
+      return;
+    }
+    
+    // Set a new loading message when starting a new fetch
+    if (!loading) {
+      const newMessage = getRandomLoadingMessage('FEED');
+      setLoadingMessage(newMessage);
+    }
+    
     if (!ndk) {
-      console.error('NostrFeed: NDK not initialized');
-      setError('Nostr client not initialized');
+      if (retryCount < 3) {
+        console.log(`NostrFeed: NDK not available, retry ${retryCount + 1}/3`);
+        setRetryCount(prev => prev + 1);
+        setError("Nostr connection not available. Retrying...");
+        
+        // Try to reconnect and then fetch again after a delay
+        const reconnected = await reconnect();
+        if (reconnected) {
+          setTimeout(() => fetchNotes(), 1000);
+        } else {
+          setError("Could not connect to Nostr relays. Please try again later.");
+          setLoading(false);
+        }
+        return;
+      } else {
+        setError("Nostr connection not available after multiple attempts");
+        setLoading(false);
+        return;
+      }
+    }
+
+    // Check if we have any connected relays by examining the pool
+    const hasConnectedRelays = Array.from(ndk.pool.relays.values()).some(relay => relay.status === 1);
+    
+    if (!hasConnectedRelays) {
+      console.log('NostrFeed: No connected relays found, attempting to reconnect...');
+      setError("No connected relays. Attempting to reconnect...");
+      
+      // Try to reconnect to relays
+      const reconnected = await reconnect();
+      if (!reconnected) {
+        setError("Failed to connect to any Nostr relays. Please try again later.");
       setLoading(false);
       return;
+      }
     }
 
     if (effectiveNpubs.length === 0) {
@@ -81,56 +159,198 @@ export const NostrFeed: React.FC<NostrFeedProps> = ({
     }
     
     setLoading(true);
+    fetchInProgress.current = true;
+    
+    if (forceRefresh) {
     setError(null);
+    }
     
     try {
-      // Create proper NDK filters
-      const filters: NDKFilter[] = effectiveNpubs.map(npub => ({
-        kinds: [1], // Regular notes
-        authors: [npub],
-        limit: Math.ceil(limit / effectiveNpubs.length)
-      }));
+      // Create proper NDK filters with all pubkeys properly decoded
+      const pubkeys = effectiveNpubs.map(npub => {
+        if (npub.startsWith('npub1')) {
+          try {
+            const { data } = nip19.decode(npub);
+            return data as string;
+          } catch (err) {
+            console.error('Failed to decode npub:', npub, err);
+            return null;
+          }
+        }
+        return npub;
+      }).filter(Boolean) as string[];
       
-      // Use the NDK fetchEvents method
-      const events = await ndk.fetchEvents(filters);
+      if (pubkeys.length === 0) {
+        setError("Invalid Nostr accounts");
+        setLoading(false);
+        fetchInProgress.current = false;
+        return;
+      }
       
-      // Process events to notes
+      const filter: NDKFilter = {
+        kinds: [1], // Text notes
+        authors: pubkeys,
+        limit: limit * 2 // Fetch more to allow for filtering
+      };
+      
+      console.log('NostrFeed: Fetching events with filter:', filter);
+      
+      // Use NDK to fetch events with timeout
+      const fetchPromise = ndk.fetchEvents([filter]);
+      const timeoutPromise = new Promise<Set<NDKEvent>>((_, reject) => 
+        setTimeout(() => reject(new Error('Events fetch timeout')), 8000)
+      );
+      
+      const events = await Promise.race([fetchPromise, timeoutPromise])
+        .catch(async (err) => {
+          console.error('NostrFeed: Events fetch error, trying reconnect:', err);
+          // Try to reconnect on timeout
+          await reconnect();
+          return new Set<NDKEvent>();
+        });
+        
+      console.log(`NostrFeed: Fetched ${events.size} events`);
+      
+      if (events.size === 0 && retryCount < 2) {
+        console.log(`NostrFeed: No events found, retry ${retryCount + 1}/2`);
+        setRetryCount(prev => prev + 1);
+        
+        // Try reconnect and fetch again
+        await reconnect();
+        setTimeout(() => fetchNotes(true), 1000);
+        return;
+      }
+      
+      // Process events into notes
       const fetchedNotes: Note[] = [];
-      for (const event of events) {
+      const profilePromises: { [key: string]: Promise<any> } = {};
+      
+      // First pass: collect all events and setup profile fetching
+      for (const event of Array.from(events)) {
         if (!event.pubkey) continue;
         
-        // Use nip19 from nostr-tools to encode pubkey
         const npub = nip19.npubEncode(event.pubkey);
-        const author = {
-          npub,
-          profile: await getUserProfile(npub)
-        };
+        
+        // Queue profile fetch (only once per pubkey)
+        if (!profilePromises[npub]) {
+          profilePromises[npub] = getUserProfile(npub).catch(err => {
+            console.error(`Failed to fetch profile for ${npub}:`, err);
+            return null;
+          });
+        }
+        
+        // Extract image URLs and hashtags
+        const extractedImages = extractImageUrls(event.content || '');
+        const extractedHashtags = extractHashtags(event.content || '');
         
         fetchedNotes.push({
           id: event.id || '', 
           created_at: event.created_at || 0,
           content: stripLinks(event.content || ''),
           author: { npub },
-          images: extractImageUrls(event.content || ''),
-          hashtags: extractHashtags(event.content || '')
+          images: extractedImages,
+          hashtags: extractedHashtags
         });
       }
       
-      // Sort by creation time, newest first
-      fetchedNotes.sort((a, b) => b.created_at - a.created_at);
+      // Fetch all profiles in parallel with timeout safety
+      const fetchProfiles = async () => {
+        try {
+          const profiles = await Promise.all(
+            Object.values(profilePromises).map(p => p.catch(() => null))
+          );
+          return Object.fromEntries(
+            Object.keys(profilePromises).map((npub, i) => [npub, profiles[i]])
+          );
+        } catch (err) {
+          console.error('Error fetching profiles:', err);
+          return {};
+        }
+      };
       
-      setNotes(fetchedNotes.slice(0, limit));
+      const profileTimeoutPromise = new Promise((resolve) => {
+        setTimeout(() => resolve({}), 5000);
+      });
+      
+      // Enhance profile fetching with better error handling for images
+      const profileMap: Record<string, { name?: string; displayName?: string; picture?: string } | null> = 
+        await Promise.race([fetchProfiles(), profileTimeoutPromise as Promise<Record<string, any>>]);
+      
+      // Ensure profile images have valid URLs or fall back to a placeholder
+      Object.keys(profileMap).forEach(npub => {
+        if (profileMap[npub] && profileMap[npub]?.picture) {
+          // Validate URL pattern
+          const urlPattern = /^(https?:\/\/)/i;
+          if (!urlPattern.test(profileMap[npub]?.picture || '')) {
+            // If URL doesn't start with http/https, use a fallback
+            profileMap[npub]!.picture = '/assets/bitcoin.png';
+          }
+        }
+      });
+      
+      // Populate author info
+      const completeNotes = fetchedNotes.map(note => ({
+        ...note,
+        author: {
+          npub: note.author.npub,
+          profile: profileMap[note.author.npub] ? {
+            name: profileMap[note.author.npub]?.name,
+            displayName: profileMap[note.author.npub]?.displayName,
+            picture: profileMap[note.author.npub]?.picture
+          } : undefined
+        }
+      }));
+      
+      // Sort by created_at in descending order (newest first)
+      completeNotes.sort((a, b) => b.created_at - a.created_at);
+      
+      // Collect hashtags for trending display
+      const hashtagCounts: {[tag: string]: number} = {};
+      completeNotes.forEach(note => {
+        note.hashtags.forEach(tag => {
+          hashtagCounts[tag] = (hashtagCounts[tag] || 0) + 1;
+        });
+      });
+      
+      // Sort by count and take top 10
+      const topTags = Object.entries(hashtagCounts)
+        .map(([tag, count]) => ({ tag, count }))
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 10);
+      
+      setTrendingTags(topTags);
+      setNotes(completeNotes.slice(0, limit));
       setLoading(false);
+      setError(null);
+      setRetryCount(0);
     } catch (err) {
       console.error('Error fetching Nostr notes:', err);
-      setError('Failed to load Nostr feed');
+      setError('Failed to load posts. Please try again later.');
       setLoading(false);
+    } finally {
+      fetchInProgress.current = false;
     }
-  };
+  }, [ndk, effectiveNpubs, limit, getUserProfile, reconnect, retryCount, loading]);
 
+  // Initial fetch when NDK is ready
   useEffect(() => {
+    if (ndkReady && !fetchInProgress.current) {
+      console.log('NostrFeed: Initial fetch triggered by ndkReady');
         fetchNotes();
-  }, [ndk, effectiveNpubs]);
+    }
+  }, [ndkReady]);
+  
+  // Set up reconnection attempt if NDK is not ready
+  useEffect(() => {
+    if (!ndkReady && !fetchInProgress.current && retryCount < 3) {
+      const timer = setTimeout(async () => {
+        console.log('NostrFeed: Attempting to reconnect to relays...');
+        await reconnect();
+      }, 2000);
+      
+      return () => clearTimeout(timer);
+    }
+  }, [ndkReady, reconnect, retryCount]);
 
   // Auto-scrolling mechanism
   useEffect(() => {
@@ -279,8 +499,11 @@ export const NostrFeed: React.FC<NostrFeedProps> = ({
   return (
     <div ref={feedRef} className="overflow-y-auto h-full bg-white dark:bg-gray-900 p-4">
       {loading && (
-        <div className="flex justify-center items-center h-full">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[#F7931A]" />
+        <div className="flex flex-col justify-center items-center h-full">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[#F7931A] mb-4" />
+          <p className="text-[#F7931A] text-center max-w-md animate-pulse">
+            {loadingMessage}
+          </p>
         </div>
       )}
       
@@ -289,7 +512,10 @@ export const NostrFeed: React.FC<NostrFeedProps> = ({
           <div className="text-center p-4">
             <p className="text-red-500 mb-2">{error}</p>
             <button 
-              onClick={fetchNotes}
+              onClick={(e) => {
+                e.preventDefault();
+                fetchNotes(true);
+              }}
               className="px-4 py-2 bg-[#F7931A] text-white rounded hover:bg-[#E87F17]"
             >
               Try Again
@@ -310,29 +536,40 @@ export const NostrFeed: React.FC<NostrFeedProps> = ({
             <div key={note.id} className="bg-white dark:bg-gray-800 rounded-lg shadow p-4 border border-gray-200 dark:border-gray-700">
               <div className="flex items-center mb-3">
                 {note.author.profile?.picture ? (
-                  <Image 
-                    src={note.author.profile.picture} 
-                    alt={note.author.profile.name || shortenNpub(note.author.npub)}
-                    width={40}
-                    height={40}
-                    className="rounded-full mr-3"
-                  />
+                  <div className="w-12 h-12 rounded-full overflow-hidden mr-3 relative border-2 border-bitcoin">
+                    <Image 
+                      src={note.author.profile.picture} 
+                      alt="Profile"
+                      width={48}
+                      height={48}
+                      className="object-cover"
+                      priority={true}
+                      onError={(e) => {
+                        // If image fails to load, replace with default
+                        (e.target as HTMLImageElement).src = '/assets/bitcoin.png';
+                      }}
+                    />
+                  </div>
                 ) : (
-                  <div className="w-10 h-10 bg-gray-300 rounded-full mr-3 flex items-center justify-center text-gray-600">
-                    {(note.author.profile?.name || shortenNpub(note.author.npub))[0]}
+                  <div className="w-12 h-12 bg-bitcoin/20 border-2 border-bitcoin dark:bg-gray-700 rounded-full mr-3 flex items-center justify-center text-bitcoin dark:text-gray-300">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M17.982 18.725A7.488 7.488 0 0012 15.75a7.488 7.488 0 00-5.982 2.975m11.963 0a9 9 0 10-11.963 0m11.963 0A8.966 8.966 0 0112 21a8.966 8.966 0 01-5.982-2.275M15 9.75a3 3 0 11-6 0 3 3 0 016 0z" />
+                    </svg>
                   </div>
                 )}
                 <div>
-                  <h3 className="font-semibold text-bitcoin">
-                    {note.author.profile?.displayName || note.author.profile?.name || shortenNpub(note.author.npub)}
-                  </h3>
-                  <p className="text-xs text-gray-400">
-                    {new Date(note.created_at * 1000).toLocaleString()}
+                  <p className="text-xs text-gray-500 dark:text-gray-400">
+                    {new Date(note.created_at * 1000).toLocaleString(undefined, {
+                      month: 'short',
+                      day: 'numeric',
+                      hour: '2-digit',
+                      minute: '2-digit'
+                    })}
                   </p>
                 </div>
               </div>
               
-              <p className="text-sand mb-3 line-clamp-4 flex-grow">{note.content}</p>
+              <p className="text-sand dark:text-gray-300 mb-3 line-clamp-4 flex-grow">{note.content}</p>
               
               {/* Display hashtags in the note */}
               {note.hashtags.length > 0 && (
@@ -355,13 +592,28 @@ export const NostrFeed: React.FC<NostrFeedProps> = ({
               
               {note.images.length > 0 && (
                 <div className="mt-auto">
-                  <Image 
-                    src={note.images[0]} 
-                    alt="Note image"
-                    width={300}
-                    height={200}
-                    className="rounded-lg w-full h-auto object-cover"
-                  />
+                  <div className="relative w-full h-48 rounded-lg overflow-hidden">
+                    <Image 
+                      src={note.images[0]} 
+                      alt="Note image"
+                      fill
+                      sizes="(max-width: 768px) 100vw, 50vw"
+                      className="object-cover"
+                      onError={(e) => {
+                        // Handle image loading error by using a fallback image instead of hiding
+                        const imgElement = e.target as HTMLImageElement;
+                        imgElement.src = '/assets/bitcoin.png';
+                        // Add a small label to indicate it's a fallback
+                        const parent = imgElement.parentElement;
+                        if (parent) {
+                          const label = document.createElement('div');
+                          label.className = 'absolute bottom-0 right-0 bg-black/50 text-white text-xs p-1';
+                          label.textContent = 'Image unavailable';
+                          parent.appendChild(label);
+                        }
+                      }}
+                    />
+                  </div>
                 </div>
               )}
           </div>

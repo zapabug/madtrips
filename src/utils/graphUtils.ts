@@ -1,18 +1,7 @@
 import * as d3 from 'd3';
 import { GraphNode, GraphLink } from '../types/graph-types';
 
-/**
- * Preload profile images to avoid flashing during visualization
- * @param nodes Graph nodes with image URLs
- */
-export const preloadImages = (nodes: GraphNode[]): void => {
-  nodes.forEach(node => {
-    if (node.picture) {
-      const img = new Image();
-      img.src = node.picture;
-    }
-  });
-};
+
 
 /**
  * Handle node click in social graph visualization

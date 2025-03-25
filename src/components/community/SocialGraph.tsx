@@ -7,30 +7,21 @@ import { GraphNode, GraphLink, GraphData } from '../../types/graph-types';
 import { BRAND_COLORS } from '../../constants/brandColors';
 import { DEFAULT_PROFILE_IMAGE } from '../../utils/profileUtils';
 import { nip19 } from 'nostr-tools';
-import defaultGraphData from './socialgraph.json';
 import { CORE_NPUBS } from './utils';
+import { getRandomLoadingMessage, getLoadingMessageSequence } from '../../constants/loadingMessages';
+import * as d3 from 'd3';
 
 // Dynamically import the ForceGraph2D component with no SSR
 const ForceGraph2D = dynamic(() => import('react-force-graph-2d').then(mod => mod.default), { ssr: false });
 
-// Process the imported JSON to match our GraphData structure
-const processImportedGraphData = (jsonData: any): GraphData => {
-  // Map over nodes and ensure they have the required fields for GraphNode
-  const processedNodes = jsonData.nodes.map((node: any) => ({
-    id: node.id,
-    pubkey: node.id, // Use ID as pubkey if not provided
-    npub: node.npub,
-    name: node.name,
-    picture: node.picture,
-    isCoreNode: node.type === 'core' || CORE_NPUBS.includes(node.npub)
-  }));
-
-  // Return the processed data
-  return {
-    nodes: processedNodes,
-    links: jsonData.links
-  };
-};
+// Custom loading messages specifically for the graph component
+const GRAPH_LOADING_MESSAGES = [
+  "Negotiating TLS handshakes with paranoid relays...",
+  "Brewing relay coffee in the protocol percolator...",
+  "Riding NPUB submarines through relay channels...",
+  "Chasing kind:1 events through the stratosphere...",
+  "Bribing NIP-05 validators for VIP access...",
+];
 
 interface SocialGraphProps {
   // Primary NPUB to center the graph on (optional, defaults to first core NPUB)
@@ -68,18 +59,6 @@ const convertGraphData = (data: GraphData) => {
   };
 };
 
-// Add humorous loading messages
-const LOADING_MESSAGES = [
-  "Fetching relays… or maybe just relaying nonsense.",
-  "Decrypting private messages… hope they're not just memes!",
-  "Relay lag detected! Blame the plebs.",
-  "Loading… because decentralized things take time.",
-  "Verifying pubkeys… definitely not reading your DMs.",
-  "Fetching Nostr notes… please hold, the relays are gossiping.",
-  "Buffering Nostr… because even freedom takes a second to load.",
-  "Rounding up relays… they're herding notes like digital catz."
-];
-
 export const SocialGraph: React.FC<SocialGraphProps> = ({
   centerNpub = CORE_NPUBS[0],
   npubs = CORE_NPUBS,
@@ -89,443 +68,564 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
   className = '',
   data,
 }) => {
-  const { ndk, getUserProfile, shortenNpub } = useNostr();
-  const [graphData, setGraphData] = useState<GraphData | null>(null);
-  const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
-  const [nodeImages, setNodeImages] = useState<Map<string, HTMLImageElement>>(new Map());
-  const [loadingImages, setLoadingImages] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
+  const { ndk, getUserProfile, shortenNpub, reconnect, ndkReady } = useNostr();
+  const [graphData, setGraphData] = useState<GraphData | null>(data || null);
+  const [loading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
+  const [loadingMessage, setLoadingMessage] = useState<string>(GRAPH_LOADING_MESSAGES[0]);
+  const [nodeImages, setNodeImages] = useState<Map<string, HTMLImageElement>>(new Map());
+  const fetchInProgress = useRef<boolean>(false);
   const containerRef = useRef<HTMLDivElement>(null);
-  const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
-  const [loadingMessageIndex, setLoadingMessageIndex] = useState(0);
+  const forceGraphRef = useRef<any>(null);
+  const isNdkReady = !!ndk && ndkReady;
 
-  // Ensure user is not null before accessing properties
-  const isUserLoggedIn = ndk !== null && !!ndk;
-
-  // Rotate loading messages with slower timing
+  // Initialize loading messages
   useEffect(() => {
-    let interval: NodeJS.Timeout;
-    
-    if (isLoading) {
-      interval = setInterval(() => {
-        setLoadingMessageIndex(prev => (prev + 1) % LOADING_MESSAGES.length);
-      }, 6000); // Increased from 4000ms to 6000ms to make messages change less frequently
+    if (loading) {
+      // Set up rotation of loading messages
+      const interval = setInterval(() => {
+        const messages = getLoadingMessageSequence('GRAPH', 5);
+        const index = Math.floor(Math.random() * messages.length);
+        setLoadingMessage(messages[index]);
+      }, 3000);
+      
+      return () => clearInterval(interval);
     }
-    
-    return () => {
-      if (interval) clearInterval(interval);
-    };
-  }, [isLoading]);
+  }, [loading]);
 
-  // Load data from provided data prop or defaultGraphData
-  useEffect(() => {
-    if (data) {
-      setGraphData(data);
+  // Define simulation parameters for graph animation
+  const graphPhysics = useRef({
+    charge: -30,
+    linkStrength: 0.3,
+    linkDistance: 70,
+    gravity: 0.1,
+    alpha: 0.3,
+    alphaDecay: 0.02,
+    velocityDecay: 0.4
+  });
+
+  // Function to create and initialize the force graph
+  const initializeForceGraph = useCallback((data: GraphData) => {
+    if (!forceGraphRef.current) return;
+    
+    const fg = forceGraphRef.current;
+    
+    // Apply physics settings based on graph size
+    const nodeCount = data.nodes.length;
+    const physics = graphPhysics.current;
+    
+    // Adjust physics for larger graphs
+    if (nodeCount > 20) {
+      physics.charge = -40;
+      physics.linkDistance = 100;
+      physics.gravity = 0.15;
+      physics.alpha = 0.4;
+      physics.alphaDecay = 0.015;
+      physics.velocityDecay = 0.3;
     } else {
-      try {
-        // Process the imported JSON data to match our GraphData structure
-        const processedData = processImportedGraphData(defaultGraphData);
-        setGraphData(processedData);
-      } catch (err) {
-        console.error('Failed to load graph data:', err);
-        setError('Failed to load social graph data');
-      }
+      physics.charge = -30;
+      physics.linkDistance = 70;
+      physics.gravity = 0.1;
+      physics.alpha = 0.3;
+      physics.alphaDecay = 0.02;
+      physics.velocityDecay = 0.4;
     }
-  }, [data]);
-
-  // Initialize data on component mount
-  useEffect(() => {
-    const updateDimensions = () => {
-      if (containerRef.current) {
-        setDimensions({
-          width: containerRef.current.offsetWidth,
-          height: containerRef.current.offsetHeight || 600,
-        });
-      }
-    };
-
-    // Initial dimensions update
-    updateDimensions();
     
-    // Add resize listener
-    window.addEventListener('resize', updateDimensions);
+    // Apply physics settings to the force graph
+    fg.d3Force('charge', d3.forceManyBody().strength(physics.charge))
+      .d3Force('link', d3.forceLink(data.links).id((d: any) => d.id).strength(physics.linkStrength).distance(physics.linkDistance))
+      .d3Force('center', d3.forceCenter())
+      .d3Force('gravity', d3.forceManyBody().strength(physics.gravity))
+      .cooldownTicks(100)
+      .onEngineStop(() => console.log('Graph physics stabilized'));
+      
+    // Set alpha parameters for smoother animation
+    const simulation = fg.d3Force() as d3.Simulation<any, any>;
+    if (simulation) {
+      simulation.alpha(physics.alpha);
+      simulation.alphaDecay(physics.alphaDecay);
+      simulation.velocityDecay(physics.velocityDecay);
+    }
     
-    // Cleanup
-    return () => window.removeEventListener('resize', updateDimensions);
+    // Apply graph data
+    fg.graphData(data);
   }, []);
 
-  // Add at the top of the component
-  const DATA_FETCH_RETRY_LIMIT = 2;
-  const fetchRetries = useRef(0);
-  const isMounted = useRef(true);
-
-  // Update the fetchNostrData function to take no arguments for button click handlers
-  const fetchNostrData = useCallback(async () => {
-    setIsLoading(true);
-    setError(null);
+  // Process second-degree connections (followers of followers) 
+  const processSecondDegreeConnections = useCallback(async (
+    firstDegreeConnections: Set<string>,
+    coreKeys: string[],
+    nodes: GraphNode[],
+    links: GraphLink[],
+    addedPubkeys: Set<string>
+  ): Promise<{ nodes: GraphNode[], links: GraphLink[] }> => {
+    if (!ndk) return { nodes, links };
     
-    const controller = new AbortController();
+    console.log('Processing second-degree connections...');
     
-    try {
-      console.log(`Attempting fetch (retry ${fetchRetries.current}/${DATA_FETCH_RETRY_LIMIT})`);
+    // Track pubkeys we're processing to avoid duplicates
+    const processedForFollowers = new Set<string>();
+    const secondDegreeConnections = new Set<string>();
+    
+    // Take a subset of first-degree connections to process
+    // This prevents the graph from getting too large
+    const firstDegreeToProcess = Array.from(firstDegreeConnections).slice(0, Math.min(firstDegreeConnections.size, 10));
+    
+    for (const pubkey of firstDegreeToProcess) {
+      // Skip if we've already processed this pubkey
+      if (processedForFollowers.has(pubkey)) continue;
+      processedForFollowers.add(pubkey);
       
-      if (!ndk) {
-        throw new Error('Nostr connection not available');
-      }
-
-      // Helper functions for fetching follows and network data
-      const fetchFollows = async () => {
-        const followData: GraphNode[] = [];
+      try {
+        // Fetch this user's follows
+        const contactsEvents = await Promise.race([
+          ndk.fetchEvents({
+            kinds: [3], // Contact lists
+            authors: [pubkey],
+            limit: 1
+          }),
+          new Promise<null>((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000))
+        ]).catch(() => null);
         
-        try {
-          // Process each npub in our list
-          for (const npub of npubs) {
-            // Get hex pubkey from npub
-            let pubkey;
-            try {
-              pubkey = npub.startsWith('npub1') ? nip19.decode(npub).data : npub;
-            } catch (err) {
-              console.error('Invalid npub format:', npub);
-              continue;
-            }
+        if (contactsEvents && contactsEvents instanceof Set && contactsEvents.size > 0) {
+          const contactList = Array.from(contactsEvents)[0];
+          
+          if (contactList && contactList.tags && Array.isArray(contactList.tags)) {
+            // Extract follows that are either already known or limit new ones
+            const relevantFollows = contactList.tags
+              .filter(tag => Array.isArray(tag) && tag[0] === 'p')
+              .map(tag => tag[1])
+              .filter(followPubkey => 
+                // Include if it's already in our graph or one of our core keys
+                addedPubkeys.has(followPubkey) || 
+                coreKeys.includes(followPubkey) ||
+                // Or if we're still under our second-degree connection limit
+                secondDegreeConnections.size < 15
+              )
+              .slice(0, 5); // Limit connections per node
             
-            // Get user profile
+            for (const followPubkey of relevantFollows) {
+              // Don't add self-connections
+              if (followPubkey === pubkey) continue;
+              
+              // If this is a new node we haven't seen before, add to second degree connections
+              if (!addedPubkeys.has(followPubkey) && !coreKeys.includes(followPubkey)) {
+                secondDegreeConnections.add(followPubkey);
+                addedPubkeys.add(followPubkey);
+              }
+              
+              // Add the connection if it doesn't already exist
+              const existingLink = links.find(link => 
+                (link.source === pubkey && link.target === followPubkey) ||
+                (link.source === followPubkey && link.target === pubkey)
+              );
+              
+              if (!existingLink) {
+                links.push({
+                  source: pubkey,
+                  target: followPubkey,
+                  type: 'follows',
+                  value: 1 // Thinner connection for second-degree relationships
+                });
+              }
+              
+              // Check if this is a mutual follow
+              const reverseLinkExists = links.some(link => 
+                link.source === followPubkey && link.target === pubkey
+              );
+              
+              if (reverseLinkExists) {
+                // Update both directions to mutual status
+                links.forEach(link => {
+                  if ((link.source === pubkey && link.target === followPubkey) ||
+                      (link.source === followPubkey && link.target === pubkey)) {
+                    link.type = 'mutual';
+                    link.value = 2;
+                  }
+                });
+              }
+            }
+          }
+        }
+      } catch (error) {
+        console.warn(`Error fetching follows for ${pubkey}:`, error);
+      }
+    }
+    
+    // Now fetch profiles for second-degree connections
+    if (secondDegreeConnections.size > 0) {
+      console.log(`Fetching ${secondDegreeConnections.size} second-degree profiles...`);
+      
+      const secondDegreeArray = Array.from(secondDegreeConnections);
+      
+      // Process in batches to not overwhelm the system
+      for (let i = 0; i < secondDegreeArray.length; i += 5) {
+        const batch = secondDegreeArray.slice(i, i + 5);
+        
+        const profilePromises = batch.map(async (pubkey) => {
+          try {
+            const npub = nip19.npubEncode(pubkey);
             const profile = await getUserProfile(npub);
             
-            // Create base node
-            const baseNode: GraphNode = {
-              id: npub,
-              pubkey: typeof pubkey === 'string' ? pubkey : '',
-              npub: npub,
-              name: profile?.name || profile?.displayName || shortenNpub(npub),
+            return {
+              id: pubkey,
+              pubkey,
+              npub,
+              name: profile?.displayName || profile?.name || shortenNpub(npub),
               picture: profile?.picture || DEFAULT_PROFILE_IMAGE,
-              isCoreNode: CORE_NPUBS.includes(npub),
+              isCoreNode: false,
+              val: 5, // Smaller size for second-degree connections
+              color: '#8B5CF6' // Different color for second-degree nodes
             };
+          } catch (error) {
+            const npub = nip19.npubEncode(pubkey);
             
-            followData.push(baseNode);
+            return {
+              id: pubkey,
+              pubkey,
+              npub,
+              name: shortenNpub(npub),
+              picture: DEFAULT_PROFILE_IMAGE,
+              isCoreNode: false,
+              val: 5,
+              color: '#8B5CF6'
+            };
+          }
+        });
+        
+        const profileResults = await Promise.allSettled(profilePromises);
+        
+        profileResults.forEach(result => {
+          if (result.status === 'fulfilled') {
+            nodes.push(result.value);
+          }
+        });
+      }
+    }
+    
+    return { nodes, links };
+  }, [ndk, getUserProfile, shortenNpub]);
+  
+  // Fetch network data from Nostr - prioritizing real data only
+  const fetchNostrData = useCallback(async () => {
+    if (fetchInProgress.current) {
+      console.log('Fetch already in progress, skipping duplicate request');
+      return;
+    }
+    
+    setIsLoading(true);
+    fetchInProgress.current = true;
+    setError(null);
+    
+    // Start with empty graph
+    setGraphData({
+      nodes: [],
+      links: []
+    });
+    
+    if (!ndk) {
+      setError("Nostr connection not available. Please try again later.");
+      setIsLoading(false);
+      fetchInProgress.current = false;
+      return;
+    }
+    
+    // Try to connect to relays if not already connected
+    const hasConnectedRelays = Array.from(ndk.pool.relays.values()).some(relay => relay.status === 1);
+    if (!hasConnectedRelays) {
+      console.log('No connected relays found, attempting to reconnect...');
+      await reconnect();
+    }
+    
+    try {
+      // Convert npubs to pubkeys
+      const pubkeyMap = new Map<string, string>();
+      const coreKeys = npubs.map(npub => {
+        try {
+          if (npub.startsWith('npub1')) {
+            const { data } = nip19.decode(npub);
+            const pubkey = data as string;
+            pubkeyMap.set(pubkey, npub);
+            return pubkey;
+          }
+          return npub;
+        } catch (e) {
+          console.error('Invalid npub:', npub, e);
+          return null;
+        }
+      }).filter(Boolean) as string[];
+      
+      if (coreKeys.length === 0) {
+        throw new Error('No valid npubs provided');
+      }
+      
+      console.log('SocialGraph: Fetching profiles for', coreKeys.length, 'core users');
+      
+      // Track all pubkeys we add to graph
+      const addedPubkeys = new Set<string>(coreKeys);
+      
+      // Arrays for our data
+      const nodes: GraphNode[] = [];
+      const links: GraphLink[] = [];
+      const nodeImagesMap = new Map<string, HTMLImageElement>();
+      
+      // STEP 1: Fetch core profiles
+      const coreProfilePromises = coreKeys.map(async (pubkey) => {
+        const npub = pubkeyMap.get(pubkey) || nip19.npubEncode(pubkey);
+        try {
+          const profile = await getUserProfile(npub);
+          
+          // Preload image for smoother rendering
+          let pictureUrl = profile?.picture || DEFAULT_PROFILE_IMAGE;
+          if (pictureUrl && !/^https?:\/\//i.test(pictureUrl)) {
+            pictureUrl = DEFAULT_PROFILE_IMAGE;
           }
           
-          return followData;
+          const img = new Image();
+          img.src = pictureUrl;
+          nodeImagesMap.set(npub, img);
+          
+          return {
+            id: pubkey,
+            pubkey,
+            npub,
+            name: profile?.displayName || profile?.name || shortenNpub(npub),
+            picture: pictureUrl,
+            isCoreNode: true,
+            val: 20, // Larger size for core nodes
+            color: BRAND_COLORS.bitcoinOrange
+          };
         } catch (err) {
-          console.error('Error in fetchFollows:', err);
-          throw err;
+          console.error(`Error fetching profile for ${npub}:`, err);
+          
+          return {
+            id: pubkey,
+            pubkey,
+            npub,
+            name: shortenNpub(npub),
+            picture: DEFAULT_PROFILE_IMAGE,
+            isCoreNode: true,
+            val: 20,
+            color: BRAND_COLORS.bitcoinOrange
+          };
         }
-      };
+      });
       
-      const fetchNetwork = async () => {
-        const networkLinks: GraphLink[] = [];
-        
+      // Wait for all core profiles
+      const coreProfiles = await Promise.allSettled(coreProfilePromises);
+      
+      // Add core nodes to graph
+      coreProfiles.forEach(result => {
+        if (result.status === 'fulfilled') {
+          nodes.push(result.value);
+        }
+      });
+      
+      // Update graph with core nodes first so users see something quickly
+      setGraphData({
+        nodes: [...nodes],
+        links: []
+      });
+      setNodeImages(nodeImagesMap);
+      
+      // STEP 2: Get direct connections for core nodes
+      console.log('Fetching direct connections for core nodes');
+      
+      // Track first-degree connections to process later
+      const firstDegreeConnections = new Set<string>();
+      
+      // Process core nodes in sequence to avoid overwhelming relays
+      for (const coreNode of nodes) {
         try {
-          // Create dummy connections for demonstration
-          // In a real implementation, this would fetch follows/relationships from relays
-          for (let i = 0; i < npubs.length; i++) {
-            for (let j = i + 1; j < npubs.length; j++) {
-              networkLinks.push({
-                source: npubs[i],
-                target: npubs[j],
-                value: 1,
-                type: 'mutual',
+          // Fetch contacts with timeout
+          const contactsEvents = await Promise.race([
+            ndk.fetchEvents({
+              kinds: [3], // Contact lists
+              authors: [coreNode.pubkey],
+              limit: 1
+            }),
+            new Promise<null>((_, reject) => 
+              setTimeout(() => reject(new Error('Timeout')), 5000)
+            )
+          ]).catch(() => null);
+          
+          // If we have contacts
+          if (contactsEvents && contactsEvents instanceof Set && contactsEvents.size > 0) {
+            const contactList = Array.from(contactsEvents)[0];
+            
+            // Extract follows from tags if they exist
+            if (contactList && contactList.tags && Array.isArray(contactList.tags)) {
+              const follows = contactList.tags
+                .filter(tag => Array.isArray(tag) && tag[0] === 'p')
+                .map(tag => tag[1])
+                .filter(followPubkey => coreKeys.includes(followPubkey))
+                .slice(0, maxConnections);
+              
+              // Add connections
+              for (const followPubkey of follows) {
+                if (followPubkey !== coreNode.pubkey) {
+                  links.push({
+                    source: coreNode.pubkey,
+                    target: followPubkey,
+                    type: 'follows',
+                    value: 2
+                  });
+                  
+                  // Check for mutual follows
+                  const isMutual = links.some(
+                    link => link.source === followPubkey && link.target === coreNode.pubkey
+                  );
+                  
+                  if (isMutual) {
+                    // Update both links to mutual
+                    links.forEach(link => {
+                      if ((link.source === coreNode.pubkey && link.target === followPubkey) ||
+                          (link.source === followPubkey && link.target === coreNode.pubkey)) {
+                        link.type = 'mutual';
+                        link.value = 3;
+                      }
+                    });
+                  }
+                }
+              }
+              
+              // Also collect non-core follows for second-degree processing
+              const nonCoreFollows = contactList.tags
+                .filter(tag => Array.isArray(tag) && tag[0] === 'p')
+                .map(tag => tag[1])
+                .filter(followPubkey => !coreKeys.includes(followPubkey))
+                .slice(0, maxConnections);
+                
+              nonCoreFollows.forEach(pubkey => {
+                firstDegreeConnections.add(pubkey);
+                addedPubkeys.add(pubkey);
               });
             }
           }
           
-          return networkLinks;
-        } catch (err) {
-          console.error('Error in fetchNetwork:', err);
-          throw err;
-        }
-      };
-      
-      const [follows, network] = await Promise.all([
-        fetchWithTimeout(15000, fetchFollows(), controller.signal),
-        fetchWithTimeout(15000, fetchNetwork(), controller.signal)
-      ]);
-
-      const validateResponse = (follows: any[], network: any[]): boolean => {
-        return (
-          Array.isArray(follows) &&
-          follows.length > 0 &&
-          Array.isArray(network) &&
-          network.every(link => 
-            typeof link.source === 'string' && 
-            typeof link.target === 'string' &&
-            typeof link.value === 'number'
-          )
-        );
-      };
-
-      if (!validateResponse(follows, network)) {
-        throw new Error('Invalid data structure from Nostr');
-      }
-
-      // Process the data into the format needed for the graph
-      const processData = (follows: any[], network: any[]): GraphData => {
-        // Process follows into nodes
-        const nodes = follows.map(follow => ({
-          ...follow,
-          isCoreNode: CORE_NPUBS.includes(follow.npub),
-          val: CORE_NPUBS.includes(follow.npub) ? 15 : 5,
-          color: CORE_NPUBS.includes(follow.npub) ? 
-            BRAND_COLORS.bitcoinOrange : 
-            BRAND_COLORS.lightSand,
-        }));
-        
-        // Process network data into links
-        const links = network.map(link => ({
-          ...link,
-          color: link.type === 'mutual' ? 
-            BRAND_COLORS.bitcoinOrange : 
-            BRAND_COLORS.lightSand + '99',
-        }));
-        
-        return { nodes, links };
-      };
-      
-      const processedData = processData(follows, network);
-      
-      if (isMounted.current && !controller.signal.aborted) {
-        setGraphData(processedData);
-        fetchRetries.current = 0; // Reset retry counter on success
-        setIsLoading(false);
-      }
-      
-      return processedData;
-    } catch (err) {
-      if (isMounted.current && !controller.signal.aborted) {
-        if (fetchRetries.current < DATA_FETCH_RETRY_LIMIT) {
-          fetchRetries.current += 1;
-          console.warn(`Retrying fetch (${fetchRetries.current})...`);
-          return fetchNostrData();
-        }
-        setError(err instanceof Error ? err.message : 'Data loading failed');
-        setIsLoading(false);
-      }
-      return { nodes: [], links: [] };
-    }
-  }, [ndk, npubs, getUserProfile, shortenNpub]);
-
-  // New fetchWithTimeout utility
-  const fetchWithTimeout = useCallback(<T,>(timeout: number, promise: Promise<T>, signal: AbortSignal): Promise<T> => {
-    return Promise.race([
-      promise,
-      new Promise<never>((_, reject) => {
-        setTimeout(() => {
-          if (!signal.aborted) {
-            reject(new Error('Request timeout'));
-          }
-        }, timeout);
-      })
-    ]);
-  }, []);
-
-  // Custom handler for node clicks to support our GraphNode type
-  const handleNodeClicked = useCallback((node: any) => {
-    const graphNode = node as GraphNode;
-    setSelectedNode(graphNode);
-    
-    // Open in a new tab if it's a URL
-    if (graphNode.npub) {
-      window.open(`https://njump.me/${graphNode.npub}`, '_blank');
-    }
-  }, []);
-
-  // Updated useEffect with complete cleanup
-  useEffect(() => {
-    isMounted.current = true;
-    const controller = new AbortController();
-    let observer: IntersectionObserver | null = null;
-    let timeoutId: NodeJS.Timeout;
-
-    const handleVisibilityChange = (isVisible: boolean) => {
-      if (isVisible && isMounted.current) {
-        timeoutId = setTimeout(async () => {
-          try {
-            await fetchNostrData();
-          } catch (err) {
-            if (!controller.signal.aborted) {
-              console.error('Final fetch error:', err);
-            }
-          }
-        }, 3000);
-      }
-    };
-
-    if (containerRef.current) {
-      observer = new IntersectionObserver(([entry]) => {
-        handleVisibilityChange(!!entry?.isIntersecting);
-      }, { threshold: 0.1 });
-      
-      observer.observe(containerRef.current);
-    }
-
-    return () => {
-      isMounted.current = false;
-      controller.abort();
-      clearTimeout(timeoutId);
-      if (observer && containerRef.current) {
-        observer.unobserve(containerRef.current);
-        observer.disconnect();
-      }
-      fetchRetries.current = 0;
-    };
-  }, [fetchNostrData]);
-
-  // Update graph data based on login status
-  useEffect(() => {
-    // Always attempt to fetch real data from Nostr
-    // Don't use fallback data, as per user's request
-    fetchNostrData();
-    
-    // Note: This might result in longer loading times, but will ensure
-    // we're always showing real data rather than mock/static data
-  }, [isUserLoggedIn, ndk]);
-
-  // Initialize data when dependencies change
-  useEffect(() => {
-    const initializeData = async () => {
-      // If we already have data (passed as prop), use that
-      if (data) {
-        console.log("Using provided data:", data);
-        setGraphData(data);
-        return;
-      }
-      
-      // Otherwise, try to fetch from Nostr
-      // Always attempt to fetch real data, even if it takes longer
-      await fetchNostrData();
-    };
-    
-    initializeData();
-  }, [ndk, npubs.join(','), centerNpub, maxConnections, data, fetchNostrData]); // Re-fetch when these dependencies change
-
-  // Update preloadImages call with better error handling
-  useEffect(() => {
-    if (graphData?.nodes) {
-      try {
-        setLoadingImages(true);
-        
-        // Create a map to store loaded images
-        const imageMap = new Map<string, HTMLImageElement>();
-        
-        // Custom preload function that updates our local imageMap
-        const handleImagesLoaded = () => {
-          console.log('All images loaded or handled');
-          setNodeImages(prev => {
-            // Merge previous images with new ones to avoid losing already loaded images
-            const newMap = new Map(prev);
-            imageMap.forEach((img, key) => {
-              newMap.set(key, img);
-            });
-            return newMap;
+          // Update the graph progressively to show connections forming
+          setGraphData({
+            nodes: [...nodes],
+            links: [...links]
           });
-          setLoadingImages(false);
-        };
+        } catch (e) {
+          console.warn(`Error fetching contacts for ${coreNode.pubkey}:`, e);
+        }
+      }
+      
+      // STEP 3: Get profiles for first-degree connections
+      if (firstDegreeConnections.size > 0) {
+        console.log(`Fetching profiles for ${firstDegreeConnections.size} first-degree connections`);
         
-        // Handle image loading errors
-        const handleImageError = (error: any) => {
-          console.error('Image loading error:', error);
-          // Still finish loading to prevent UI from being stuck
-          setLoadingImages(false);
-        };
+        const firstDegreeArray = Array.from(firstDegreeConnections);
         
-        // Custom preload function that updates our local imageMap
-        const customPreloadImages = (nodes: GraphNode[]) => {
-          let loadedImages = 0;
+        // Process in batches to avoid overwhelming system
+        for (let i = 0; i < firstDegreeArray.length; i += 5) {
+          const batch = firstDegreeArray.slice(i, i + 5);
           
-          // Filter nodes that have both picture and npub
-          const nodesWithImages = nodes.filter(node => 
-            node && node.picture && node.npub && 
-            typeof node.picture === 'string' && 
-            typeof node.npub === 'string'
+          const profilePromises = batch.map(async (pubkey) => {
+            try {
+              const npub = nip19.npubEncode(pubkey);
+              const profile = await getUserProfile(npub);
+              
+              // Preload image
+              let pictureUrl = profile?.picture || DEFAULT_PROFILE_IMAGE;
+              if (pictureUrl && !/^https?:\/\//i.test(pictureUrl)) {
+                pictureUrl = DEFAULT_PROFILE_IMAGE;
+              }
+              
+              const img = new Image();
+              img.src = pictureUrl;
+              nodeImagesMap.set(npub, img);
+              
+              return {
+                id: pubkey,
+                pubkey,
+                npub,
+                name: profile?.displayName || profile?.name || shortenNpub(npub),
+                picture: pictureUrl,
+                isCoreNode: false,
+                val: 10, // Medium size for first-degree connections
+                color: BRAND_COLORS.forestGreen
+              };
+            } catch (err) {
+              console.error(`Error fetching profile for ${pubkey}:`, err);
+              const npub = nip19.npubEncode(pubkey);
+              
+              return {
+                id: pubkey,
+                pubkey,
+                npub,
+                name: shortenNpub(npub),
+                picture: DEFAULT_PROFILE_IMAGE,
+                isCoreNode: false,
+                val: 10,
+                color: BRAND_COLORS.forestGreen
+              };
+            }
+          });
+          
+          const profileResults = await Promise.allSettled(profilePromises);
+          
+          // Add nodes and update images
+          profileResults.forEach(result => {
+            if (result.status === 'fulfilled') {
+              nodes.push(result.value);
+            }
+          });
+          
+          // Show first-degree nodes as they're processed
+          setGraphData({
+            nodes: [...nodes],
+            links: [...links]
+          });
+          setNodeImages(nodeImagesMap);
+        }
+        
+        // STEP 4: Process second-degree connections (followers of followers)
+        const { nodes: updatedNodes, links: updatedLinks } = 
+          await processSecondDegreeConnections(
+            firstDegreeConnections,
+            coreKeys,
+            nodes,
+            links,
+            addedPubkeys
           );
           
-          const validNodes = nodesWithImages.length;
-          
-          if (validNodes === 0) {
-            handleImagesLoaded();
-            return;
-          }
-          
-          nodesWithImages.forEach(node => {
-            // Skip if we already have this image
-            if (nodeImages.has(node.npub as string)) {
-              loadedImages++;
-              if (loadedImages === validNodes) {
-                handleImagesLoaded();
-              }
-              return;
-            }
-            
-            const img = new Image();
-            img.crossOrigin = 'anonymous';
-            
-            img.onload = () => {
-              imageMap.set(node.npub as string, img);
-              loadedImages++;
-              if (loadedImages === validNodes) {
-                handleImagesLoaded();
-              }
-            };
-            
-            img.onerror = () => {
-              // On error, try with the default image
-              const defaultImg = new Image();
-              defaultImg.crossOrigin = 'anonymous';
-              defaultImg.src = DEFAULT_PROFILE_IMAGE;
-              
-              defaultImg.onload = () => {
-                imageMap.set(node.npub as string, defaultImg);
-                loadedImages++;
-                if (loadedImages === validNodes) {
-                  handleImagesLoaded();
-                }
-              };
-              
-              defaultImg.onerror = () => {
-                // If even the default fails, increment counter
-                loadedImages++;
-                if (loadedImages === validNodes) {
-                  handleImagesLoaded();
-                }
-              };
-            };
-            
-            // Set a timeout to handle cases where the image might hang
-            const timeout = setTimeout(() => {
-              if (img.complete) return;
-              
-              // Cancel the image loading
-              img.src = '';
-              loadedImages++;
-              if (loadedImages === validNodes) {
-                handleImagesLoaded();
-              }
-            }, 5000); // 5 second timeout
-            
-            try {
-              img.src = node.picture as string;
-            } catch (err) {
-              clearTimeout(timeout);
-              loadedImages++;
-              if (loadedImages === validNodes) {
-                handleImagesLoaded();
-              }
-            }
-          });
-        };
-        
-        // Use our custom preload function
-        customPreloadImages(graphData.nodes);
-      } catch (error) {
-        console.error('Error in image preloading:', error);
-        setLoadingImages(false);
+        // Final graph update with all nodes and links
+        setNodeImages(nodeImagesMap);
+        setGraphData({
+          nodes: updatedNodes,
+          links: updatedLinks
+        });
+      } else {
+        // If no first-degree connections found
+        setGraphData({
+          nodes,
+          links
+        });
       }
+      
+      setIsLoading(false);
+    } catch (error) {
+      console.error('Error fetching social graph data:', error);
+      setError('Failed to load social graph data. Please try again.');
+      setIsLoading(false);
+    } finally {
+      fetchInProgress.current = false;
     }
-  }, [graphData]);
+  }, [ndk, npubs, maxConnections, getUserProfile, reconnect, shortenNpub, processSecondDegreeConnections]);
+
+  // Effect to initialize force graph when data changes
+  useEffect(() => {
+    if (forceGraphRef.current && graphData && graphData.nodes.length > 0) {
+      initializeForceGraph(graphData);
+    }
+  }, [graphData, initializeForceGraph]);
 
   // Render appropriate UI based on loading/error state
-  if (isLoading) {
+  if (loading) {
     return (
       <div 
         className={`flex flex-col items-center justify-center bg-forest rounded-lg ${className}`} 
@@ -537,10 +637,9 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
         
         <div className="mt-4 text-center max-w-md px-4 h-16 flex items-center justify-center">
           <div 
-            key={loadingMessageIndex} 
             className="animate-fade-in-out text-lg font-medium text-bitcoin"
           >
-            {LOADING_MESSAGES[loadingMessageIndex]}
+            {loadingMessage}
           </div>
         </div>
         
@@ -573,10 +672,10 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
           
           <div className="mt-4">
             <button 
-              onClick={fetchNostrData}
+              onClick={() => fetchNostrData()}
               className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-md shadow-sm transition-colors"
             >
-              Try Again
+              Try Again with Nostr Data
             </button>
           </div>
           
@@ -619,16 +718,16 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
             Bitcoin Madeira Social Graph
           </div>
           <button 
-            onClick={fetchNostrData}
-            disabled={isLoading}
-            className={`px-3 py-1 bg-white/20 hover:bg-white/30 rounded shadow-sm text-sm font-medium border border-gray-200 flex items-center ${isLoading ? 'opacity-50' : ''}`}
-            aria-label="Reload graph"
+            onClick={() => fetchNostrData()}
+            disabled={loading}
+            className={`px-3 py-1 bg-white/20 hover:bg-white/30 rounded shadow-sm text-sm font-medium border border-gray-200 flex items-center ${loading ? 'opacity-50' : ''}`}
+            aria-label="Reload graph with real data"
             style={{ color: BRAND_COLORS.lightSand }}
           >
-            <svg xmlns="http://www.w3.org/2000/svg" className={`h-4 w-4 mr-1 ${isLoading ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <svg xmlns="http://www.w3.org/2000/svg" className={`h-4 w-4 mr-1 ${loading ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
             </svg>
-            {isLoading ? 'Loading...' : 'Reload'}
+            {loading ? 'Loading...' : 'Load Nostr Data'}
           </button>
         </div>
 
@@ -690,9 +789,9 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
               nodeVal={(node: any) => node.val || 1}
               linkColor={(link: any) => link.color || BRAND_COLORS.lightSand + '99'}
               linkWidth={(link: any) => Math.sqrt(link.value || 1) * 1.5}
-              onNodeClick={handleNodeClicked}
-              width={dimensions.width}
-              height={dimensions.height}
+              onNodeClick={(node: any) => setSelectedNode(node as GraphNode)}
+              width={typeof width === 'number' ? width : parseInt(width) || undefined}
+              height={typeof height === 'number' ? height : parseInt(height) || undefined}
               nodeCanvasObject={(node: any, ctx: CanvasRenderingContext2D, globalScale: number) => {
                 // Helper function to draw fallback circle
                 const drawFallbackCircle = (node: GraphNode, ctx: CanvasRenderingContext2D, size: number) => {
@@ -718,45 +817,47 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
                 try {
                   const graphNode = node as GraphNode;
                   const nodeSize = graphNode.val || 5;
-                  const npubKey = graphNode.npub || '';
-                  const imageSource = npubKey ? nodeImages.get(npubKey) : null;
                   
-                  // Draw the node with profile image if available
-                  if (imageSource && imageSource.complete && imageSource.naturalWidth > 0) {
-                    try {
-                      // Create circular clipping path
-                      ctx.save();
-                      ctx.beginPath();
-                      ctx.arc(graphNode.x as number, graphNode.y as number, nodeSize, 0, 2 * Math.PI);
-                      ctx.clip();
-                      
-                      // Draw the profile image
-                      const imgSize = nodeSize * 2;
-                      ctx.drawImage(
-                        imageSource, 
-                        (graphNode.x as number) - nodeSize, 
-                        (graphNode.y as number) - nodeSize, 
-                        imgSize, 
-                        imgSize
-                      );
-                      
-                      ctx.restore();
-                      
-                      // Add highlight border for core nodes
-                      if (graphNode.isCoreNode) {
+                  // Always draw the fallback circle first as a base layer
+                  drawFallbackCircle(graphNode, ctx, nodeSize);
+                  
+                  // Then try to draw the profile image on top if available
+                  if (graphNode.npub) {
+                    const imageSource = nodeImages.get(graphNode.npub);
+                    
+                    if (imageSource && imageSource.complete && imageSource.naturalWidth > 0) {
+                      try {
+                        // Create circular clipping path
+                        ctx.save();
                         ctx.beginPath();
-                        ctx.strokeStyle = BRAND_COLORS.bitcoinOrange; // Bitcoin orange for core nodes
-                        ctx.lineWidth = 2;
-                        ctx.arc(graphNode.x as number, graphNode.y as number, nodeSize + 2, 0, 2 * Math.PI);
-                        ctx.stroke();
+                        ctx.arc(graphNode.x as number, graphNode.y as number, nodeSize, 0, 2 * Math.PI);
+                        ctx.clip();
+                        
+                        // Draw the profile image
+                        const imgSize = nodeSize * 2;
+                        ctx.drawImage(
+                          imageSource, 
+                          (graphNode.x as number) - nodeSize, 
+                          (graphNode.y as number) - nodeSize, 
+                          imgSize, 
+                          imgSize
+                        );
+                        
+                        ctx.restore();
+                        
+                        // Add highlight border for core nodes
+                        if (graphNode.isCoreNode) {
+                          ctx.beginPath();
+                          ctx.strokeStyle = BRAND_COLORS.bitcoinOrange; // Bitcoin orange for core nodes
+                          ctx.lineWidth = 2;
+                          ctx.arc(graphNode.x as number, graphNode.y as number, nodeSize + 2, 0, 2 * Math.PI);
+                          ctx.stroke();
+                        }
+                      } catch (drawErr) {
+                        // Image drawing failed, but we already have the fallback circle
+                        console.warn('Error drawing profile image:', drawErr);
                       }
-                    } catch (err) {
-                      // Fallback to circle if image drawing fails
-                      drawFallbackCircle(graphNode, ctx, nodeSize);
                     }
-                  } else {
-                    // Fallback to plain circle if no image
-                    drawFallbackCircle(graphNode, ctx, nodeSize);
                   }
                 } catch (err) {
                   console.error('Error rendering node:', err);

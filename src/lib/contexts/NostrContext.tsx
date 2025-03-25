@@ -1,23 +1,10 @@
 'use client';
 
 import React, { createContext, useContext, useEffect, useState, ReactNode, useCallback, useRef } from 'react';
-import NDK, { NDKEvent, NDKNip07Signer, NDKUser, NDKRelaySet } from '@nostr-dev-kit/ndk';
+import NDK, { NDKEvent, NDKNip07Signer, NDKUser, NDKRelaySet, NDKRelay } from '@nostr-dev-kit/ndk';
 import { shortenNpub } from '../../utils/profileUtils';
 import { nip19 } from 'nostr-tools';
-
-// Define the relays to use, prioritized by reliability
-const PRIMARY_RELAYS = [
-  'wss://relay.damus.io',
-  'wss://relay.primal.net',
-  'wss://nostr-pub.wellorder.net',
-];
-
-const FALLBACK_RELAYS = [
-  'wss://relay.nostr.band',
-  'wss://nostr.mutinywallet.com',
-  'wss://relay.snort.social',
-  'wss://purplepag.es',
-];
+import { DEFAULT_RELAYS, RELAYS, getAllRelays, createRelay } from '../../constants/relays';
 
 /**
  * Interface for the user profile data
@@ -106,21 +93,21 @@ export const NostrProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const ndkInstance = useRef<NDK | null>(null);
   const connectedRelays = useRef<string[]>([]);
 
-  // Create and configure an NDK instance
+  // Create and configure an NDK instance using the relays from constants
   const createNDKInstance = useCallback((): NDK => {
-    // Start with primary relays first
-    const allRelays = [...PRIMARY_RELAYS, ...FALLBACK_RELAYS];
+    // Use the DEFAULT_RELAYS from the constants
+    const initialRelays = DEFAULT_RELAYS;
 
     const instance = new NDK({
-      explicitRelayUrls: allRelays,
-      enableOutboxModel: false, // Disable outbox to reduce complexity
-      autoConnectUserRelays: false, // Handle connections manually for better control
+      explicitRelayUrls: initialRelays,
+      enableOutboxModel: false,
+      autoConnectUserRelays: false,
     });
 
     return instance;
   }, []);
 
-  // Optimized relay connection strategy that records successful relays
+  // Optimized relay connection strategy
   const connectToRelays = useCallback(async (instance: NDK): Promise<boolean> => {
     const MAX_RETRIES = 3;
     const RETRY_DELAY = 1000;
@@ -131,11 +118,23 @@ export const NostrProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     try {
       console.log('Connecting to Nostr relays...');
       
-      // Connect to all configured relays - using compatible API call
+      // First, explicitly disconnect from any existing relays to reset connections
+      instance.pool.relays.forEach((relay) => {
+        try {
+          relay.disconnect();
+        } catch (e) {
+          // Ignore disconnect errors
+        }
+      });
+      
+      // Wait for disconnections to complete
+      await new Promise(resolve => setTimeout(resolve, 300));
+      
+      // Connect to all configured relays
       await instance.connect();
       
-      // Wait a moment for connections to establish
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      // Wait a moment for connections to establish - increase this time for better connection chances
+      await new Promise(resolve => setTimeout(resolve, 2000));
 
       // Get connection statuses
       const connected: string[] = [];
@@ -154,50 +153,102 @@ export const NostrProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         return true;
       }
       
-      // If no relays connected, try explicit retry of each relay
+      // If no relays connected, try with backup relays
       if (connected.length === 0) {
-        let anyConnected = false;
+        console.log('No primary relays connected, trying backup relays');
         
-        for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-          console.log(`Retry attempt ${attempt + 1} for relays`);
-          
-          // Force reconnect of each relay individually
-          for (const url of [...PRIMARY_RELAYS, ...FALLBACK_RELAYS]) {
-            try {
-              // Using properly typed API calls
-              const relay = instance.pool.getRelay(url);
-              if (relay) {
-                await relay.connect();
-                console.log(`Attempted connection to ${url}`);
+        // Try to connect to backup relays
+        for (const url of RELAYS.BACKUP) {
+          if (instance.pool.getRelay(url)) {
+            // Relay exists but disconnected, try reconnecting
+          try {
+            const relay = instance.pool.getRelay(url);
+            if (relay) {
+              await relay.connect();
               }
             } catch (e) {
-              console.warn(`Failed to connect to ${url}:`, e);
+              console.warn(`Failed to reconnect to relay ${url}:`, e);
             }
-          }
-          
-          await new Promise(resolve => setTimeout(resolve, RETRY_DELAY * (attempt + 1)));
-          
-          // Check connections after retry
-          const retryConnected: string[] = [];
-          instance.pool.relays.forEach((relay, url) => {
-            if (relay.status === 1) {
-              retryConnected.push(url);
+            } else {
+            // Create a new relay object and add it to the pool
+            try {
+              const relayObj = createRelay(url);
+              await instance.pool.addRelay(relayObj);
+            } catch (e) {
+              console.warn(`Failed to add backup relay ${url}:`, e);
             }
-          });
-            
-          connectedRelays.current = retryConnected;
-          
-          if (retryConnected.length > 0) {
-            console.log(`Connected to ${retryConnected.length} relays on retry:`, retryConnected);
-            anyConnected = true;
-            break;
           }
         }
         
-        return anyConnected;
+        // Add community relays as well for better connectivity
+        for (const url of RELAYS.COMMUNITY) {
+          if (!instance.pool.getRelay(url)) {
+            try {
+              const relayObj = createRelay(url);
+              await instance.pool.addRelay(relayObj);
+          } catch (e) {
+              // Ignore errors for community relays
+            }
+          }
+        }
+        
+        // Wait a bit longer for these connections to establish
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        
+        // Get updated connection status
+        const backupConnected: string[] = [];
+        instance.pool.relays.forEach((relay, url) => {
+          if (relay.status === 1) {
+            backupConnected.push(url);
+          }
+        });
+            
+        connectedRelays.current = backupConnected;
+        
+        if (backupConnected.length > 0) {
+          console.log(`Connected to ${backupConnected.length} backup relays:`, backupConnected);
+          return true;
+        }
+        
+        // Last resort: try ALL available relays
+        if (backupConnected.length === 0) {
+          console.log('No backup relays connected, trying all available relays as last resort');
+          
+          const allRelays = getAllRelays();
+          
+          // Try to connect to any available relay
+          for (const url of allRelays) {
+            if (instance.pool.getRelay(url)) continue; // Skip if already in pool
+            
+            try {
+                // Create a relay object and add it to the pool
+                const relayObj = createRelay(url);
+                await instance.pool.addRelay(relayObj);
+            } catch (e) {
+              // Don't log errors for last resort attempts
+            }
+          }
+          
+          // Final wait for connections
+          await new Promise(resolve => setTimeout(resolve, 3000));
+          
+          const finalConnected: string[] = [];
+          instance.pool.relays.forEach((relay, url) => {
+            if (relay.status === 1) {
+              finalConnected.push(url);
+            }
+          });
+              
+          connectedRelays.current = finalConnected;
+          
+          if (finalConnected.length > 0) {
+            console.log(`Connected to ${finalConnected.length} relays (last resort):`, finalConnected);
+            return true;
+          }
+        }
       }
       
-      return connected.length > 0;
+      return connectedRelays.current.length > 0;
     } catch (error) {
       console.error('Error connecting to relays:', error);
       return connectedRelays.current.length > 0;
@@ -208,14 +259,25 @@ export const NostrProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const reconnect = useCallback(async (): Promise<boolean> => {
     if (!ndkInstance.current) {
       console.warn('NDK not initialized, cannot reconnect');
+      // Try to create a new instance as a recovery mechanism
+      try {
+        const newInstance = createNDKInstance();
+        ndkInstance.current = newInstance;
+        setNdk(newInstance);
+        const connected = await connectToRelays(newInstance);
+        setNdkReady(connected);
+        return connected;
+      } catch (e) {
+        console.error('Failed to create new NDK instance during reconnect:', e);
       return false;
+      }
     }
     
     console.log('Attempting to reconnect to Nostr relays...');
     const instance = ndkInstance.current;
     
     try {
-      // Close existing connections first - fix for Map structure
+      // Close existing connections first
       instance.pool.relays.forEach(relay => {
         try {
           relay.disconnect();
@@ -225,17 +287,21 @@ export const NostrProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       });
       
       // Wait a moment for connections to close
-      await new Promise(resolve => setTimeout(resolve, 300));
+      await new Promise(resolve => setTimeout(resolve, 500));
       
-      // Connect again
-      const connected = await connectToRelays(instance);
+      // Connect again with extended timeout
+      const connected = await Promise.race([
+        connectToRelays(instance),
+        new Promise<boolean>(resolve => setTimeout(() => resolve(false), 10000))
+      ]);
+      
       setNdkReady(connected);
       return connected;
     } catch (error) {
       console.error('Reconnection failed:', error);
       return false;
     }
-  }, [connectToRelays]);
+  }, [connectToRelays, createNDKInstance]);
 
   // Initialize NDK instance
   useEffect(() => {
@@ -284,10 +350,14 @@ export const NostrProvider: React.FC<{ children: ReactNode }> = ({ children }) =
           }
         }
         
+        // Always set NDK instance and mark as ready, even if we couldn't connect to relays
+        // This allows components to use the NDK instance and implement their own retry logic
+        setNdk(instance);
+        setNdkReady(true);
+        
         if (connected) {
-          setNdk(instance);
-          setNdkReady(true);
-
+          console.log('Successfully connected to Nostr relays');
+          
           // Check if user was previously logged in
           const savedNpub = localStorage.getItem('nostr_npub');
           if (savedNpub) {
@@ -315,13 +385,16 @@ export const NostrProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         } else {
           // If we couldn't connect, still set initialized to prevent infinite retries
           console.warn('Could not connect to any relays, using NDK in offline mode');
-          setNdkReady(false);
+          // Still mark as ready to allow components to implement their own retry logic
+          setNdkReady(true);
         }
         
         setInitialized(true);
       } catch (error) {
         console.error('Failed to initialize NDK:', error);
-        setNdkReady(false);
+        // Still set NDK as ready even if initialization had issues
+        // Components can implement their own retry mechanisms
+        setNdkReady(true);
         setInitialized(true); // Mark as initialized even on error to prevent retries
       } finally {
         isConnecting.current = false;
