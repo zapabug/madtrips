@@ -97,13 +97,35 @@ export default function DiagnosisPage() {
   };
 
   const runBrowserDiagnostic = () => {
-    // This will be executed in the browser console
-    const script = document.createElement('script');
-    script.src = '/diagnosis.js';
-    document.body.appendChild(script);
-    
-    // Show a message to the user
-    alert('Browser diagnostic script loaded. Check your browser console for results.');
+    // Use the diagnosis API endpoint directly instead of injecting scripts
+    fetch('/api/diagnosis/browser', {
+      method: 'POST', 
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ 
+        userAgent: navigator.userAgent,
+        screenSize: { 
+          width: window.innerWidth, 
+          height: window.innerHeight 
+        }
+      })
+    })
+    .then(response => response.json())
+    .then(data => {
+      // Display results in a modal or in the diagnostic results section
+      if (data.success) {
+        setClientChecks(prevState => ({
+          ...prevState,
+          browserResults: data.results
+        }));
+      } else {
+        setError(`Browser diagnostic failed: ${data.error}`);
+      }
+    })
+    .catch(err => {
+      setError(`Browser diagnostic error: ${err.message}`);
+    });
   };
 
   const getStatusColor = (status: string) => {
@@ -144,12 +166,6 @@ export default function DiagnosisPage() {
               className="bg-green-500 hover:bg-green-700 text-white font-bold py-2 px-4 rounded inline-block"
             >
               View Social Graph
-            </Link>
-            <Link 
-              href="/admin/socialgraph" 
-              className="bg-purple-500 hover:bg-purple-700 text-white font-bold py-2 px-4 rounded inline-block"
-            >
-              Go to Admin Page
             </Link>
             <Link 
               href="/api/socialgraph?update=true" 

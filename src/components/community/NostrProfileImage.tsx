@@ -36,11 +36,8 @@ export function NostrProfileImage({
             priority
             unoptimized
             onError={() => {
-              // Fallback for image load errors
-              if (profilePic !== '/assets/bitcoin.png') {
-                // Only set error if not already on fallback
-                console.log('Profile image failed to load, using fallback');
-              }
+              // Fallback silently when image fails to load
+              // (profilePic will already fall back to default when needed)
             }}
           />
         </div>

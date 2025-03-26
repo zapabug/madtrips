@@ -59,6 +59,23 @@ const convertGraphData = (data: GraphData) => {
   };
 };
 
+// Add this function to properly mark core nodes
+const markCoreNodes = (graphData: GraphData, coreNpubs: string[]) => {
+  // Create a set of core npubs for faster lookup
+  const coreNpubSet = new Set(coreNpubs);
+  
+  // Mark core nodes using the shared CORE_NPUBS array
+  graphData.nodes.forEach(node => {
+    if (node.npub && coreNpubSet.has(node.npub)) {
+      node.isCoreNode = true;
+      node.val = (node.val || 1) * 1.5;
+      node.color = BRAND_COLORS.bitcoinOrange; // Use brand color instead of hardcoded
+    }
+  });
+  
+  return graphData;
+};
+
 export const SocialGraph: React.FC<SocialGraphProps> = ({
   centerNpub = CORE_NPUBS[0],
   npubs = CORE_NPUBS,
@@ -69,7 +86,7 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
   data,
 }) => {
   const { ndk, getUserProfile, shortenNpub, reconnect, ndkReady } = useNostr();
-  const [graphData, setGraphData] = useState<GraphData | null>(data || null);
+  const [graph, setGraph] = useState<GraphData | null>(data || null);
   const [loading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
@@ -137,8 +154,7 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
       .d3Force('link', d3.forceLink(data.links).id((d: any) => d.id).strength(physics.linkStrength).distance(physics.linkDistance))
       .d3Force('center', d3.forceCenter())
       .d3Force('gravity', d3.forceManyBody().strength(physics.gravity))
-      .cooldownTicks(100)
-      .onEngineStop(() => console.log('Graph physics stabilized'));
+      .cooldownTicks(100);
       
     // Set alpha parameters for smoother animation
     const simulation = fg.d3Force() as d3.Simulation<any, any>;
@@ -161,8 +177,6 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
     addedPubkeys: Set<string>
   ): Promise<{ nodes: GraphNode[], links: GraphLink[] }> => {
     if (!ndk) return { nodes, links };
-    
-    console.log('Processing second-degree connections...');
     
     // Track pubkeys we're processing to avoid duplicates
     const processedForFollowers = new Set<string>();
@@ -255,8 +269,6 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
     
     // Now fetch profiles for second-degree connections
     if (secondDegreeConnections.size > 0) {
-      console.log(`Fetching ${secondDegreeConnections.size} second-degree profiles...`);
-      
       const secondDegreeArray = Array.from(secondDegreeConnections);
       
       // Process in batches to not overwhelm the system
@@ -310,7 +322,7 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
   // Fetch network data from Nostr - prioritizing real data only
   const fetchNostrData = useCallback(async () => {
     if (fetchInProgress.current) {
-      console.log('Fetch already in progress, skipping duplicate request');
+      // Skip if already fetching to prevent duplicate requests
       return;
     }
     
@@ -319,23 +331,21 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
     setError(null);
     
     // Start with empty graph
-    setGraphData({
+    setGraph({
       nodes: [],
       links: []
     });
     
-    if (!ndk) {
-      setError("Nostr connection not available. Please try again later.");
-      setIsLoading(false);
-      fetchInProgress.current = false;
-      return;
-    }
-    
-    // Try to connect to relays if not already connected
-    const hasConnectedRelays = Array.from(ndk.pool.relays.values()).some(relay => relay.status === 1);
-    if (!hasConnectedRelays) {
-      console.log('No connected relays found, attempting to reconnect...');
+    if (!ndk || !ndkReady) {
+      // No NDK instance or not connected
+      // Attempt to reconnect to relays before continuing
       await reconnect();
+      
+      if (!ndk) {
+        setError('Nostr client not available');
+        setIsLoading(false);
+        return;
+      }
     }
     
     try {
@@ -343,24 +353,21 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
       const pubkeyMap = new Map<string, string>();
       const coreKeys = npubs.map(npub => {
         try {
-          if (npub.startsWith('npub1')) {
-            const { data } = nip19.decode(npub);
-            const pubkey = data as string;
-            pubkeyMap.set(pubkey, npub);
-            return pubkey;
+          if (npub.startsWith('npub')) {
+            const decoded = nip19.decode(npub);
+            const hexKey = decoded.data as string;
+            pubkeyMap.set(hexKey, npub);
+            return hexKey;
           }
           return npub;
-        } catch (e) {
-          console.error('Invalid npub:', npub, e);
-          return null;
+        } catch (error) {
+          return '';
         }
-      }).filter(Boolean) as string[];
+      }).filter(key => key !== '');
       
       if (coreKeys.length === 0) {
         throw new Error('No valid npubs provided');
       }
-      
-      console.log('SocialGraph: Fetching profiles for', coreKeys.length, 'core users');
       
       // Track all pubkeys we add to graph
       const addedPubkeys = new Set<string>(coreKeys);
@@ -371,72 +378,100 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
       const nodeImagesMap = new Map<string, HTMLImageElement>();
       
       // STEP 1: Fetch core profiles
-      const coreProfilePromises = coreKeys.map(async (pubkey) => {
-        const npub = pubkeyMap.get(pubkey) || nip19.npubEncode(pubkey);
-        try {
-          const profile = await getUserProfile(npub);
-          
-          // Preload image for smoother rendering
-          let pictureUrl = profile?.picture || DEFAULT_PROFILE_IMAGE;
-          if (pictureUrl && !/^https?:\/\//i.test(pictureUrl)) {
-            pictureUrl = DEFAULT_PROFILE_IMAGE;
+      const fetchCoreProfiles = async (
+        coreKeys: string[]
+      ): Promise<GraphNode[]> => {
+        // Fetch basic profile info for our core nodes
+        const nodes: GraphNode[] = [];
+        
+        // Create a copy to modify core keys
+        const coreKeysToProcess = [...coreKeys];
+        
+        // Convert npubs to hex pubkeys if needed
+        const coreHexKeys: string[] = await Promise.all(
+          coreKeysToProcess.map(async (key) => {
+            if (key.startsWith('npub')) {
+              try {
+                const decoded = nip19.decode(key);
+                return decoded.data as string;
+              } catch (e) {
+                return '';
+              }
+            }
+            return key;
+          })
+        );
+        
+        // Filter out any invalid keys
+        const validHexKeys = coreHexKeys.filter(key => key !== '');
+        
+        // Fetch profiles for valid keys
+        const profilePromises = validHexKeys.map(async (pubkey) => {
+          try {
+            const profile = await getUserProfile(pubkeyMap.get(pubkey) || nip19.npubEncode(pubkey));
+            
+            // Preload image for smoother rendering
+            let pictureUrl = profile?.picture || DEFAULT_PROFILE_IMAGE;
+            if (pictureUrl && !/^https?:\/\//i.test(pictureUrl)) {
+              pictureUrl = DEFAULT_PROFILE_IMAGE;
+            }
+            
+            const img = new Image();
+            img.src = pictureUrl;
+            nodeImagesMap.set(pubkey, img);
+            
+            return {
+              id: pubkey,
+              pubkey,
+              npub: pubkeyMap.get(pubkey) || nip19.npubEncode(pubkey),
+              name: profile?.displayName || profile?.name || shortenNpub(pubkey),
+              picture: pictureUrl,
+              isCoreNode: true,
+              val: 20, // Larger size for core nodes
+              color: BRAND_COLORS.bitcoinOrange
+            };
+          } catch (err) {
+            console.error(`Error fetching profile for ${pubkey}:`, err);
+            
+            return {
+              id: pubkey,
+              pubkey,
+              npub: pubkeyMap.get(pubkey) || nip19.npubEncode(pubkey),
+              name: shortenNpub(pubkey),
+              picture: DEFAULT_PROFILE_IMAGE,
+              isCoreNode: true,
+              val: 20,
+              color: BRAND_COLORS.bitcoinOrange
+            };
           }
-          
-          const img = new Image();
-          img.src = pictureUrl;
-          nodeImagesMap.set(npub, img);
-          
-          return {
-            id: pubkey,
-            pubkey,
-            npub,
-            name: profile?.displayName || profile?.name || shortenNpub(npub),
-            picture: pictureUrl,
-            isCoreNode: true,
-            val: 20, // Larger size for core nodes
-            color: BRAND_COLORS.bitcoinOrange
-          };
-        } catch (err) {
-          console.error(`Error fetching profile for ${npub}:`, err);
-          
-          return {
-            id: pubkey,
-            pubkey,
-            npub,
-            name: shortenNpub(npub),
-            picture: DEFAULT_PROFILE_IMAGE,
-            isCoreNode: true,
-            val: 20,
-            color: BRAND_COLORS.bitcoinOrange
-          };
-        }
-      });
+        });
+        
+        const profileResults = await Promise.allSettled(profilePromises);
+        
+        profileResults.forEach(result => {
+          if (result.status === 'fulfilled') {
+            nodes.push(result.value);
+          }
+        });
+        
+        return nodes;
+      };
       
-      // Wait for all core profiles
-      const coreProfiles = await Promise.allSettled(coreProfilePromises);
+      const coreProfiles = await fetchCoreProfiles(coreKeys);
       
       // Add core nodes to graph
-      coreProfiles.forEach(result => {
-        if (result.status === 'fulfilled') {
-          nodes.push(result.value);
-        }
-      });
-      
-      // Update graph with core nodes first so users see something quickly
-      setGraphData({
-        nodes: [...nodes],
+      setGraph({
+        nodes: [...coreProfiles],
         links: []
       });
       setNodeImages(nodeImagesMap);
       
       // STEP 2: Get direct connections for core nodes
-      console.log('Fetching direct connections for core nodes');
-      
       // Track first-degree connections to process later
       const firstDegreeConnections = new Set<string>();
       
       // Process core nodes in sequence to avoid overwhelming relays
-      for (const coreNode of nodes) {
+      for (const coreNode of coreProfiles) {
         try {
           // Fetch contacts with timeout
           const contactsEvents = await Promise.race([
@@ -505,8 +540,8 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
           }
           
           // Update the graph progressively to show connections forming
-          setGraphData({
-            nodes: [...nodes],
+          setGraph({
+            nodes: [...coreProfiles],
             links: [...links]
           });
         } catch (e) {
@@ -516,8 +551,6 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
       
       // STEP 3: Get profiles for first-degree connections
       if (firstDegreeConnections.size > 0) {
-        console.log(`Fetching profiles for ${firstDegreeConnections.size} first-degree connections`);
-        
         const firstDegreeArray = Array.from(firstDegreeConnections);
         
         // Process in batches to avoid overwhelming system
@@ -576,8 +609,8 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
           });
           
           // Show first-degree nodes as they're processed
-          setGraphData({
-            nodes: [...nodes],
+          setGraph({
+            nodes: [...coreProfiles],
             links: [...links]
           });
           setNodeImages(nodeImagesMap);
@@ -595,15 +628,15 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
           
         // Final graph update with all nodes and links
         setNodeImages(nodeImagesMap);
-        setGraphData({
+        setGraph({
           nodes: updatedNodes,
           links: updatedLinks
         });
       } else {
         // If no first-degree connections found
-        setGraphData({
-          nodes,
-          links
+        setGraph({
+          nodes: coreProfiles,
+          links: []
         });
       }
       
@@ -617,12 +650,83 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
     }
   }, [ndk, npubs, maxConnections, getUserProfile, reconnect, shortenNpub, processSecondDegreeConnections]);
 
+  // Process graph data on mount or when data changes
+  useEffect(() => {
+    const processData = async () => {
+      if (fetchInProgress.current) return;
+      
+      try {
+        setError('');
+        setIsLoading(true);
+        fetchInProgress.current = true;
+        
+        let graphData = data;
+        
+        if (!graphData) {
+          // Fetch from API if not provided directly
+          try {
+            const response = await fetch('/api/socialgraph');
+            if (!response.ok) {
+              throw new Error(`API responded with status ${response.status}`);
+            }
+            const responseData = await response.json();
+            graphData = responseData.data;
+          } catch (err) {
+            setError('Failed to load social graph data from API');
+            setIsLoading(false);
+            fetchInProgress.current = false;
+            return;
+          }
+        }
+        
+        if (graphData && graphData.nodes && graphData.links) {
+          // Mark core nodes explicitly
+          graphData = markCoreNodes(graphData, npubs);
+          
+          // Find center node
+          const centerNodeId = centerNpub.startsWith('npub') 
+            ? nip19.decode(centerNpub).data.toString()
+            : centerNpub;
+          
+          const centerNode = graphData.nodes.find(node => 
+            node.id === centerNodeId || node.npub === centerNpub
+          );
+          
+          if (centerNode) {
+            // Pin the center node in the middle
+            if (typeof width === 'number' && typeof height === 'number') {
+              centerNode.fx = width / 2;
+              centerNode.fy = height / 2;
+            }
+            centerNode.val = (centerNode.val || 1) * 2;
+            centerNode.isCoreNode = true;
+          }
+          
+          // Process data for visualization
+          setGraph(graphData);
+          
+          // Initialize the force graph with the processed data
+          initializeForceGraph(graphData);
+        } else {
+          setError('Invalid social graph data format');
+        }
+      } catch (error) {
+        setError(`Error processing social graph: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      } finally {
+        setIsLoading(false);
+        fetchInProgress.current = false;
+      }
+    };
+    
+    processData();
+  }, [data, npubs, centerNpub, height, width, initializeForceGraph]);
+
   // Effect to initialize force graph when data changes
   useEffect(() => {
-    if (forceGraphRef.current && graphData && graphData.nodes.length > 0) {
-      initializeForceGraph(graphData);
+    if (forceGraphRef.current && graph && graph.nodes.length > 0) {
+      initializeForceGraph(graph);
     }
-  }, [graphData, initializeForceGraph]);
+  }, [graph, initializeForceGraph]);
 
   // Render appropriate UI based on loading/error state
   if (loading) {
@@ -663,7 +767,7 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
     );
   }
 
-  if (error && !graphData) {
+  if (error && !graph) {
     return (
       <div className={`flex flex-col items-center justify-center ${className}`} style={{ height, width }}>
         <div className="text-center p-6 bg-red-50 dark:bg-red-950 rounded-lg border border-red-200 dark:border-red-800 max-w-md">
@@ -782,9 +886,9 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
         )}
 
         <div className="w-full h-full">
-          {graphData && (
+          {graph && (
             <ForceGraph2D
-              graphData={convertGraphData(graphData) as any}
+              graphData={convertGraphData(graph) as any}
               nodeColor={(node: any) => node.color || BRAND_COLORS.lightSand}
               nodeVal={(node: any) => node.val || 1}
               linkColor={(link: any) => link.color || BRAND_COLORS.lightSand + '99'}

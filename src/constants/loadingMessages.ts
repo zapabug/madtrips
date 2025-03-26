@@ -2,10 +2,13 @@ export const LOADING_MESSAGES = {
   // graph loading messages
   GRAPH: [
     "Negotiating TLS handshakes with paranoid relays...",
+    "Bribing Madeira monk seals to fetch bytes...",
     "Brewing relay coffee in the protocol percolator...",
     "Riding NPUB submarines through relay channels...",
+    "Hitching a ride on digital levada waterways...",
     "Chasing kind:1 events through the stratosphere...",
     "Bribing NIP-05 validators for VIP access...",
+    "Hitching a ride on digital levada waterways...",
   ],
 
   // Feed-specific loading messages

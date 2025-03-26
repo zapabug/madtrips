@@ -13,6 +13,15 @@ export interface Package {
   duration: string;
   includes: string[];
   image?: string;
+  location?: string;
+  imageUrl?: string;
+  tags?: string[];
+  includesTransportation?: boolean;
+  includesFood?: boolean;
+  includesLodging?: boolean;
+  difficultyLevel?: string;
+  availability?: string[];
+  providerNpub: string; // Provider's Nostr public key
 }
 
 // Payment data

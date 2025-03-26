@@ -35,13 +35,8 @@ const NostrLoginButton: React.FC = memo(() => {
           darkMode: window.matchMedia('(prefers-color-scheme: dark)').matches,
           noBanner: true,
           methods: 'connect,extension,readOnly',
-          onAuth: (npub) => {
-            console.log('Auth successful:', npub);
+          onAuth: (npub: string) => {
             setLoginError(null);
-          },
-          onError: (err) => {
-            console.error('Nostr login error:', err);
-            setLoginError('Login failed');
           }
         });
         
@@ -49,7 +44,6 @@ const NostrLoginButton: React.FC = memo(() => {
         
         // Add event listener for auth events
         const handleAuth = (e: any) => {
-          console.log('Auth event:', e.detail);
           setLoginError(null);
           
           if (timeoutId) clearTimeout(timeoutId);
@@ -63,8 +57,7 @@ const NostrLoginButton: React.FC = memo(() => {
                 .then(() => {
                   setLoginError(null);
                 })
-                .catch(err => {
-                  console.error('Login failed:', err);
+                .catch(() => {
                   setLoginError('Login failed. Please try again.');
                 })
                 .finally(() => {
@@ -116,7 +109,6 @@ const NostrLoginButton: React.FC = memo(() => {
   // Memoize the handler to prevent recreating it on every render
   const handleLogin = useCallback(async () => {
     if (loginInProgress.current || isLoggingIn) {
-      console.log('Login already in progress, ignoring click');
       return;
     }
     
@@ -194,8 +186,7 @@ const NostrLoginButton: React.FC = memo(() => {
               .then(() => {
                 setLoginError(null);
               })
-              .catch(err => {
-                console.error('Login failed:', err);
+              .catch(() => {
                 setLoginError('Login failed. Please try again.');
               })
               .finally(() => {
@@ -211,7 +202,6 @@ const NostrLoginButton: React.FC = memo(() => {
         }, 1000);
       }
     } catch (error) {
-      console.error('Login action failed:', error);
       setIsLoggingIn(false);
       loginInProgress.current = false;
       authController.current = null;

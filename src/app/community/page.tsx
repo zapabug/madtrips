@@ -4,7 +4,7 @@ import React, { useEffect, useState, useCallback, memo } from 'react';
 import Link from 'next/link';
 import { SocialGraphVisualization } from '../../components/community/SocialGraphVisualization';
 import { NostrProfileImage } from '../../components/community/NostrProfileImage';
-import { NostrFeed } from '../../components/community/NostrFeed';
+import { NostrFeed } from '../../components/community/CommunityFeed';
 import { useNostr } from '../../lib/contexts/NostrContext';
 import { BRAND_COLORS } from '../../constants/brandColors';
 import MultiUserNostrFeed from '../../components/community/MultiUserNostrFeed';
@@ -98,23 +98,18 @@ export default function CommunityPage(): React.ReactElement {
     // Always try to reconnect when the page loads to ensure fresh relay connections
     const initializeNostr = async () => {
       try {
-        console.log('Community page: Initializing Nostr connections');
         const success = await reconnect();
         setConnected(success);
         
         if (!success) {
-          console.warn('Community page: Initial relay connection failed, retrying in 2s');
           // Try again after 2 seconds
           setTimeout(async () => {
             const retrySuccess = await reconnect();
             setConnected(retrySuccess);
-            if (!retrySuccess) {
-              console.error('Community page: Failed to connect to relays after retry');
-            }
           }, 2000);
         }
       } catch (err) {
-        console.error('Community page: Error initializing Nostr:', err);
+        // Error handled silently
       }
     };
     
@@ -126,9 +121,8 @@ export default function CommunityPage(): React.ReactElement {
     if (!ndkReady && !connected) {
       reconnect().then(success => {
         setConnected(success);
-        console.log('Community page: Reconnection attempt result:', success);
-      }).catch(err => {
-        console.warn('Community page: Failed to reconnect to Nostr relays:', err);
+      }).catch(() => {
+        // Error handled silently
       });
     }
   }, [ndkReady, reconnect, connected]);

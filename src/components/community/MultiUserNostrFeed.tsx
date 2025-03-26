@@ -10,8 +10,8 @@ import { NDKEvent, NDKFilter } from '@nostr-dev-kit/ndk';
 interface MultiUserNostrFeedProps {
   npubs: string[];
   limit?: number;
-  autoScroll?: boolean;
-  scrollInterval?: number;
+  rotationInterval?: number; // Time in ms between image rotations
+  minImages?: number; // Minimum images to display
 }
 
 // Define the note interface
@@ -31,21 +31,67 @@ interface Note {
 
 export const MultiUserNostrFeed: React.FC<MultiUserNostrFeedProps> = ({ 
   npubs, 
-  limit = 25,
-  autoScroll = true,
-  scrollInterval = 3000
+  limit = 50,
+  rotationInterval = 5000, // Default to 5 seconds rotation
+  minImages = 10,
 }) => {
   const { ndk, getUserProfile, shortenNpub, reconnect, ndkReady } = useNostr();
   const [notes, setNotes] = useState<Note[]>([]);
+  const [filteredImageNotes, setFilteredImageNotes] = useState<Note[]>([]);
+  const [currentImageIndex, setCurrentImageIndex] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [retryCount, setRetryCount] = useState(0);
+  const [isTransitioning, setIsTransitioning] = useState(false);
   
-  // References for auto-scrolling and feed container
-  const autoScrollRef = useRef<number | null>(null);
-  const feedContainerRef = useRef<HTMLDivElement>(null);
-  const isPauseScrollingRef = useRef<boolean>(false);
+  const rotationTimerRef = useRef<number | null>(null);
   const fetchInProgress = useRef<boolean>(false);
+  
+  // After notes are loaded, filter only those with images
+  useEffect(() => {
+    const notesWithImages = notes.filter(note => note.images && note.images.length > 0);
+    setFilteredImageNotes(notesWithImages);
+    
+    // Reset the image index when the filtered notes change
+    if (notesWithImages.length > 0) {
+      setCurrentImageIndex(0);
+    }
+  }, [notes]);
+  
+  // Handle image transitions with animation
+  const transitionToNextImage = useCallback((nextIndex: number) => {
+    if (nextIndex === currentImageIndex) return;
+    
+    setIsTransitioning(true);
+    setTimeout(() => {
+      setCurrentImageIndex(nextIndex);
+      // Short delay to ensure the new image is rendered before removing the transition effect
+      setTimeout(() => setIsTransitioning(false), 50);
+    }, 300); // Match this with the CSS transition duration
+  }, [currentImageIndex]);
+  
+  // Setup image rotation
+  useEffect(() => {
+    if (filteredImageNotes.length === 0) return;
+    
+    // Clear any existing timer
+    if (rotationTimerRef.current) {
+      window.clearInterval(rotationTimerRef.current);
+    }
+    
+    // Set up the rotation timer
+    rotationTimerRef.current = window.setInterval(() => {
+      const nextIndex = (currentImageIndex + 1) % filteredImageNotes.length;
+      transitionToNextImage(nextIndex);
+    }, rotationInterval);
+    
+    // Cleanup function
+    return () => {
+      if (rotationTimerRef.current) {
+        window.clearInterval(rotationTimerRef.current);
+      }
+    };
+  }, [filteredImageNotes, rotationInterval, currentImageIndex, transitionToNextImage]);
   
   // Fetch notes with retry mechanism
   const fetchNotes = useCallback(async (forceRefresh = false) => {
@@ -131,7 +177,7 @@ export const MultiUserNostrFeed: React.FC<MultiUserNostrFeedProps> = ({
       const filter: NDKFilter = {
         kinds: [1], // Text notes
         authors: pubkeys,
-        limit: limit * 2 // Fetch more to allow for filtering
+        limit: limit * 3 // Fetch 3x requested limit to ensure enough images
       };
       
       console.log('Fetching events with filter:', filter);
@@ -180,18 +226,21 @@ export const MultiUserNostrFeed: React.FC<MultiUserNostrFeedProps> = ({
           });
         }
         
-        // Extract image URLs first to filter out events without images if needed
+        // Extract image URLs to filter out events without images
         const extractedImages = extractImageUrls(event.content || '');
         
-        processedNotes.push({
-          id: event.id || '', 
-          created_at: event.created_at || 0,
-          content: stripLinks(event.content || ''),
-          pubkey: event.pubkey,
-          npub: npub,
-          author: {}, // Will be populated later
-          images: extractedImages
-        });
+        // Only add notes that have images
+        if (extractedImages.length > 0) {
+          processedNotes.push({
+            id: event.id || '', 
+            created_at: event.created_at || 0,
+            content: stripLinks(event.content || ''),
+            pubkey: event.pubkey,
+            npub: npub,
+            author: {}, // Will be populated later
+            images: extractedImages
+          });
+        }
       }
       
       // Fetch all profiles in parallel with timeout safety
@@ -261,72 +310,25 @@ export const MultiUserNostrFeed: React.FC<MultiUserNostrFeedProps> = ({
       return () => clearTimeout(timer);
     }
   }, [ndkReady, reconnect, retryCount]);
-  
-  // Handle auto-scrolling
+
+  // Add this after the existing useEffects
   useEffect(() => {
-    if (!autoScroll || notes.length === 0 || !feedContainerRef.current) {
-      return;
-    }
-    
-    const handleTouch = () => {
-      // Pause auto-scrolling when user interacts
-      isPauseScrollingRef.current = true;
-      
-      // Resume after 5 seconds of inactivity
-      setTimeout(() => {
-        isPauseScrollingRef.current = false;
-      }, 5000);
-    };
-    
-    // Add event listeners
-    const containerEl = feedContainerRef.current;
-    containerEl.addEventListener('touchstart', handleTouch, { passive: true });
-    containerEl.addEventListener('mousedown', handleTouch, { passive: true });
-    
-    // Set up auto-scrolling interval
-    autoScrollRef.current = window.setInterval(() => {
-      if (isPauseScrollingRef.current || !containerEl) {
-        return;
+    const refreshInterval = 180000; // Refresh every 180 seconds
+    const interval = setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        fetchNotes(true);
       }
-      
-      const scrollPosition = containerEl.scrollTop;
-      const scrollHeight = containerEl.scrollHeight;
-      const clientHeight = containerEl.clientHeight;
-      
-      // If we're near the end, scroll back to start
-      if (scrollPosition + clientHeight >= scrollHeight - 50) {
-        containerEl.scrollTo({
-          top: 0,
-          behavior: 'smooth'
-        });
-      } else {
-        // Otherwise scroll down a bit
-        containerEl.scrollBy({
-          top: 150,
-          behavior: 'smooth'
-        });
-      }
-    }, scrollInterval);
-    
-    // Cleanup function
-    return () => {
-      if (containerEl) {
-        containerEl.removeEventListener('touchstart', handleTouch);
-        containerEl.removeEventListener('mousedown', handleTouch);
-      }
-      
-      if (autoScrollRef.current) {
-        window.clearInterval(autoScrollRef.current);
-      }
-    };
-  }, [notes, autoScroll, scrollInterval]);
+    }, refreshInterval);
+
+    return () => clearInterval(interval);
+  }, [fetchNotes]);
 
   return (
-    <div className="w-full" ref={feedContainerRef}>
-      {loading && notes.length === 0 && (
+    <div className="w-full">
+      {loading && filteredImageNotes.length === 0 && (
         <div className="flex justify-center items-center h-32">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-bitcoin"></div>
-          <p className="ml-3 text-bitcoin">Loading posts from Nostr...</p>
+          <p className="ml-3 text-bitcoin">Loading images from Nostr...</p>
         </div>
       )}
       
@@ -342,81 +344,87 @@ export const MultiUserNostrFeed: React.FC<MultiUserNostrFeedProps> = ({
         </div>
       )}
       
-      {!loading && !error && notes.length === 0 && (
+      {!loading && !error && filteredImageNotes.length === 0 && (
         <div className="text-center p-6 bg-gray-50 dark:bg-gray-800 rounded-lg">
-          <p className="text-gray-600 dark:text-gray-300">No posts found from these users</p>
+          <p className="text-gray-600 dark:text-gray-300">No images found from these users</p>
         </div>
       )}
       
-      <div
-        className={`grid grid-cols-1 gap-4 md:${
-          autoScroll ? "flex md:flex-nowrap md:space-x-4 overflow-x-auto" : "grid-cols-2 xl:grid-cols-3"
-        }`}
-      >
-        {notes.map(note => (
-          <div key={note.id} className="bg-white dark:bg-gray-800 rounded-lg shadow p-4 border border-gray-200 dark:border-gray-700">
-            <div className="flex flex-col w-full">
-              <div className="flex items-center mb-3">
-                <div className="w-12 h-12 rounded-full overflow-hidden mr-3 relative border-2 border-bitcoin">
-                  <Image 
-                    src={note.author.picture || '/assets/bitcoin.png'} 
-                    alt="Profile"
-                    width={48}
-                    height={48}
-                    className="object-cover"
-                    priority={true}
-                    onError={(e) => {
-                      // If image fails to load, replace with default
-                      (e.target as HTMLImageElement).src = '/assets/bitcoin.png';
-                    }}
-                  />
-                </div>
-                <div>
-                  <p className="text-xs text-gray-500 dark:text-gray-400">
-                    {new Date(note.created_at * 1000).toLocaleString(undefined, {
-                      month: 'short',
-                      day: 'numeric',
-                      hour: '2-digit',
-                      minute: '2-digit'
-                    })}
-                  </p>
-                </div>
+      {filteredImageNotes.length > 0 && currentImageIndex < filteredImageNotes.length && (
+        <div className="relative rounded-lg overflow-hidden w-full aspect-video bg-gray-800">
+          {/* Main image with animation */}
+          <div 
+            className="relative w-full h-full transition-all duration-500 ease-[cubic-bezier(0.4,0,0.2,1)]"
+            style={{ 
+              transform: `translateX(${isTransitioning ? '-20px' : '0px'})`,
+              opacity: isTransitioning ? 0 : 1
+            }}
+          >
+            <Image 
+              src={filteredImageNotes[currentImageIndex].images[0]} 
+              alt="Nostr image"
+              fill
+              sizes="100vw"
+              priority={true}
+              className="object-contain"
+              onError={(e) => {
+                // Handle image loading error
+                (e.target as HTMLImageElement).src = '/assets/bitcoin.png';
+              }}
+            />
+            
+            {/* Author profile overlay */}
+            <a 
+              href={`https://njump.me/${filteredImageNotes[currentImageIndex].npub}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="absolute bottom-4 left-4 flex items-center bg-black/50 backdrop-blur-sm p-2 rounded-full hover:bg-black/70 transition-colors"
+            >
+              <div className="w-10 h-10 rounded-full overflow-hidden border-2 border-bitcoin">
+                <Image 
+                  src={filteredImageNotes[currentImageIndex].author.picture || '/assets/bitcoin.png'} 
+                  alt={filteredImageNotes[currentImageIndex].author.displayName || "Profile"}
+                  width={40}
+                  height={40}
+                  className="object-cover"
+                  onError={(e) => {
+                    // If profile image fails to load, replace with default
+                    (e.target as HTMLImageElement).src = '/assets/bitcoin.png';
+                  }}
+                />
               </div>
-              
-              <p className="text-gray-800 dark:text-gray-200 text-sm mb-3">{note.content}</p>
-              
-              {note.images.length > 0 && (
-                <div className="mt-2">
-                  <div className="relative w-full h-48 rounded-lg overflow-hidden">
-                    <Image 
-                      src={note.images[0]} 
-                      alt="Note image"
-                      fill
-                      sizes="(max-width: 768px) 100vw, 50vw"
-                      className="object-cover"
-                      onError={(e) => {
-                        // Handle image loading error by using a fallback instead of hiding
-                        const imgElement = e.target as HTMLImageElement;
-                        imgElement.src = '/assets/bitcoin.png';
-                        // Add a small label to indicate it's a fallback
-                        const parent = imgElement.parentElement;
-                        if (parent) {
-                          const label = document.createElement('div');
-                          label.className = 'absolute bottom-0 right-0 bg-black/50 text-white text-xs p-1';
-                          label.textContent = 'Image unavailable';
-                          parent.appendChild(label);
-                        }
-                      }}
-                    />
-                  </div>
-                </div>
-              )}
-            </div>
+              <div className="ml-2 text-white">
+                <p className="font-medium">
+                  {filteredImageNotes[currentImageIndex].author.displayName || 
+                   filteredImageNotes[currentImageIndex].author.name || 
+                   shortenNpub(filteredImageNotes[currentImageIndex].npub)}
+                </p>
+                <p className="text-xs opacity-80">
+                  {new Date(filteredImageNotes[currentImageIndex].created_at * 1000).toLocaleDateString()}
+                </p>
+              </div>
+            </a>
           </div>
-        ))}
-      </div>
+          
+          {/* Image navigation dots */}
+          <div className="absolute bottom-4 right-4 flex space-x-2">
+            {filteredImageNotes.map((_, index) => (
+              <button
+                key={index}
+                onClick={() => transitionToNextImage(index)}
+                className={`w-2 h-2 rounded-full transition-all duration-300 ${
+                  index === currentImageIndex 
+                    ? 'bg-bitcoin scale-125' 
+                    : 'bg-gray-400/50 hover:bg-gray-400'
+                }`}
+                aria-label={`Go to image ${index + 1}`}
+              />
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 };
 
-export default MultiUserNostrFeed; 
+export default MultiUserNostrFeed;

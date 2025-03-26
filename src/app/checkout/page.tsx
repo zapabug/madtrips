@@ -11,7 +11,7 @@ import { useCheckoutFlow } from '../../hooks/useCheckoutFlow';
 import Link from 'next/link';
 
 export default function CheckoutPage() {
-  const { user, loginMethod } = useNostr();
+  const { user } = useNostr();
   const [isFullyAuthenticated, setIsFullyAuthenticated] = useState(false);
   const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<PaymentMethod>('lightning');
   
@@ -187,7 +187,7 @@ export default function CheckoutPage() {
               {/* Messaging */}
               <div className="mb-6">
                 <NostrMessageThread
-                  providerNpub={items.length > 0 ? 'npub1madprovider12345abcdefghijklmnopqrstuvwxyz0123456789abcdef' : undefined}
+                  providerNpub={items.length > 0 ? items[0].package.providerNpub : undefined}
                   onSendMessage={sendMessage}
                 />
               </div>
@@ -203,7 +203,7 @@ export default function CheckoutPage() {
               {/* Payment messages only */}
               <div className="mt-6">
                 <NostrMessageThread
-                  providerNpub={items.length > 0 ? 'npub1madprovider12345abcdefghijklmnopqrstuvwxyz0123456789abcdef' : undefined}
+                  providerNpub={items.length > 0 ? items[0].package.providerNpub : undefined}
                   onlyShowPaymentMessages={true}
                 />
               </div>

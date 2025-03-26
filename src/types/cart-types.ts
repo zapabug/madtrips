@@ -51,4 +51,4 @@ export interface CartState {
   
   // Cart expiry (if user doesn't complete payment within a certain time)
   expiryDate?: Date;
-} 
+}

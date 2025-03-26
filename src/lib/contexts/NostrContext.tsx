@@ -116,8 +116,6 @@ export const NostrProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     connectedRelays.current = [];
 
     try {
-      console.log('Connecting to Nostr relays...');
-      
       // First, explicitly disconnect from any existing relays to reset connections
       instance.pool.relays.forEach((relay) => {
         try {
@@ -149,7 +147,6 @@ export const NostrProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       connectedRelays.current = connected;
       
       if (connected.length > 0) {
-        console.log(`Connected to ${connected.length} Nostr relays:`, connected);
         return true;
       }
       
@@ -359,28 +356,30 @@ export const NostrProvider: React.FC<{ children: ReactNode }> = ({ children }) =
           console.log('Successfully connected to Nostr relays');
           
           // Check if user was previously logged in
-          const savedNpub = localStorage.getItem('nostr_npub');
-          if (savedNpub) {
-            try {
-              // Create user from npub
-              const { data } = nip19.decode(savedNpub);
-              const ndkUser = new NDKUser({ pubkey: data as string });
-              ndkUser.ndk = instance;
-              
-              setUser(ndkUser);
-              setIsLoggedIn(true);
-              
-              // Fetch user profile
-              const profile = await fetchUserProfile(instance, ndkUser);
-              if (profile) {
-                setUserProfile(profile);
+          try {
+            const savedNpub = localStorage.getItem('nostr_npub');
+            if (savedNpub && savedNpub.startsWith('npub')) {
+              try {
+                // Create user from npub
+                const { data } = nip19.decode(savedNpub);
+                const ndkUser = new NDKUser({ pubkey: data as string });
+                ndkUser.ndk = instance;
+                
+                setUser(ndkUser);
+                setIsLoggedIn(true);
+                
+                // Fetch user profile
+                const profile = await fetchUserProfile(instance, ndkUser);
+                if (profile) {
+                  setUserProfile(profile);
+                }
+              } catch (error) {
+                // Handle decode error silently
+                localStorage.removeItem('nostr_npub');
               }
-              
-              console.log('Restored Nostr user from local storage');
-            } catch (error) {
-              console.error('Failed to restore Nostr user:', error);
-              localStorage.removeItem('nostr_npub');
             }
+          } catch (storageError) {
+            // Handle localStorage errors silently
           }
         } else {
           // If we couldn't connect, still set initialized to prevent infinite retries

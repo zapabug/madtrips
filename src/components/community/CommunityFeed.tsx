@@ -6,7 +6,7 @@ import { NDKEvent, NDKSubscription, NDKFilter } from '@nostr-dev-kit/ndk';
 import { nip19 } from 'nostr-tools';
 import Image from 'next/image';
 import { 
-  CORE_NPUBS, 
+  CORE_NPUBS,
   POPULAR_HASHTAGS, 
   stripLinks, 
   extractImageUrls, 
