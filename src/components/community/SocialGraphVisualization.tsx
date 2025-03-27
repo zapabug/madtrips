@@ -1,14 +1,17 @@
 'use client'
 
-import React, { useEffect, useState } from 'react'
+import React from 'react'
 import { SocialGraph } from './SocialGraph'
 import { CORE_NPUBS } from './utils'
+import { ClearGraphCache } from './ClearGraphCache'
 
 // Component props
 interface SocialGraphVisualizationProps {
   height?: number | string
   width?: number | string
   className?: string
+  title?: string
+  description?: string
 }
 
 // Main component
@@ -16,14 +19,19 @@ export const SocialGraphVisualization: React.FC<SocialGraphVisualizationProps> =
   height = 600,
   width = '100%',
   className = '',
+  title = 'Bitcoin Madeira Community Graph',
+  description = 'Visual representation of connections between Bitcoin community members in Madeira.'
 }) => {
-  const [loading, setLoading] = useState(false)
-
-  // This component no longer needs to fetch data since SocialGraph will do it directly
-  // using NDK for live Nostr data instead of the API endpoint
-
   return (
-    <div className={className}>
+    <div 
+      className={`relative ${className}`} 
+      role="figure" 
+      aria-label={title}
+      title={title}
+    >
+      <div className="absolute top-2 right-2 z-10">
+        <ClearGraphCache buttonText="Clear Cache" />
+      </div>
       <SocialGraph 
         height={height} 
         width={width}

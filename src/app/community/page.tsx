@@ -54,17 +54,25 @@ CommunityUpdates.displayName = 'CommunityUpdates';
 const SocialGraphSection = memo(() => (
   <div className="mb-8 bg-white dark:bg-gray-800 rounded-lg shadow-lg p-4">
     <h3 className="text-2xl font-bold mb-4 text-sand bg-forest inline-block px-4 py-1 rounded-lg">Community Connections</h3>
-    <div className="h-[400px] w-full mb-4 border-2 border-forest rounded-lg overflow-hidden">
+    <div className="h-[450px] w-full mb-4 border-2 border-forest rounded-lg overflow-hidden">
       <SocialGraphVisualization 
-        height={400} 
+        height={450} 
         className="w-full h-full"
+        title="Bitcoin Madeira Social Graph"
+        description="Interactive visualization of community connections between Bitcoin adopters and supporters in Madeira."
       />
     </div>
     
-    <p className="text-gray-600 dark:text-gray-300 text-sm">
-      Discover how the Bitcoin Madeira community connects. This visualization shows relationships between community members,
-      highlighting Bitcoin advocates and businesses supporting adoption on the island.
-    </p>
+    <div className="text-gray-600 dark:text-gray-300 text-sm space-y-2">
+      <p>
+        <span className="font-medium text-forest">Discover the Bitcoin Madeira community</span> - This interactive visualization shows relationships between community members,
+        highlighting Bitcoin advocates and businesses supporting adoption on the island.
+      </p>
+      <p>
+        <span className="font-medium text-bitcoin">Pro tip:</span> Names only appear when you hover over a node. 
+        Core community members are marked with orange indicators. Click on a node to view detailed profile information.
+      </p>
+    </div>
   </div>
 ));
 

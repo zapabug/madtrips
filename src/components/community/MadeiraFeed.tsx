@@ -7,14 +7,8 @@ import { nip19 } from 'nostr-tools';
 import { NDKEvent, NDKFilter, NDKSubscription } from '@nostr-dev-kit/ndk';
 import { NostrProfileImage } from './NostrProfileImage';
 import { extractImageUrls, extractHashtags, stripLinks } from './utils';
-
-// Core npubs for the Madeira community
-const CORE_NPUBS = [
-  'npub1dxd02kcjhgpkyrx60qnkd6j42kmc72u5lum0rp2ud8x5zfhnk4zscjj6hh', // MadTrips
-  'npub1etgqcj9gc6yaxttuwu9eqgs3ynt2dzaudvwnrssrn2zdt2useaasfj8n6e', // Free Madeira
-  'npub1s0veng2gvfwr62acrxhnqexq76sj6ldg3a5t935jy8e6w3shr5vsnwrmq5', // Sovereign Individual
-  'npub1funchalx8v747rsee6ahsuyrcd2s3rnxlyrtumfex9lecpmgwars6hq8kc', // Funchal
-];
+import { CORE_NPUBS } from './utils'; // Import from the local file instead
+import { RELAYS } from '../../constants/relays'; // Import relay config
 
 // Madeira-related hashtags to filter by
 const MADEIRA_HASHTAGS = [
@@ -68,7 +62,7 @@ export const MadeiraFeed: React.FC<MadeiraFeedProps> = ({
   useCorePubs = true,
   className = ''
 }) => {
-  const { ndk, getUserProfile, shortenNpub, reconnect, ndkReady } = useNostr();
+  const { ndk, getUserProfile, shortenNpub, reconnect, ndkReady, getConnectedRelays } = useNostr();
   const [notes, setNotes] = useState<Note[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -78,8 +72,9 @@ export const MadeiraFeed: React.FC<MadeiraFeedProps> = ({
   
   const fetchInProgress = useRef<boolean>(false);
   const subscriptionRef = useRef<NDKSubscription | null>(null);
+  const isMounted = useRef<boolean>(false);
 
-  // Use the appropriate npubs list
+  // Use the appropriate npubs list - using canonical source
   const effectiveNpubs = useCorePubs 
     ? [...CORE_NPUBS, ...npubs] 
     : [...npubs];
@@ -92,16 +87,21 @@ export const MadeiraFeed: React.FC<MadeiraFeedProps> = ({
 
   // Fetch friends-of-friends for social graph extension
   const fetchSocialGraph = useCallback(async (coreNpubs: string[]): Promise<string[]> => {
-    if (!ndk) return [];
+    if (!ndk || !isMounted.current) return [];
+    
+    console.log("MadeiraFeed: Fetching social graph contacts from:", coreNpubs.map(npub => npub.substring(0, 10) + '...').join(', '));
     
     try {
       const extendedNpubs = new Set<string>(coreNpubs);
+      let contactsFound = 0;
       
       // For each core npub, get their contacts (NIP-02)
       for (const npub of coreNpubs) {
         try {
           // Decode npub to hex pubkey
           const { data: pubkey } = nip19.decode(npub);
+          
+          console.log(`MadeiraFeed: Fetching contacts for ${npub.substring(0, 10)}... (${(pubkey as string).substring(0, 8)}...)`);
           
           // Fetch kind 3 events (contact lists)
           const filter: NDKFilter = {
@@ -110,7 +110,12 @@ export const MadeiraFeed: React.FC<MadeiraFeedProps> = ({
             limit: 1 // Only need the latest contact list
           };
           
-          const events = await ndk.fetchEvents([filter]);
+          const events = await ndk.fetchEvents([filter], { closeOnEose: true });
+          
+          if (events.size === 0) {
+            console.log(`MadeiraFeed: No contacts found for ${npub.substring(0, 10)}...`);
+            continue;
+          }
           
           for (const event of events) {
             // Process tags to extract contact pubkeys
@@ -119,11 +124,16 @@ export const MadeiraFeed: React.FC<MadeiraFeedProps> = ({
               .map(tag => tag[1])
               .filter(Boolean);
             
+            console.log(`MadeiraFeed: Found ${contacts.length} contacts for ${npub.substring(0, 10)}...`);
+            
             // Convert hex pubkeys to npubs and add to set
             for (const contact of contacts) {
               try {
                 const contactNpub = nip19.npubEncode(contact);
-                extendedNpubs.add(contactNpub);
+                if (!extendedNpubs.has(contactNpub)) {
+                  extendedNpubs.add(contactNpub);
+                  contactsFound++;
+                }
               } catch (e) {
                 // Skip invalid pubkeys
               }
@@ -134,6 +144,7 @@ export const MadeiraFeed: React.FC<MadeiraFeedProps> = ({
         }
       }
       
+      console.log(`MadeiraFeed: Added ${contactsFound} unique contacts to social graph`);
       return Array.from(extendedNpubs);
     } catch (e) {
       console.error('Error fetching social graph:', e);
@@ -143,7 +154,7 @@ export const MadeiraFeed: React.FC<MadeiraFeedProps> = ({
 
   // Fetch notes with hashtag filtering
   const fetchNotes = useCallback(async (forceRefresh = false) => {
-    if (fetchInProgress.current) {
+    if (fetchInProgress.current || !isMounted.current) {
       return;
     }
     
@@ -180,10 +191,10 @@ export const MadeiraFeed: React.FC<MadeiraFeedProps> = ({
       }
     }
 
-    // Check if we have any connected relays
-    const hasConnectedRelays = Array.from(ndk.pool.relays.values()).some(relay => relay.status === 1);
+    // Check connected relays
+    const connectedRelays = getConnectedRelays();
     
-    if (!hasConnectedRelays) {
+    if (connectedRelays.length === 0) {
       setError("No connected relays. Attempting to reconnect...");
       
       const reconnected = await reconnect();
@@ -192,12 +203,17 @@ export const MadeiraFeed: React.FC<MadeiraFeedProps> = ({
         setLoading(false);
         return;
       }
+    } else {
+      // Log which relays we're connected to
+      console.log(`MadeiraFeed: Connected to ${connectedRelays.length} relays: ${connectedRelays.join(', ')}`);
     }
     
     setLoading(true);
     fetchInProgress.current = true;
     
     try {
+      console.log(`MadeiraFeed: Fetching from ${effectiveNpubs.length} npubs: ${effectiveNpubs.map(n => n.substring(0, 10) + '...').join(', ')}`);
+      
       // Convert npubs to hex pubkeys
       const pubkeys = effectiveNpubs.map(npub => {
         if (npub.startsWith('npub1')) {
@@ -234,18 +250,25 @@ export const MadeiraFeed: React.FC<MadeiraFeedProps> = ({
           return npub;
         }).filter(Boolean) as string[];
         
-        // Combine core pubkeys with social graph pubkeys
-        pubkeys.push(...socialPubkeys);
+        // Combine core pubkeys with social graph pubkeys (deduplicated)
+        const combinedPubkeys = new Set([...pubkeys, ...socialPubkeys]);
+        pubkeys.length = 0; // Clear the array
+        pubkeys.push(...Array.from(combinedPubkeys));
       }
+      
+      console.log(`MadeiraFeed: Using ${pubkeys.length} pubkeys for search`);
       
       // Create filter with hashtags
       const filter: NDKFilter = {
         kinds: [1], // Text notes
         authors: pubkeys,
-        limit: limit * 3 // Fetch more to allow for filtering
+        limit: limit * 4 // Fetch more to allow for filtering
       };
       
       const events = await ndk.fetchEvents([filter]);
+      console.log(`MadeiraFeed: Fetched ${events.size} events`);
+      
+      if (!isMounted.current) return;
       
       // Process events into notes
       const processedNotes: Note[] = [];
@@ -257,7 +280,7 @@ export const MadeiraFeed: React.FC<MadeiraFeedProps> = ({
         const npub = nip19.npubEncode(event.pubkey);
         const content = event.content || '';
         
-        // Check if the note contains any of the MADEIRA_HASHTAGS (case-insensitive)
+        // Extract hashtags from the content
         const eventHashtags = extractHashtags(content);
         
         // Only include notes with Madeira-related hashtags
@@ -302,6 +325,10 @@ export const MadeiraFeed: React.FC<MadeiraFeedProps> = ({
         });
       }
       
+      console.log(`MadeiraFeed: Found ${processedNotes.length} Madeira-related posts with images`);
+      
+      if (!isMounted.current) return;
+      
       // Fetch all profiles in parallel
       const fetchProfiles = async () => {
         try {
@@ -311,6 +338,8 @@ export const MadeiraFeed: React.FC<MadeiraFeedProps> = ({
               return [npub, profile];
             })
           );
+          
+          if (!isMounted.current) return [];
           
           // Create a map of npub to profile
           const profiles = Object.fromEntries(profileEntries);
@@ -345,9 +374,6 @@ export const MadeiraFeed: React.FC<MadeiraFeedProps> = ({
             delete noteCache[oldestKey];
           }
           
-          setNotes(sortedNotes);
-          setHasLoadedInitialNotes(true);
-          
           return sortedNotes;
         } catch (error) {
           console.error('Error fetching profiles:', error);
@@ -355,7 +381,12 @@ export const MadeiraFeed: React.FC<MadeiraFeedProps> = ({
         }
       };
       
-      await fetchProfiles();
+      const finalNotes = await fetchProfiles();
+      
+      if (!isMounted.current) return;
+      
+      setNotes(finalNotes);
+      setHasLoadedInitialNotes(true);
       setLoading(false);
       fetchInProgress.current = false;
       
@@ -363,24 +394,29 @@ export const MadeiraFeed: React.FC<MadeiraFeedProps> = ({
       if (!hasLoadedInitialNotes) {
         // Asynchronously load the social graph to extend our search
         fetchSocialGraph(effectiveNpubs).then(extendedNpubs => {
-          setSocialGraphNpubs(extendedNpubs);
+          if (isMounted.current) {
+            console.log(`MadeiraFeed: Extended social graph with ${extendedNpubs.length - effectiveNpubs.length} additional npubs`);
+            setSocialGraphNpubs(extendedNpubs);
+          }
         });
       }
     } catch (error) {
       console.error('Error fetching notes:', error);
-      setError('Failed to fetch posts. Please try again later.');
-      setLoading(false);
-      fetchInProgress.current = false;
+      if (isMounted.current) {
+        setError('Failed to fetch posts. Please try again later.');
+        setLoading(false);
+        fetchInProgress.current = false;
+      }
     }
   }, [
     ndk, effectiveNpubs, limit, getCacheKey, getUserProfile, 
     reconnect, hasLoadedInitialNotes, socialGraphNpubs, retryCount, 
-    fetchSocialGraph
+    fetchSocialGraph, getConnectedRelays
   ]);
 
   // Setup live subscription for real-time updates
   const setupSubscription = useCallback(() => {
-    if (!ndk || subscriptionRef.current) return;
+    if (!ndk || subscriptionRef.current || !isMounted.current) return;
     
     try {
       // Convert npubs to hex pubkeys for the filter
@@ -408,6 +444,8 @@ export const MadeiraFeed: React.FC<MadeiraFeedProps> = ({
       
       // Handle new events
       sub.on('event', async (event: NDKEvent) => {
+        if (!isMounted.current) return;
+        
         // Ignore events without pubkey
         if (!event.pubkey) return;
         
@@ -438,6 +476,8 @@ export const MadeiraFeed: React.FC<MadeiraFeedProps> = ({
         
         // Fetch profile for this author
         const profile = await getUserProfile(npub).catch(() => null);
+        
+        if (!isMounted.current) return;
         
         // Create the note object
         const newNote: Note = {
@@ -481,33 +521,109 @@ export const MadeiraFeed: React.FC<MadeiraFeedProps> = ({
     }
   }, [ndk, effectiveNpubs, socialGraphNpubs, getUserProfile]);
 
-  // Initial fetch and setup
+  // Setup effect to load data
   useEffect(() => {
-    if (ndkReady) {
+    // Set mounted flag
+    isMounted.current = true;
+    
+    // Initial fetch
+    if (ndkReady && !hasLoadedInitialNotes) {
+      // Make sure we're using the correct NPUBs
+      console.log(`MadeiraFeed: Using ${CORE_NPUBS.length} core NPUBs:`, CORE_NPUBS);
       fetchNotes();
-    }
-  }, [ndkReady, fetchNotes]);
-  
-  // Setup subscription after initial fetch
-  useEffect(() => {
-    if (ndkReady && hasLoadedInitialNotes) {
-      setupSubscription();
     }
     
     return () => {
+      // Clean up
+      isMounted.current = false;
+      
       if (subscriptionRef.current) {
         subscriptionRef.current.stop();
         subscriptionRef.current = null;
       }
     };
-  }, [ndkReady, hasLoadedInitialNotes, setupSubscription]);
+  }, [ndkReady, fetchNotes, hasLoadedInitialNotes]);
 
-  // Update social graph when we have new npubs
+  // Force refresh if social graph npubs change
   useEffect(() => {
-    if (socialGraphNpubs.length > 0 && ndkReady && hasLoadedInitialNotes) {
-      fetchNotes(true);
+    if (hasLoadedInitialNotes && socialGraphNpubs.length > 0) {
+      console.log(`MadeiraFeed: Social graph updated with ${socialGraphNpubs.length} NPUBs, fetching new notes`);
+      fetchNotes(true); // Force refresh to include social graph npubs
     }
-  }, [socialGraphNpubs, ndkReady, hasLoadedInitialNotes, fetchNotes]);
+  }, [socialGraphNpubs, fetchNotes, hasLoadedInitialNotes]);
+
+  // Check for cached social graph on mount
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.sessionStorage) {
+      try {
+        const cachedNpubs = sessionStorage.getItem('socialGraphNpubs');
+        if (cachedNpubs) {
+          const parsedNpubs = JSON.parse(cachedNpubs);
+          if (Array.isArray(parsedNpubs) && parsedNpubs.length > 0) {
+            console.log(`MadeiraFeed: Found ${parsedNpubs.length} cached social graph npubs`);
+            setSocialGraphNpubs(parsedNpubs);
+          }
+        }
+      } catch (err) {
+        console.error('Failed to parse cached social graph npubs:', err);
+      }
+    }
+  }, []);
+  
+  // Check for social graph updates periodically
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    
+    const checkForUpdates = () => {
+      try {
+        const cachedNpubs = sessionStorage.getItem('socialGraphNpubs');
+        if (cachedNpubs) {
+          const parsedNpubs = JSON.parse(cachedNpubs);
+          if (Array.isArray(parsedNpubs) && 
+              parsedNpubs.length > 0 && 
+              parsedNpubs.length !== socialGraphNpubs.length) {
+            console.log(`MadeiraFeed: Social graph updated with ${parsedNpubs.length} npubs`);
+            setSocialGraphNpubs(parsedNpubs);
+          }
+        }
+      } catch (err) {
+        // Ignore errors
+      }
+    };
+    
+    const interval = setInterval(checkForUpdates, 30000); // Check every 30 seconds
+    
+    return () => clearInterval(interval);
+  }, [socialGraphNpubs.length]);
+
+  // Function to clear cache and refresh
+  const clearCacheAndRefresh = useCallback(() => {
+    // Clear note cache
+    const cacheKey = getCacheKey();
+    if (noteCache[cacheKey]) {
+      delete noteCache[cacheKey];
+    }
+    
+    // Reset state
+    setNotes([]);
+    setLoading(true);
+    setError(null);
+    
+    // Force refresh
+    fetchNotes(true);
+  }, [getCacheKey, fetchNotes]);
+
+  // Server-side rendering placeholder to avoid hydration issues
+  if (typeof window === 'undefined') {
+    return (
+      <div className={`flex items-center justify-center h-full ${className}`}>
+        <div className="text-center">
+          <div className="inline-block h-8 w-8 border-t-2 border-b-2 border-forest"></div>
+          <p className="mt-2 text-gray-600">Loading Madeira updates...</p>
+        </div>
+      </div>
+    );
+  }
 
   if (loading && notes.length === 0) {
     return (
@@ -537,10 +653,43 @@ export const MadeiraFeed: React.FC<MadeiraFeedProps> = ({
   }
 
   return (
-    <div className={`w-full h-full overflow-hidden ${className}`}>
+    <div className={`relative ${className}`}>
+      {/* Header */}
+      <div className="flex justify-between items-center mb-4">
+        <h2 className="text-xl font-semibold">Madeira Updates</h2>
+        
+        <div className="flex items-center space-x-2">
+          <button 
+            onClick={clearCacheAndRefresh}
+            className="text-sm px-2 py-1 bg-forest text-white rounded hover:bg-opacity-90"
+            disabled={loading}
+          >
+            {loading ? 'Refreshing...' : 'Refresh'}
+          </button>
+        </div>
+      </div>
+      
+      {/* Loading state */}
+      {loading && (
+        <div className="flex items-center justify-center h-full">
+          <div className="text-center">
+            <div className="inline-block animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-forest"></div>
+            <p className="mt-2 text-gray-600 dark:text-gray-300">Loading Madeira updates...</p>
+          </div>
+        </div>
+      )}
+      
       {notes.length === 0 ? (
         <div className="flex items-center justify-center h-full">
-          <p className="text-gray-500">No Madeira updates found.</p>
+          <div className="text-center">
+            <p className="text-gray-500 mb-4">No Madeira updates found.</p>
+            <button 
+              onClick={() => fetchNotes(true)} 
+              className="px-4 py-2 bg-forest text-white rounded hover:bg-forest/80"
+            >
+              Retry
+            </button>
+          </div>
         </div>
       ) : (
         <div className="flex flex-wrap gap-4 p-4 overflow-auto h-full">
@@ -581,20 +730,22 @@ export const MadeiraFeed: React.FC<MadeiraFeedProps> = ({
                       {note.author.displayName || note.author.name || shortenNpub(note.npub)}
                     </h3>
                     <p className="text-xs mt-1 line-clamp-3">{note.content}</p>
-                    <div className="flex flex-wrap gap-1 mt-2">
-                      {note.hashtags.map(tag => (
-                        <span 
-                          key={tag} 
-                          className={`text-xxs px-1.5 py-0.5 rounded-full ${
-                            MADEIRA_HASHTAGS.includes(tag.toLowerCase()) 
-                              ? 'bg-forest/80 text-white' 
-                              : 'bg-gray-200/80 text-gray-800'
-                          }`}
-                        >
-                          #{tag}
-                        </span>
-                      ))}
-                    </div>
+                    {note.hashtags && note.hashtags.length > 0 && (
+                      <div className="flex flex-wrap gap-1 mt-2">
+                        {note.hashtags.map(tag => (
+                          <span 
+                            key={tag} 
+                            className={`text-xxs px-1.5 py-0.5 rounded-full ${
+                              MADEIRA_HASHTAGS.includes(tag.toLowerCase()) 
+                                ? 'bg-forest/80 text-white' 
+                                : 'bg-gray-200/80 text-gray-800'
+                            }`}
+                          >
+                            #{tag}
+                          </span>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>

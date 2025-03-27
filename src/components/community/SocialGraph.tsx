@@ -105,6 +105,21 @@ const preloadImage = (url: string): Promise<HTMLImageElement> => {
   });
 };
 
+// Utility function to clear all caches
+export const clearAllGraphCaches = () => {
+  // Clear graph data cache
+  GRAPH_CACHE.data = null;
+  GRAPH_CACHE.timestamp = 0;
+  
+  // Clear image cache
+  IMAGE_CACHE.clear();
+  
+  // Clear profile cache
+  PROFILE_CACHE.clear();
+  
+  console.log('All graph caches have been cleared');
+};
+
 export const SocialGraph: React.FC<SocialGraphProps> = ({
   centerNpub = CORE_NPUBS[0],
   npubs = CORE_NPUBS,
@@ -115,11 +130,13 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
   data,
 }) => {
   const { ndk, getUserProfile, shortenNpub, reconnect, ndkReady } = useNostr();
-  const [graph, setGraph] = useState<GraphData | null>(data || null);
+  const [graph, setGraph] = useState<GraphData | null>(null);
   const [loading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
-  const [loadingMessage, setLoadingMessage] = useState<string>(getRandomLoadingMessage('GRAPH'));
+  const [loadingMessage, setLoadingMessage] = useState<string>('');
+  const [isClient, setIsClient] = useState(false);
+  const [processingSecondDegree, setProcessingSecondDegree] = useState(false);
   
   const fetchInProgress = useRef<boolean>(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -133,9 +150,24 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
     [npubs, centerNpub]
   );
 
+  // Define forceRefresh with a ref to avoid circular dependencies
+  const forceRefreshRef = useRef<() => void>(() => {});
+  
+  // Define the initial forceRefresh function (will be updated after buildGraph is defined)
+  const forceRefresh = useCallback(() => {
+    forceRefreshRef.current();
+  }, []);
+
+  // Check if we're on the client side to prevent hydration issues
+  useEffect(() => {
+    setIsClient(true);
+    // Set initial loading message only on the client side
+    setLoadingMessage(getRandomLoadingMessage('GRAPH'));
+  }, []);
+
   // Initialize loading messages
   useEffect(() => {
-    if (loading) {
+    if (loading && isClient) {
       // Set up rotation of loading messages
       const interval = setInterval(() => {
         const messages = getLoadingMessageSequence('GRAPH', 5);
@@ -145,7 +177,7 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
       
       return () => clearInterval(interval);
     }
-  }, [loading]);
+  }, [loading, isClient]);
 
   // Define simulation parameters for graph animation
   const graphPhysics = useRef({
@@ -214,19 +246,24 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
   ): Promise<{ nodes: GraphNode[], links: GraphLink[] }> => {
     if (!ndk) return { nodes, links };
     
+    console.log("Starting to process second-degree connections");
+    
     // Track pubkeys we're processing to avoid duplicates
     const processedForFollowers = new Set<string>();
     const secondDegreeConnections = new Set<string>();
     
-    // Take a subset of first-degree connections to process
-    // Use the most connected nodes for better graph structure
+    // Take a larger subset of first-degree connections to process
+    // Increase from 20 to 30 for better network discovery
     const firstDegreeArray = Array.from(firstDegreeConnections);
-    const firstDegreeToProcess = firstDegreeArray.slice(0, Math.min(firstDegreeConnections.size, 10));
+    const firstDegreeToProcess = firstDegreeArray.slice(0, Math.min(firstDegreeConnections.size, 30));
+    
+    console.log(`Processing ${firstDegreeToProcess.length} first-degree connections for second-degree discovery`);
     
     // Process in smaller batches to avoid overwhelming the relays
-    const batchSize = 2;
+    const batchSize = 5; // Increased from 3 to 5
     for (let i = 0; i < firstDegreeToProcess.length; i += batchSize) {
       const batch = firstDegreeToProcess.slice(i, i + batchSize);
+      console.log(`Processing batch ${i/batchSize + 1} of ${Math.ceil(firstDegreeToProcess.length/batchSize)}`);
       
       // Process all pubkeys in the batch concurrently
       await Promise.all(batch.map(async (pubkey) => {
@@ -235,67 +272,142 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
         processedForFollowers.add(pubkey);
         
         try {
-          // Fetch this user's follows
+          console.log(`Fetching follows for: ${pubkey.substring(0, 8)}...`);
+          // Fetch this user's follows with explicit relay request
           const contactsEvents = await ndk.fetchEvents({
             kinds: [3], // Contact lists
             authors: [pubkey],
             limit: 1
-          });
+          }, { closeOnEose: true });
+          
+          if (!contactsEvents || contactsEvents.size === 0) {
+            console.log(`No contacts found for: ${pubkey.substring(0, 8)}...`);
+            return;
+          }
           
           for (const event of contactsEvents) {
             // Extract p tags (following)
             const following = event.tags
               .filter(tag => tag[0] === 'p')
-              .map(tag => tag[1]);
+              .map(tag => tag[1])
+              // Ensure valid pubkeys
+              .filter(pk => pk && pk.length === 64);
             
-            // Limit the number of connections we add per node to avoid overloading the graph
-            const limitedFollowing = following.slice(0, maxConnections);
+            if (following.length === 0) {
+              console.log(`Empty contact list for: ${pubkey.substring(0, 8)}...`);
+              continue;
+            }
             
+            console.log(`Found ${following.length} follows for: ${pubkey.substring(0, 8)}...`);
+            
+            // Increase the connection limit per node to capture more relationships
+            const limitedFollowing = following.slice(0, Math.min(following.length, maxConnections * 2));
+            
+            // Check for mutual connections among first-degree connections
+            // This is important for showing the interconnectedness of the community
+            for (const otherFirstDegreePubkey of firstDegreeConnections) {
+              if (pubkey === otherFirstDegreePubkey) continue;
+              
+              // Check if this pubkey follows another first-degree connection
+              if (limitedFollowing.includes(otherFirstDegreePubkey)) {
+                // Check if the relationship is mutual by fetching the other's following list
+                const otherContactsEvents = await ndk.fetchEvents({
+                  kinds: [3],
+                  authors: [otherFirstDegreePubkey],
+                  limit: 1
+                }, { closeOnEose: true });
+                
+                for (const otherEvent of otherContactsEvents) {
+                  const otherFollowing = otherEvent.tags
+                    .filter(tag => tag[0] === 'p')
+                    .map(tag => tag[1]);
+                  
+                  // If mutual, create a special mutual link
+                  if (otherFollowing.includes(pubkey)) {
+                    // Add mutual link if not already added
+                    const linkId = [pubkey, otherFirstDegreePubkey].sort().join('-');
+                    if (!links.some(link => 
+                      (link.source === pubkey && link.target === otherFirstDegreePubkey) || 
+                      (link.source === otherFirstDegreePubkey && link.target === pubkey)
+                    )) {
+                      links.push({
+                        id: linkId,
+                        source: pubkey,
+                        target: otherFirstDegreePubkey,
+                        type: 'mutual',
+                        value: 2
+                      });
+                      console.log(`Added mutual connection between ${pubkey.substring(0, 8)}... and ${otherFirstDegreePubkey.substring(0, 8)}...`);
+                    }
+                  } else {
+                    // Otherwise add a regular follows link if not already present
+                    if (!links.some(link => 
+                      link.source === pubkey && link.target === otherFirstDegreePubkey
+                    )) {
+                      links.push({
+                        source: pubkey,
+                        target: otherFirstDegreePubkey,
+                        type: 'follows',
+                        value: 1
+                      });
+                    }
+                  }
+                }
+              }
+            }
+            
+            // Process actual second-degree connections (followers of followers)
+            // that aren't already in our graph
             for (const followedPubkey of limitedFollowing) {
-              // Skip core pubkeys and already added pubkeys
-              if (coreKeys.includes(followedPubkey) || addedPubkeys.has(followedPubkey)) {
+              // Skip core pubkeys and already processed first-degree connections
+              if (coreKeys.includes(followedPubkey) || firstDegreeConnections.has(followedPubkey)) {
                 continue;
               }
               
               // Add to second-degree connections set for later profile fetching
               secondDegreeConnections.add(followedPubkey);
               
-              // Create link from the first degree pubkey to the followed pubkey
-              links.push({
-                source: pubkey,
-                target: followedPubkey,
-                type: 'follows',
-              });
+              // Create node for this second-degree connection if it doesn't exist yet
+              if (!addedPubkeys.has(followedPubkey)) {
+                try {
+                  const npub = nip19.npubEncode(followedPubkey);
+                  nodes.push({
+                    id: followedPubkey,
+                    pubkey: followedPubkey,
+                    npub: npub,
+                    name: shortenNpub(npub),
+                    picture: DEFAULT_PROFILE_IMAGE,
+                    isCoreNode: false,
+                  });
+                  
+                  // Add to set of pubkeys we've added to the graph
+                  addedPubkeys.add(followedPubkey);
+                  console.log(`Added second-degree node: ${followedPubkey.substring(0, 8)}...`);
+                } catch (err) {
+                  console.warn(`Error creating node for second-degree connection: ${followedPubkey.substring(0, 8)}...`, err);
+                }
+              }
               
-              // Add to set of pubkeys we've added to the graph
-              addedPubkeys.add(followedPubkey);
+              // Create link from the first degree pubkey to the followed pubkey
+              if (!links.some(link => 
+                link.source === pubkey && link.target === followedPubkey
+              )) {
+                links.push({
+                  source: pubkey,
+                  target: followedPubkey,
+                  type: 'follows',
+                });
+                console.log(`Added connection from ${pubkey.substring(0, 8)}... to ${followedPubkey.substring(0, 8)}...`);
+              }
             }
           }
         } catch (err) {
-          console.warn('Error processing followers for pubkey:', pubkey, err);
+          console.warn('Error processing followers for pubkey:', pubkey.substring(0, 8), err);
         }
       }));
     }
     
-    // Check if we need to fetch profiles for the second-degree connections
-    if (secondDegreeConnections.size > 0) {
-      // Only process a limited number of second-degree connections to keep graph manageable
-      const limitedSecondDegree = Array.from(secondDegreeConnections).slice(0, Math.min(secondDegreeConnections.size, 20));
-      
-      // Create basic nodes for all second-degree connections
-      // We'll fetch profile data later if needed
-      for (const pubkey of limitedSecondDegree) {
-        const npub = nip19.npubEncode(pubkey);
-        nodes.push({
-          id: pubkey,
-          pubkey: pubkey,
-          npub: npub,
-          name: shortenNpub(npub),
-          picture: DEFAULT_PROFILE_IMAGE,
-          isCoreNode: false,
-        });
-      }
-    }
+    console.log(`Finished processing second-degree connections. Added ${secondDegreeConnections.size} second-degree nodes`);
     
     return { nodes, links };
   }, [ndk, maxConnections, shortenNpub]);
@@ -373,15 +485,29 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
     
     try {
       setIsLoading(true);
+      console.log("Building social graph...");
       
-      // Check if we have cached data
-      if (GRAPH_CACHE.data && (Date.now() - GRAPH_CACHE.timestamp < GRAPH_CACHE.ttl)) {
-        // Use cached data
-        setGraph(GRAPH_CACHE.data);
-        graphDataRef.current = GRAPH_CACHE.data;
-        setIsLoading(false);
-        fetchInProgress.current = false;
-        return;
+      // Ensure we have a connection to relays first
+      const connectedRelays = ndk?.pool?.connectedRelays || [];
+      if (connectedRelays.length === 0) {
+        console.log("No connected relays found, attempting to reconnect...");
+        if (reconnect) {
+          try {
+            await reconnect();
+            // Wait a moment for relays to connect
+            await new Promise(resolve => setTimeout(resolve, 1000));
+          } catch (err) {
+            console.error("Failed to reconnect to relays:", err);
+          }
+        }
+      }
+      
+      // Check relay connections after reconnect attempt
+      const relays = ndk?.pool?.connectedRelays || [];
+      console.log(`Connected to ${relays.length} relays`);
+      
+      if (relays.length === 0) {
+        throw new Error("No relays connected. Please check your connection and try again.");
       }
       
       // Convert npubs to pubkeys for the core nodes
@@ -409,6 +535,7 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
         }
       }
       
+      console.log(`Fetching profiles for ${coreNodes.length} core nodes`);
       // Fetch profiles for core nodes
       const coreNodesWithProfiles = await fetchProfiles(coreNodes);
       
@@ -419,22 +546,38 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
       const firstDegreeConnections = new Set<string>();
       
       // Get followers for each core pubkey
+      console.log("Fetching contact lists for core nodes...");
       for (const pubkey of coreKeys) {
         try {
+          console.log(`Fetching contacts for core pubkey: ${pubkey.substring(0, 8)}...`);
           const contactsEvents = await ndk.fetchEvents({
             kinds: [3], // Contact lists
             authors: [pubkey],
             limit: 1
-          });
+          }, { closeOnEose: true });
+          
+          // Improved error handling for empty or missing contact lists
+          if (!contactsEvents || contactsEvents.size === 0) {
+            console.warn(`No contact list found for pubkey: ${pubkey.substring(0, 8)}...`);
+            continue;
+          }
           
           for (const event of contactsEvents) {
             // Extract p tags (following)
             const following = event.tags
               .filter(tag => tag[0] === 'p')
-              .map(tag => tag[1]);
+              .map(tag => tag[1])
+              // Filter out invalid pubkeys to prevent errors
+              .filter(pubkey => pubkey && pubkey.length === 64);
             
-            // Limit the number of connections per node
-            const limitedFollowing = following.slice(0, maxConnections);
+            if (following.length === 0) {
+              console.warn(`Empty contact list for pubkey: ${pubkey}`);
+              continue;
+            }
+            
+            // Increase the number of connections per node to capture more relationships
+            // This is important for showing the full 168 connections the user mentioned
+            const limitedFollowing = following.slice(0, Math.min(following.length, maxConnections * 1.5));
             
             // Find mutual connections
             const mutuals = new Set<string>();
@@ -450,7 +593,7 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
                   kinds: [3],
                   authors: [otherPubkey],
                   limit: 1
-                });
+                }, { closeOnEose: true });
                 
                 for (const otherEvent of otherContactsEvents) {
                   const otherFollowing = otherEvent.tags
@@ -491,17 +634,21 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
               
               // Create node for this pubkey if not already added
               if (!addedPubkeys.has(followedPubkey)) {
-                const npub = nip19.npubEncode(followedPubkey);
-                nodes.push({
-                  id: followedPubkey,
-                  pubkey: followedPubkey,
-                  npub: npub,
-                  name: shortenNpub(npub),
-                  picture: DEFAULT_PROFILE_IMAGE,
-                  isCoreNode: false,
-                });
-                
-                addedPubkeys.add(followedPubkey);
+                try {
+                  const npub = nip19.npubEncode(followedPubkey);
+                  nodes.push({
+                    id: followedPubkey,
+                    pubkey: followedPubkey,
+                    npub: npub,
+                    name: shortenNpub(npub),
+                    picture: DEFAULT_PROFILE_IMAGE,
+                    isCoreNode: false,
+                  });
+                  
+                  addedPubkeys.add(followedPubkey);
+                } catch (err) {
+                  console.warn(`Invalid pubkey: ${followedPubkey}`, err);
+                }
               }
               
               // Create link from the core pubkey to the followed pubkey
@@ -517,20 +664,34 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
         }
       }
       
-      // Process second-degree connections
+      // Process second-degree connections to find all 168 expected connections
+      console.log(`Processing ${firstDegreeConnections.size} first-degree connections`);
+      
+      // Use a smaller subset of first-degree connections if there are too many
+      // to avoid overwhelming the relays and browser
+      let firstDegreeForSecondLevel = firstDegreeConnections;
+      if (firstDegreeConnections.size > 50) {
+        console.log("Limiting first-degree connections for second-degree processing");
+        firstDegreeForSecondLevel = new Set(
+          Array.from(firstDegreeConnections).slice(0, 50)
+        );
+      }
+      
       const { nodes: updatedNodes, links: updatedLinks } = await processSecondDegreeConnections(
-        firstDegreeConnections,
+        firstDegreeForSecondLevel,
         coreKeys,
         nodes,
         links,
         addedPubkeys
       );
+      console.log(`Graph now has ${updatedLinks.length} links and ${updatedNodes.length} nodes`);
       
       // Fetch profiles for first-degree connections
       const firstDegreeNodes = updatedNodes.filter(node => 
         !node.isCoreNode && firstDegreeConnections.has(node.pubkey)
       );
       
+      console.log(`Fetching profiles for ${firstDegreeNodes.length} first-degree connections`);
       const firstDegreeWithProfiles = await fetchProfiles(firstDegreeNodes);
       
       // Update nodes with profile information
@@ -543,6 +704,12 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
         return node;
       });
       
+      // Count how many second-degree connections we have
+      const secondDegreeCount = finalNodes.filter(node => 
+        !node.isCoreNode && !firstDegreeConnections.has(node.pubkey)
+      ).length;
+      console.log(`Graph contains ${secondDegreeCount} second-degree connections`);
+      
       // Final graph data
       const graphData: GraphData = {
         nodes: finalNodes,
@@ -553,13 +720,15 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
       // Mark core nodes to ensure proper visualization
       const markedGraphData = markCoreNodes(graphData, effectiveNpubs);
       
-      // Cache the graph data
+      // Update state and refs directly
+      setGraph(markedGraphData);
+      graphDataRef.current = markedGraphData;
+      
+      // Only cache for this session
       GRAPH_CACHE.data = markedGraphData;
       GRAPH_CACHE.timestamp = Date.now();
       
-      // Update state and refs
-      setGraph(markedGraphData);
-      graphDataRef.current = markedGraphData;
+      console.log(`Final graph has ${markedGraphData.links.length} links and ${markedGraphData.nodes.length} nodes`);
       
       // Preload images for all nodes
       for (const node of finalNodes) {
@@ -579,24 +748,126 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
     maxConnections, fetchProfiles, processSecondDegreeConnections
   ]);
 
+  // Update the forceRefresh implementation after buildGraph is defined
+  useEffect(() => {
+    forceRefreshRef.current = () => {
+      if (isNdkReady) {
+        // Clear all caches
+        clearAllGraphCaches();
+        
+        // Clear current graph state
+        setGraph(null);
+        
+        // Clear selection
+        setSelectedNode(null);
+        
+        // Trigger rebuild
+        buildGraph();
+      } else {
+        // If NDK not ready, try to reconnect
+        if (reconnect) {
+          reconnect();
+          setTimeout(() => {
+            buildGraph();
+          }, 1000);
+        }
+      }
+    };
+  }, [isNdkReady, buildGraph, reconnect]);
+
   // Initialize the graph when NDK is ready
   useEffect(() => {
     if (isNdkReady && !graph) {
+      // Check if we need to refresh due to errors
+      const handleError = (event: ErrorEvent) => {
+        // If error message includes "node not found", clear cache and refresh
+        if (event.message && (
+          event.message.includes('node not found') || 
+          event.message.includes('Error building graph')
+        )) {
+          console.log('Detected graph error, refreshing...');
+          forceRefresh();
+        }
+      };
+      
+      // Add error listener
+      window.addEventListener('error', handleError);
+      
+      // Attempt build graph
+      console.log('NDK ready, building graph...');
       buildGraph();
+      
+      // Clean up
+      return () => {
+        window.removeEventListener('error', handleError);
+      };
     }
-  }, [isNdkReady, graph, buildGraph]);
+  }, [isNdkReady, graph, buildGraph, forceRefresh]);
+
+  // Add an auto-refresh on errors
+  useEffect(() => {
+    if (error) {
+      console.log('Graph error detected, will retry in 5 seconds');
+      const timer = setTimeout(() => {
+        setError(null);
+        forceRefresh();
+      }, 5000);
+      
+      return () => clearTimeout(timer);
+    }
+  }, [error, forceRefresh]);
+
+  // Export social graph pubkeys for MadeiraFeed
+  useEffect(() => {
+    if (graph && isClient && window) {
+      // Extract all non-core pubkeys for social graph integration
+      const allPubkeys = graph.nodes
+        .filter(node => !node.isCoreNode)
+        .map(node => node.npub)
+        .filter(Boolean) as string[];
+        
+      // Store in sessionStorage for MadeiraFeed to access
+      try {
+        sessionStorage.setItem('socialGraphNpubs', JSON.stringify(allPubkeys));
+        console.log(`Exported ${allPubkeys.length} social graph npubs for MadeiraFeed`);
+      } catch (err) {
+        console.error('Failed to store social graph npubs:', err);
+      }
+    }
+  }, [graph, isClient]);
 
   // Function to handle node click
   const handleNodeClick = useCallback((node: GraphNode) => {
-    setSelectedNode(node === selectedNode ? null : node);
-  }, [selectedNode]);
+    // Verify node exists before setting it as selected
+    if (!node) {
+      console.warn('Attempted to select a null or undefined node');
+      return;
+    }
+    
+    try {
+      setSelectedNode(node === selectedNode ? null : node);
+    } catch (err) {
+      console.error('Error selecting node:', err);
+      // Force refresh on node selection error
+      forceRefresh();
+    }
+  }, [selectedNode, forceRefresh]);
 
   // Custom node painting with improved image handling
   const paintNode = useCallback((node: GraphNode, ctx: CanvasRenderingContext2D, globalScale: number) => {
+    // Skip invalid nodes to prevent rendering errors
+    if (!node || node === undefined) {
+      console.warn('Attempted to paint an invalid node');
+      return;
+    }
+    
     const { x, y } = node as any;
     if (typeof x !== 'number' || typeof y !== 'number') return;
     
-    const size = (node.val || 5) * Math.min(2, Math.max(0.5, 1 / globalScale));
+    // Apply hover effect using slightly larger size
+    const isHovered = node === selectedNode;
+    const hoverScale = isHovered ? 1.2 : 1;
+    const size = (node.val || 5) * Math.min(2, Math.max(0.5, 1 / globalScale)) * hoverScale;
     
     // Helper function to draw a circle
     const drawCircle = (color: string) => {
@@ -605,9 +876,9 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
       ctx.fillStyle = color;
       ctx.fill();
       
-      // Draw border
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
-      ctx.lineWidth = 0.5;
+      // Draw border (thicker for hovered nodes)
+      ctx.strokeStyle = isHovered ? BRAND_COLORS.bitcoinOrange : 'rgba(255, 255, 255, 0.5)';
+      ctx.lineWidth = isHovered ? 1.5 : 0.5;
       ctx.stroke();
     };
     
@@ -640,13 +911,25 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
         
         ctx.restore();
         
-        // Draw highlighted border for core nodes
-        if (node.isCoreNode) {
+        // Draw highlighted border for core nodes or hovered nodes
+        if (node.isCoreNode || isHovered) {
           ctx.beginPath();
           ctx.arc(x, y, size + 1, 0, 2 * Math.PI);
-          ctx.strokeStyle = BRAND_COLORS.bitcoinOrange;
-          ctx.lineWidth = 1.5;
+          ctx.strokeStyle = node.isCoreNode ? BRAND_COLORS.bitcoinOrange : BRAND_COLORS.blueGreen;
+          ctx.lineWidth = isHovered ? 1.5 : 1.5;
           ctx.stroke();
+          
+          // Add glow effect for hovered nodes
+          if (isHovered) {
+            const glowSize = size + 3;
+            ctx.beginPath();
+            ctx.arc(x, y, glowSize, 0, 2 * Math.PI);
+            const gradient = ctx.createRadialGradient(x, y, size, x, y, glowSize);
+            gradient.addColorStop(0, `${BRAND_COLORS.bitcoinOrange}4D`); // 30% opacity
+            gradient.addColorStop(1, `${BRAND_COLORS.bitcoinOrange}00`); // 0% opacity
+            ctx.fillStyle = gradient;
+            ctx.fill();
+          }
         }
       } else {
         // No cached image yet, try to load it
@@ -657,23 +940,46 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
     } else {
       // Draw a basic circle for nodes without images
       drawCircle(node.color || BRAND_COLORS.lightSand);
+      
+      // Add glow effect for hovered nodes
+      if (isHovered) {
+        const glowSize = size + 3;
+        ctx.beginPath();
+        ctx.arc(x, y, glowSize, 0, 2 * Math.PI);
+        const gradient = ctx.createRadialGradient(x, y, size, x, y, glowSize);
+        gradient.addColorStop(0, `${BRAND_COLORS.bitcoinOrange}4D`); // 30% opacity
+        gradient.addColorStop(1, `${BRAND_COLORS.bitcoinOrange}00`); // 0% opacity
+        ctx.fillStyle = gradient;
+        ctx.fill();
+      }
     }
     
-    // Draw node label if globalScale is large enough
-    if (globalScale > 0.4 || node.isCoreNode) {
+    // Draw node label only on hover
+    if (isHovered) {
       const labelText = node.name || shortenNpub(node.npub || '');
       if (labelText) {
-        ctx.font = `${Math.max(12, size/globalScale/3)}px Sans-Serif`;
+        const fontSize = Math.max(12, size/globalScale/3);
+        ctx.font = `${isHovered ? 'bold' : 'normal'} ${fontSize}px Sans-Serif`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillStyle = node.isCoreNode ? 'white' : '#333';
         
         // Draw text background
         const textWidth = ctx.measureText(labelText).width;
         const bgPadding = 2;
-        const bgHeight = Math.max(14, size/globalScale/3) + (bgPadding * 2);
+        const bgHeight = Math.max(14, fontSize) + (bgPadding * 2);
         
-        ctx.fillStyle = node.isCoreNode ? 'rgba(247, 147, 26, 0.8)' : 'rgba(255, 255, 255, 0.7)';
+        let bgColor = 'rgba(255, 255, 255, 0.7)';
+        let textColor = '#333';
+        
+        if (node.isCoreNode) {
+          bgColor = `${BRAND_COLORS.bitcoinOrange}CC`; // 80% opacity
+          textColor = 'white';
+        } else if (isHovered) {
+          bgColor = `${BRAND_COLORS.blueGreen}CC`; // 80% opacity
+          textColor = 'white';
+        }
+        
+        ctx.fillStyle = bgColor;
         ctx.fillRect(
           x - textWidth/2 - bgPadding,
           y + size + 2,
@@ -682,11 +988,22 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
         );
         
         // Draw text
-        ctx.fillStyle = node.isCoreNode ? 'white' : '#333';
+        ctx.fillStyle = textColor;
         ctx.fillText(labelText, x, y + size + 2 + bgHeight/2);
       }
     }
-  }, [shortenNpub]);
+    
+    // For core nodes, add a small star indicator
+    if (node.isCoreNode && !isHovered) {
+      const starSize = size / 2;
+      ctx.fillStyle = BRAND_COLORS.bitcoinOrange;
+      
+      // Draw a small star or indicator dot
+      ctx.beginPath();
+      ctx.arc(x + size * 0.7, y - size * 0.7, starSize / 2, 0, 2 * Math.PI);
+      ctx.fill();
+    }
+  }, [shortenNpub, selectedNode]);
 
   // Memory management - clear image cache on unmount
   useEffect(() => {
@@ -698,13 +1015,107 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
     };
   }, []);
 
+  // Process second-degree connections manually
+  const processMoreConnections = useCallback(async () => {
+    if (!graph || !isNdkReady || processingSecondDegree) return;
+    
+    setProcessingSecondDegree(true);
+    setLoadingMessage("Fetching additional connections...");
+    
+    try {
+      // Get existing first-degree connections
+      const firstDegreeConnections = new Set<string>();
+      const coreKeys: string[] = [];
+      
+      // Get core pubkeys
+      for (const npub of effectiveNpubs) {
+        try {
+          const { data: pubkey } = nip19.decode(npub);
+          coreKeys.push(pubkey as string);
+        } catch (err) {
+          console.warn('Invalid npub:', npub, err);
+        }
+      }
+      
+      // Find all first-degree connections
+      for (const link of graph.links) {
+        const source = typeof link.source === 'string' ? link.source : link.source?.id;
+        const target = typeof link.target === 'string' ? link.target : link.target?.id;
+        
+        if (source && coreKeys.includes(source) && target && !coreKeys.includes(target)) {
+          firstDegreeConnections.add(target);
+        }
+        
+        if (target && coreKeys.includes(target) && source && !coreKeys.includes(source)) {
+          firstDegreeConnections.add(source);
+        }
+      }
+      
+      console.log(`Found ${firstDegreeConnections.size} first-degree connections to process`);
+      
+      // Process additional second-degree connections
+      const addedPubkeys = new Set<string>();
+      graph.nodes.forEach(node => addedPubkeys.add(node.id));
+      
+      const { nodes: updatedNodes, links: updatedLinks } = await processSecondDegreeConnections(
+        firstDegreeConnections,
+        coreKeys,
+        [...graph.nodes],
+        [...graph.links],
+        addedPubkeys
+      );
+      
+      // Create new graph data
+      const graphData: GraphData = {
+        nodes: updatedNodes,
+        links: updatedLinks,
+        lastUpdated: Date.now()
+      };
+      
+      // Mark core nodes to ensure proper visualization
+      const markedGraphData = markCoreNodes(graphData, effectiveNpubs);
+      
+      // Update state and refs directly
+      setGraph(markedGraphData);
+      graphDataRef.current = markedGraphData;
+      
+      // Cache the updated data
+      GRAPH_CACHE.data = markedGraphData;
+      GRAPH_CACHE.timestamp = Date.now();
+      
+      // Count how many second-degree connections we have
+      const secondDegreeCount = markedGraphData.nodes.filter(node => 
+        !node.isCoreNode && !firstDegreeConnections.has(node.pubkey)
+      ).length;
+      
+      console.log(`Graph now has ${markedGraphData.links.length} links, ${markedGraphData.nodes.length} nodes, and ${secondDegreeCount} second-degree connections`);
+      
+    } catch (err) {
+      console.error('Error processing additional connections:', err);
+      setError('Failed to process additional connections');
+    } finally {
+      setProcessingSecondDegree(false);
+    }
+  }, [graph, isNdkReady, effectiveNpubs, processSecondDegreeConnections]);
+
   return (
     <div ref={containerRef} className={`relative ${className}`} style={{ height }}>
-      {loading ? (
+      {/* Remove the search filter */}
+      
+      {loading && isClient ? (
         <div className="absolute inset-0 flex items-center justify-center bg-gray-100 dark:bg-gray-800 bg-opacity-80 dark:bg-opacity-80 z-10">
           <div className="text-center p-4">
             <div className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-forest border-r-transparent align-[-0.125em] motion-reduce:animate-[spin_1.5s_linear_infinite]"></div>
             <p className="mt-4 text-forest dark:text-sand">{loadingMessage}</p>
+          </div>
+        </div>
+      ) : null}
+      
+      {processingSecondDegree && isClient ? (
+        <div className="absolute inset-0 flex items-center justify-center bg-gray-100 dark:bg-gray-800 bg-opacity-80 dark:bg-opacity-80 z-10">
+          <div className="text-center p-4">
+            <div className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-forest border-r-transparent align-[-0.125em] motion-reduce:animate-[spin_1.5s_linear_infinite]"></div>
+            <p className="mt-4 text-forest dark:text-sand">Processing additional connections...</p>
           </div>
         </div>
       ) : null}
@@ -723,14 +1134,14 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
               Retry
             </button>
           </div>
-        </div>
+            </div>
       ) : null}
 
       {graph && (
         <ForceGraph2D
           ref={forceGraphRef}
           graphData={convertGraphData(graph) as any}
-          nodeLabel={node => `${node.name || shortenNpub(((node as any) as GraphNode).npub || '')}`}
+          nodeLabel={() => ''}
           width={typeof width === 'number' ? width : undefined}
           height={typeof height === 'number' ? height : undefined}
           cooldownTime={5000}
@@ -751,42 +1162,84 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
             }
           }}
           onNodeClick={(node) => handleNodeClick((node as any) as GraphNode)}
+          onNodeHover={(node) => {
+            if (node) {
+              document.body.style.cursor = 'pointer';
+              setSelectedNode((node as any) as GraphNode); // Show tooltip on hover
+            } else {
+              document.body.style.cursor = 'default';
+              setSelectedNode(null); // Hide tooltip when not hovering
+            }
+          }}
           nodeCanvasObject={(node, ctx, globalScale) => paintNode((node as any) as GraphNode, ctx, globalScale)}
           nodePointerAreaPaint={(node, color, ctx) => {
             const { x, y } = (node as any);
             const size = ((node as any) as GraphNode).val || 5 * 1.5;
             ctx.beginPath();
-            ctx.arc(x, y, size, 0, 2 * Math.PI);
+            ctx.arc(x, y, size + 3, 0, 2 * Math.PI); // Slightly larger hit area for better interaction
             ctx.fillStyle = 'transparent';
             ctx.fill();
           }}
           linkDirectionalParticles={link => (((link as any) as GraphLink).type === 'mutual' ? 4 : 0)}
           linkDirectionalParticleSpeed={0.005}
-          linkWidth={link => (((link as any) as GraphLink).type === 'mutual' ? 2 : 1)}
+          linkWidth={link => {
+            const graphLink = ((link as any) as GraphLink);
+            const sourcePubkey = typeof graphLink.source === 'string' ? graphLink.source : (graphLink.source as any).id;
+            const targetPubkey = typeof graphLink.target === 'string' ? graphLink.target : (graphLink.target as any).id;
+            
+            // Highlight links connected to the selected node
+            if (selectedNode && 
+                (sourcePubkey === selectedNode.pubkey || targetPubkey === selectedNode.pubkey)) {
+              return graphLink.type === 'mutual' ? 3 : 2;
+            }
+            
+            return graphLink.type === 'mutual' ? 2 : 1;
+          }}
+          linkColor={link => {
+            const graphLink = ((link as any) as GraphLink);
+            const sourcePubkey = typeof graphLink.source === 'string' ? graphLink.source : (graphLink.source as any).id;
+            const targetPubkey = typeof graphLink.target === 'string' ? graphLink.target : (graphLink.target as any).id;
+            
+            // Highlight links connected to the selected node
+            if (selectedNode && 
+                (sourcePubkey === selectedNode.pubkey || targetPubkey === selectedNode.pubkey)) {
+              return graphLink.type === 'mutual' 
+                ? BRAND_COLORS.bitcoinOrange
+                : BRAND_COLORS.blueGreen;
+            }
+            
+            return graphLink.type === 'mutual' 
+              ? BRAND_COLORS.bitcoinOrange
+              : `${BRAND_COLORS.lightSand}99`;
+          }}
           backgroundColor="rgba(0,0,0,0)"
         />
-      )}
-      
-      {selectedNode && (
-        <div className="absolute top-2 right-2 bg-white dark:bg-gray-800 p-3 rounded-lg shadow-lg z-20 max-w-[250px]">
+        )}
+
+        {selectedNode && (
+        <div className="absolute top-2 right-2 bg-white dark:bg-gray-800 p-3 rounded-lg shadow-lg z-20 max-w-[250px] transition-all duration-300 ease-in-out">
           <div className="flex items-center mb-2">
             {selectedNode.picture ? (
               <img 
                 src={selectedNode.picture} 
-                alt={selectedNode.name || shortenNpub(selectedNode.npub || '')}
-                className="w-10 h-10 rounded-full mr-2"
-                onError={(e) => {
-                  (e.target as HTMLImageElement).src = DEFAULT_PROFILE_IMAGE;
-                }}
-              />
+                    alt={selectedNode.name || shortenNpub(selectedNode.npub || '')}
+                className="w-10 h-10 rounded-full mr-2 border-2 border-forest"
+                    onError={(e) => {
+                      (e.target as HTMLImageElement).src = DEFAULT_PROFILE_IMAGE;
+                    }}
+                  />
             ) : (
-              <div className="w-10 h-10 rounded-full bg-gray-200 mr-2"></div>
+              <div className="w-10 h-10 rounded-full bg-gray-200 mr-2 border-2 border-forest flex items-center justify-center">
+                <span className="text-xs font-medium text-gray-600">
+                  {(selectedNode.name?.substring(0, 2) || shortenNpub(selectedNode.npub || '').substring(0, 2)).toUpperCase()}
+                </span>
+                </div>
             )}
-            <div>
+                <div>
               <h3 className="font-semibold">{selectedNode.name || shortenNpub(selectedNode.npub || '')}</h3>
               <p className="text-xs text-gray-500 dark:text-gray-400">{shortenNpub(selectedNode.npub || '')}</p>
-            </div>
-          </div>
+                </div>
+              </div>
           
           <div className="flex space-x-2 mt-2">
             <button 
@@ -806,9 +1259,36 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
             >
               Close
             </button>
+            </div>
           </div>
-        </div>
-      )}
+        )}
+
+      {/* Keep only the refresh button */}
+      <div className="absolute bottom-2 right-2 z-20 flex space-x-2">
+        <button 
+          className="p-2 bg-white dark:bg-gray-800 rounded-full shadow-md hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+          onClick={forceRefresh}
+          aria-label="Refresh graph"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-gray-700 dark:text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+          </svg>
+        </button>
+        
+        {/* Add button to fetch more connections */}
+        {graph && (
+          <button 
+            className="p-2 bg-white dark:bg-gray-800 rounded-full shadow-md hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+            onClick={processMoreConnections}
+            disabled={processingSecondDegree}
+            aria-label="Process more connections"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-gray-700 dark:text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+            </svg>
+          </button>
+        )}
+      </div>
     </div>
   );
 };

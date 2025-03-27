@@ -17,7 +17,7 @@ const NostrLoginButton: React.FC = memo(() => {
   // Initialize nostr-login on client side only - with error handling
   useEffect(() => {
     // Prevent multiple initializations
-    if (isInitialized) return; 
+    if (isInitialized || typeof window === 'undefined') return; 
 
     let timeoutId: NodeJS.Timeout | null = null;
 
@@ -26,6 +26,16 @@ const NostrLoginButton: React.FC = memo(() => {
       initAttempted.current = true;
       
       try {
+        console.log("Initializing nostr-login...");
+        
+        // Make sure we have window object and can access it safely
+        if (typeof window === 'undefined') return;
+        
+        // Clear any existing instances
+        if (window.nostrLogin && window.nostrLogin.__nlInitialized) {
+          document.dispatchEvent(new Event("nlLogout"));
+        }
+        
         const { init } = await import('nostr-login');
         
         init({
@@ -36,14 +46,17 @@ const NostrLoginButton: React.FC = memo(() => {
           noBanner: true,
           methods: 'connect,extension,readOnly',
           onAuth: (npub: string) => {
+            console.log("nostr-login auth event received for:", npub.substring(0, 10) + "...");
             setLoginError(null);
           }
         });
         
         setIsInitialized(true);
+        console.log("nostr-login initialized successfully");
         
         // Add event listener for auth events
         const handleAuth = (e: any) => {
+          console.log("nostr-login auth event triggered");
           setLoginError(null);
           
           if (timeoutId) clearTimeout(timeoutId);
@@ -53,17 +66,31 @@ const NostrLoginButton: React.FC = memo(() => {
               loginInProgress.current = true;
               setIsLoggingIn(true);
               
+              console.log("Attempting login with NDK...");
               login()
                 .then(() => {
+                  console.log("Login successful");
                   setLoginError(null);
                 })
-                .catch(() => {
+                .catch((err) => {
+                  console.error("Login failed:", err);
                   setLoginError('Login failed. Please try again.');
                 })
                 .finally(() => {
                   loginInProgress.current = false;
                   setIsLoggingIn(false);
                 });
+            } else {
+              console.warn("Cannot login: window.nostr or NDK not ready");
+              if (!window.nostr) {
+                console.warn("window.nostr is not available");
+              }
+              if (!ndkReady) {
+                console.warn("NDK is not ready");
+                reconnect().catch(err => {
+                  console.error("Failed to reconnect relays:", err);
+                });
+              }
             }
           }, 500);
         };
@@ -86,7 +113,7 @@ const NostrLoginButton: React.FC = memo(() => {
     };
 
     initialize();
-  }, [isInitialized, ndkReady, login]);
+  }, [isInitialized, ndkReady, login, reconnect]);
 
   // Update profile image based on user state
   useEffect(() => {
