@@ -1,0 +1,567 @@
+import { SerializedUniqueIds, UID, UniqueIds } from './UniqueIds';
+import { pubKeyRegex, NostrEvent } from './utils';
+
+export type SerializedUserList = [number, number[], number?]
+
+export type SerializedSocialGraph = {
+  uniqueIds: SerializedUniqueIds;
+  followLists: SerializedUserList[];
+  muteLists?: SerializedUserList[];
+};
+
+export class SocialGraph {
+  private root: number;
+  private followDistanceByUser = new Map<number, number>();
+  private usersByFollowDistance = new Map<number, Set<number>>();
+  private followedByUser = new Map<number, Set<number>>();
+  private followersByUser = new Map<number, Set<number>>();
+  private followListCreatedAt = new Map<number, number>();
+  private mutedByUser = new Map<number, Set<number>>();
+  private userMutedBy = new Map<number, Set<number>>();
+  private muteListCreatedAt = new Map<number, number>()
+  private ids = new UniqueIds();
+
+  constructor(root: string, serialized?: SerializedSocialGraph) {
+    this.ids = new UniqueIds(serialized && serialized.uniqueIds);
+    this.root = this.id(root);
+    this.followDistanceByUser.set(this.root, 0);
+    this.usersByFollowDistance.set(0, new Set([this.root]));
+    serialized && this.deserialize(serialized);
+  }
+
+  private id(str: string): number {
+    return this.ids.id(str);
+  }
+
+  private str(id: number): string {
+    return this.ids.str(id);
+  }
+
+  getRoot() {
+    return this.str(this.root)
+  }
+
+  setRoot(root: string) {
+    const rootId = this.id(root);
+    if (rootId === this.root) {
+      return;
+    }
+    this.root = rootId;
+    this.recalculateFollowDistances();
+  }
+
+  recalculateFollowDistances() {
+    this.followDistanceByUser.clear();
+    this.usersByFollowDistance.clear();
+    this.followDistanceByUser.set(this.root, 0);
+    this.usersByFollowDistance.set(0, new Set([this.root]));
+
+    const queue = [this.root];
+
+    while (queue.length > 0) {
+      const user = queue.shift()!;
+      const distance = this.followDistanceByUser.get(user)!;
+
+      const followedUsers = this.followedByUser.get(user) || new Set<number>();
+      for (const followed of followedUsers) {
+        if (!this.followDistanceByUser.has(followed)) {
+          const newFollowDistance = distance + 1;
+          this.followDistanceByUser.set(followed, newFollowDistance);
+          if (!this.usersByFollowDistance.has(newFollowDistance)) {
+            this.usersByFollowDistance.set(newFollowDistance, new Set());
+          }
+          this.usersByFollowDistance.get(newFollowDistance)!.add(followed);
+          queue.push(followed);
+        }
+      }
+    }
+  }
+
+  handleEvent(evs: NostrEvent | Array<NostrEvent>) {
+    const filtered = (Array.isArray(evs) ? evs : [evs]).filter((a) => [3, 10000].includes(a.kind));
+    for (const event of filtered) {
+        const createdAt = event.created_at;
+        if (createdAt > Math.floor(Date.now() / 1000) + 10 * 60) {
+            console.debug("event.created_at more than 10 minutes in the future", event)
+            continue
+        }
+        const author = this.id(event.pubkey);
+
+        if (event.kind === 3) {
+            this.handleFollowList(event, author, createdAt);
+        } else if (event.kind === 10000) {
+            this.handleMuteList(event, author, createdAt);
+        }
+    }
+  }
+
+  private handleFollowList(event: NostrEvent, author: number, createdAt: number) {
+    const existingCreatedAt = this.followListCreatedAt.get(author);
+    if (existingCreatedAt && createdAt <= existingCreatedAt) {
+        return;
+    }
+    this.followListCreatedAt.set(author, createdAt);
+
+    const followedInEvent = new Set<number>();
+    for (const tag of event.tags) {
+        if (tag[0] === 'p') {
+            if (!pubKeyRegex.test(tag[1])) {
+                continue;
+            }
+            const followedUser = this.id(tag[1]);
+            if (followedUser !== author) {
+                followedInEvent.add(followedUser);
+            }
+        }
+    }
+
+    const currentlyFollowed = this.followedByUser.get(author) || new Set<number>();
+
+    for (const user of currentlyFollowed) {
+        if (!followedInEvent.has(user)) {
+            this.privateRemoveFollower(user, author);
+        }
+    }
+
+    for (const user of followedInEvent) {
+        this.privateAddFollower(user, author);
+    }
+  }
+
+  private handleMuteList(event: NostrEvent, author: number, createdAt: number) {
+    const existingCreatedAt = this.muteListCreatedAt.get(author);
+    if (existingCreatedAt && createdAt <= existingCreatedAt) {
+        return;
+    }
+    this.muteListCreatedAt.set(author, createdAt);
+
+    const mutedInEvent = new Set<number>();
+    for (const tag of event.tags) {
+        if (tag[0] === 'p') {
+            if (!pubKeyRegex.test(tag[1])) {
+                continue;
+            }
+            const mutedUser = this.id(tag[1]);
+            if (mutedUser !== author) {
+                mutedInEvent.add(mutedUser);
+            }
+        }
+    }
+
+    const currentlyMuted = this.mutedByUser.get(author) || new Set<number>();
+
+    for (const user of currentlyMuted) {
+        if (!mutedInEvent.has(user)) {
+            this.mutedByUser.get(author)?.delete(user);
+            this.userMutedBy.get(user)?.delete(author);
+        }
+    }
+
+    for (const user of mutedInEvent) {
+        if (!this.mutedByUser.has(author)) {
+            this.mutedByUser.set(author, new Set<number>());
+        }
+        this.mutedByUser.get(author)?.add(user);
+
+        if (!this.userMutedBy.has(user)) {
+            this.userMutedBy.set(user, new Set<number>());
+        }
+        this.userMutedBy.get(user)?.add(author);
+    }
+  }
+
+  isFollowing(follower: string, followedUser: string): boolean {
+    const followedUserId = this.id(followedUser);
+    const followerId = this.id(follower);
+    return !!this.followedByUser.get(followerId)?.has(followedUserId);
+  }
+
+  getFollowDistance(user: string): number {
+    const distance = this.followDistanceByUser.get(this.id(user));
+    return distance === undefined ? 1000 : distance;
+  }
+
+  private addUserByFollowDistance(distance: number, user: number) {
+    if (!this.usersByFollowDistance.has(distance)) {
+      this.usersByFollowDistance.set(distance, new Set());
+    }
+    this.usersByFollowDistance.get(distance)?.add(user);
+    for (const d of this.usersByFollowDistance.keys()) {
+      if (d > distance) {
+        this.usersByFollowDistance.get(d)?.delete(user);
+      }
+    }
+  }
+
+  private privateAddFollower(followedUser: number, follower: number) {
+    if (typeof followedUser !== 'number' || typeof follower !== 'number') {
+      throw new Error('Invalid user id');
+    }
+    if (!this.followersByUser.has(followedUser)) {
+      this.followersByUser.set(followedUser, new Set<number>());
+    }
+    this.followersByUser.get(followedUser)?.add(follower);
+
+    if (!this.followedByUser.has(follower)) {
+      this.followedByUser.set(follower, new Set<number>());
+    }
+
+    if (followedUser !== this.root) {
+      let newFollowDistance;
+      if (follower === this.root) {
+        newFollowDistance = 1;
+        this.addUserByFollowDistance(newFollowDistance, followedUser);
+        this.followDistanceByUser.set(followedUser, newFollowDistance);
+      } else {
+        const existingFollowDistance = this.followDistanceByUser.get(followedUser);
+        const followerDistance = this.followDistanceByUser.get(follower);
+        newFollowDistance = followerDistance && followerDistance + 1;
+        if (
+          existingFollowDistance === undefined ||
+          (newFollowDistance && newFollowDistance < existingFollowDistance)
+        ) {
+          this.followDistanceByUser.set(followedUser, newFollowDistance!);
+          this.addUserByFollowDistance(newFollowDistance!, followedUser);
+        }
+      }
+    }
+
+    this.followedByUser.get(follower)?.add(followedUser);
+  }
+
+  addFollower(follower: string, followedUser: string) {
+    this.privateAddFollower(this.id(followedUser), this.id(follower))
+  }
+
+  removeFollower(follower: string, followedUser: string) {
+    this.privateRemoveFollower(this.id(followedUser), this.id(follower))
+  }
+
+  private privateRemoveFollower(unfollowedUser: number, follower: number) {
+    this.followersByUser.get(unfollowedUser)?.delete(follower);
+    this.followedByUser.get(follower)?.delete(unfollowedUser);
+
+    if (unfollowedUser === this.root) {
+      return;
+    }
+
+    let smallest = Infinity;
+    for (const follower of this.followersByUser.get(unfollowedUser) || []) {
+      const followerDistance = this.followDistanceByUser.get(follower);
+      if (followerDistance !== undefined && followerDistance + 1 < smallest) {
+        smallest = followerDistance + 1;
+      }
+    }
+
+    if (smallest === Infinity) {
+      this.followDistanceByUser.delete(unfollowedUser);
+    } else {
+      this.followDistanceByUser.set(unfollowedUser, smallest);
+    }
+  }
+
+  followerCount(address: string) {
+    const id = this.id(address);
+    return this.followersByUser.get(id)?.size ?? 0;
+  }
+
+  followedByFriendsCount(address: string) {
+    let count = 0;
+    const id = this.id(address);
+    for (const follower of this.followersByUser.get(id) ?? []) {
+      if (this.followedByUser.get(this.root)?.has(follower)) {
+        count++;
+      }
+    }
+    return count;
+  }
+
+  mutedByFriendsCount(address: string) {
+    let count = 0;
+    const id = this.id(address);
+    for (const muter of this.userMutedBy.get(id) ?? []) {
+      if (this.followedByUser.get(this.root)?.has(muter)) {
+        count++;
+      }
+    }
+    return count;
+  }
+
+  size() {
+    let follows = 0;
+    let mutes = 0;
+    const sizeByDistance: { [distance: number]: number } = {};
+
+    for (const followedSet of this.followedByUser.values()) {
+      follows += followedSet.size;
+    }
+
+    for (const mutedSet of this.mutedByUser.values()) {
+      mutes += mutedSet.size;
+    }
+
+    for (const [distance, users] of this.usersByFollowDistance.entries()) {
+      sizeByDistance[distance] = users.size;
+    }
+
+    return {
+      users: this.followDistanceByUser.size,
+      follows,
+      mutes,
+      sizeByDistance,
+    };
+  }
+
+  followedByFriends(address: string) {
+    const id = this.id(address);
+    const set = new Set<string>();
+    for (const follower of this.followersByUser.get(id) ?? []) {
+      if (this.followedByUser.get(this.root)?.has(follower)) {
+        set.add(this.str(follower));
+      }
+    }
+    return set;
+  }
+
+  getFollowedByUser(user: string, includeSelf = false): Set<string> {
+    const userId = this.id(user);
+    const set = new Set<string>();
+    for (const id of this.followedByUser.get(userId) || []) {
+      set.add(this.str(id));
+    }
+    if (includeSelf) {
+      set.add(user);
+    }
+    return set;
+  }
+
+  getFollowersByUser(address: string): Set<string> {
+    const userId = this.id(address);
+    const set = new Set<string>();
+    for (const id of this.followersByUser.get(userId) || []) {
+      set.add(this.str(id));
+    }
+    return set;
+  }
+
+  serialize(maxSize?: number): SerializedSocialGraph {
+    const followLists: SerializedUserList[] = [];
+    const muteLists: SerializedUserList[] = [];
+
+    for (const [user, followedUsers] of this.followedByUser) {
+      const createdAt = this.followListCreatedAt.get(user);
+      if (!createdAt) {
+        continue;
+      }
+      followLists.push([user, [...followedUsers.values()], createdAt]);
+      if (maxSize && followLists.length >= maxSize) {
+        return { followLists, uniqueIds: this.ids.serialize() };
+      }
+    }
+
+    for (const [user, mutedUsers] of this.mutedByUser) {
+      const muteListCreatedAt = this.muteListCreatedAt.get(user);
+      if (muteListCreatedAt) {
+        muteLists.push([user, [...mutedUsers.values()], muteListCreatedAt]);
+      }
+    }
+
+    return { followLists, uniqueIds: this.ids.serialize(), muteLists };
+  }
+
+  private deserialize(serialized: SerializedSocialGraph): void {
+    const { followLists, muteLists } = serialized;
+    const serializedRoot = followLists[0]?.[0];
+    for (const [follower, followedUsers, createdAt] of followLists) {
+      for (const followedUser of followedUsers) {
+        this.privateAddFollower(followedUser, follower);
+      }
+      this.followListCreatedAt.set(follower, createdAt ?? 0);
+    }
+    if (muteLists) {
+      for (const [muter, mutedUsers, createdAt] of muteLists) {
+        this.mutedByUser.set(muter, new Set(mutedUsers));
+        for (const mutedUser of mutedUsers) {
+          if (!this.userMutedBy.has(mutedUser)) {
+            this.userMutedBy.set(mutedUser, new Set());
+          }
+          this.userMutedBy.get(mutedUser)?.add(muter);
+        }
+        this.muteListCreatedAt.set(muter, createdAt ?? 0);
+      }
+    }
+    if (serializedRoot !== this.root) {
+      this.recalculateFollowDistances();
+    }
+  }
+
+  getUsersByFollowDistance(distance: number): Set<string> {
+    const users = this.usersByFollowDistance.get(distance) || new Set<number>();
+    const result = new Set<string>();
+    for (const user of users) {
+      result.add(this.str(user));
+    }
+    return result;
+  }
+
+  getFollowListCreatedAt(user: string) {
+    return this.followListCreatedAt.get(this.id(user))
+  }
+
+  merge(other: SocialGraph) {
+    console.log('size before merge', this.size());
+    console.time('merge graph');
+    for (const user of other) {
+      this.mergeUserLists(
+        user,
+        this.followListCreatedAt,
+        other.followListCreatedAt,
+        this.followedByUser,
+        other.followedByUser
+      );
+
+      this.mergeUserLists(
+        user,
+        this.muteListCreatedAt,
+        other.muteListCreatedAt,
+        this.mutedByUser,
+        other.mutedByUser
+      );
+    }
+    this.recalculateFollowDistances();
+    console.timeEnd('merge graph');
+    console.log('size after merge', this.size());
+  }
+
+  private mergeUserLists(
+    user: string,
+    ourCreatedAtMap: Map<number, number>,
+    theirCreatedAtMap: Map<number, number>,
+    ourUserMap: Map<number, Set<number>>,
+    theirUserMap: Map<number, Set<number>>
+  ) {
+    const userId = this.id(user);
+    const ourCreatedAt = ourCreatedAtMap.get(userId);
+    const theirCreatedAt = theirCreatedAtMap.get(userId);
+
+    if (!ourCreatedAt || (theirCreatedAt && ourCreatedAt < theirCreatedAt)) {
+      const newUsers = theirUserMap.get(userId) || new Set<number>();
+      const currentUsers = ourUserMap.get(userId) || new Set<number>();
+
+      for (const newUser of newUsers) {
+        if (!currentUsers.has(newUser)) {
+          if (!ourUserMap.has(userId)) {
+            ourUserMap.set(userId, new Set<number>());
+          }
+          ourUserMap.get(userId)!.add(newUser);
+        }
+      }
+
+      for (const currentUser of currentUsers) {
+        if (!newUsers.has(currentUser)) {
+          ourUserMap.get(userId)!.delete(currentUser);
+        }
+      }
+
+      ourCreatedAtMap.set(userId, theirCreatedAt ?? 0);
+    }
+  }
+
+  *userIterator(upToDistance?: number): Generator<string> {
+    const distances = Array.from(this.usersByFollowDistance.keys()).sort((a, b) => a - b);
+    for (const distance of distances) {
+      if (upToDistance !== undefined && distance > upToDistance) {
+        break;
+      }
+      const users = this.usersByFollowDistance.get(distance) || new Set<number>();
+      for (const user of users) {
+        yield this.str(user);
+      }
+    }
+  }
+
+  [Symbol.iterator](): Generator<string> {
+    return this.userIterator();
+  }
+
+  getMutedByUser(user: string): Set<string> {
+    const userId = this.id(user);
+    const set = new Set<string>();
+    for (const id of this.mutedByUser.get(userId) || []) {
+      set.add(this.str(id));
+    }
+    return set;
+  }
+
+  getUserMutedBy(user: string): Set<string> {
+    const userId = this.id(user);
+    const set = new Set<string>();
+    for (const id of this.userMutedBy.get(userId) || []) {
+      set.add(this.str(id));
+    }
+    return set;
+  }
+
+  // follower and muter counts by distance
+  stats(user: string): { [distance: number]: { followers: number; muters: number } } {
+    const stats: { [distance: number]: { followers: number; muters: number } } = {};
+    const userId = this.id(user);
+    for (const follower of this.followersByUser.get(userId) || []) {
+      const distance = this.followDistanceByUser.get(follower);
+      if (distance !== undefined) {
+        if (!stats[distance]) {
+          stats[distance] = { followers: 0, muters: 0 };
+        }
+        stats[distance].followers++;
+      }
+    }
+    for (const muter of this.userMutedBy.get(userId) || []) {
+      const distance = this.followDistanceByUser.get(muter);
+      if (distance !== undefined) {
+        if (!stats[distance]) {
+          stats[distance] = { followers: 0, muters: 0 };
+        }
+        stats[distance].muters++;
+      }
+    }
+    return stats;
+  }
+
+  removeMutedNotFollowedUsers() {
+    const usersToRemove = new Set<number>();
+
+    for (const [user, muters] of this.userMutedBy.entries()) {
+      const followers = this.followersByUser.get(user) || new Set<number>();
+      if (followers.size === 0 && muters.size > 0) {
+        usersToRemove.add(user);
+      }
+    }
+
+    for (const user of usersToRemove) {
+      this.removeUserById(user);
+    }
+
+    return usersToRemove.size;
+  }
+
+  private removeUserById(user: UID) {
+    // Remove from UniqueIds
+    this.ids.remove(user);
+
+    // Remove from all maps
+    this.followDistanceByUser.delete(user);
+    this.followedByUser.delete(user);
+    this.followersByUser.delete(user);
+    this.followListCreatedAt.delete(user);
+    this.mutedByUser.delete(user);
+    this.userMutedBy.delete(user);
+    this.muteListCreatedAt.delete(user);
+
+    // Remove user from all sets
+    this.usersByFollowDistance.forEach(set => set.delete(user));
+    this.followedByUser.forEach(set => set.delete(user));
+    this.followersByUser.forEach(set => set.delete(user));
+    this.mutedByUser.forEach(set => set.delete(user));
+    this.userMutedBy.forEach(set => set.delete(user));
+  }
+}

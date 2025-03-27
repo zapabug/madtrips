@@ -1,0 +1,137 @@
+src/
+├── app/                        # Next.js pages directory (routes)
+│   ├── community/              # Community page route
+│   │   ├── page.tsx            # Community page component
+│   ├── checkout/               # Checkout page route
+│   ├── packages/               # Packages page route
+│   ├── map/                    # Map page route
+│   ├── admin/                  # Admin page route
+│   ├── diagnosis/              # Diagnosis page route
+│   ├── api/                    # API routes
+│   ├── layout.tsx              # Root layout
+│   ├── page.tsx                # Home page
+│   ├── providers.tsx           # App providers
+│   ├── metadata.ts             # App metadata
+│   ├── globals.css             # Global styles
+│   └── favicon.ico             # App favicon
+├── components/                 # Reusable UI components
+│   ├── community/              # Community components
+│   │   ├── SocialGraph.tsx     # Social graph visualization
+│   │   ├── SocialGraphVisualization.tsx # Simplified graph visualization
+│   │   ├── CommunityFeed.tsx   # Nostr feed component (renamed from NostrFeed)
+│   │   ├── MultiUserNostrFeed.tsx # Multi-user Nostr feed
+│   │   ├── NostrProfileImage.tsx  # Profile image component
+│   │   └── NostrProfileHeader.tsx # Profile header component
+│   ├── checkout/               # Checkout components
+│   ├── tip/                    # Tipping components
+│   │   ├── MultiTipJar.tsx     # Multiple recipient tipping
+│   ├── map/                    # Map components
+│   ├── layout/                 # Layout components
+│   ├── home/                   # Home page components
+│   ├── NostrLoginButton.tsx    # Nostr login button
+│   ├── ClientNostrSigner.tsx   # Client-side Nostr signer component
+│   ├── LightningPaymentButton.tsx # Lightning payment button
+│   ├── NostrLink.tsx           # Nostr link component
+│   ├── NostrPayment.tsx        # Nostr payment component
+│   ├── PackagePayment.tsx      # Package payment component
+│   └── ThemeProvider.tsx       # Theme provider component
+├── constants/                  # App-wide constants
+│   ├── nostr.ts                # Nostr-related constants (canonical source of CORE_NPUBS)
+│   ├── relays.ts               # Nostr relay lists and functions
+│   ├── loadingMessages.ts      # Loading messages for UI feedback
+│   └── brandColors.ts          # Brand color definitions
+├── types/                      # TypeScript type definitions
+│   ├── nostr.d.ts              # Nostr-related types
+│   ├── graph-types.ts          # Graph visualization types
+│   └── cart-types.ts           # Shopping cart types
+├── hooks/                      # Custom React hooks
+│   ├── useNostrProfile.ts      # Hook for fetching Nostr profiles
+│   ├── useCheckoutFlow.ts      # Hook for checkout process
+│   └── useMediaQuery.ts        # Hook for responsive design
+├── data/                       # Data files/mocks
+│   └── packages.ts             # Package data
+├── lib/                        # Library code
+│   ├── contexts/               # React contexts
+│   │   └── NostrContext.tsx    # Nostr context provider
+│   ├── services/               # Service modules
+│   │   └── NostrMessagingService.ts # Nostr messaging service
+│   └── store/                  # State management
+│       └── cart-store.ts       # Cart store
+└── utils/                      # Utility functions
+    ├── graphUtils.ts           # Graph utility functions
+    ├── profileUtils.ts         # Profile utilities
+    ├── nostrUtils.ts           # Nostr utility functions (migrated from component utils)
+    └── images.ts               # Image utility functions
+
+
+
+//Proper layout for the app
+src/
+├── app/                        # Next.js app directory
+│   ├── community/              # Community page route
+│   │   ├── page.tsx            # Community page component
+│   │   ├── layout.tsx          # Community-specific layout
+│   │   ├── checkout/           # Checkout page route
+│   ├── packages/               # Packages page route
+│   ├── map/                    # Map page route
+│   ├── admin/                  # Admin page route
+│   ├── diagnosis/              # Diagnosis page route
+│   ├── api/                    # API routes
+│   ├── layout.tsx              # Root layout
+│   ├── page.tsx                # Home page
+│   ├── providers.tsx           # App providers
+│   ├── metadata.ts             # App metadata
+│   ├── globals.css             # Global styles
+│   └── favicon.ico             # App favicon
+├── components/                 # Reusable UI components
+│   ├── community/              # Community components
+│   │   ├── CommunityFeed.tsx   # Nostr feed (only images & hashtags) from graph compoonent
+│   │   ├── SocialGraph.tsx     # Social graph visualization
+│   │   ├── SocialGraphVisualization.tsx # Social graph visualization
+│   │   ├── MultiUserNostrFeed.tsx # Multi-user Nostr feed
+│   │   ├── RecommendedFollows.tsx # Friends-of-friends suggestion
+│   │   ├── MultiTipJar.tsx     # community tipping component
+│   │   ├── RecommendedClients.tsx # Suggested clients (new)
+│   │   ├── NostrProfileImage.tsx  # Profile image component
+│   │   ├── NostrProfileHeader.tsx # Profile header component
+│   ├── checkout/               # Checkout components
+│   ├── tip/                    # Tipping components
+│   ├── map/                    # Map components
+│   ├── layout/                 # Layout components
+│   ├── home/                   # Home page components
+│   ├── nostr/                  # Nostr-specific components
+│   │   ├── NostrLoginButton.tsx    # Nostr login button
+│   │   ├── ClientNostrSigner.tsx   # Client-side Nostr signer
+│   │   ├── NostrLink.tsx           # Nostr link component
+│   │   ├── NostrPayment.tsx        # Nostr payment component
+│   ├── payments/                 # Payment components
+│   │   ├── LightningPaymentButton.tsx # Lightning payments
+│   │   ├── PackagePayment.tsx      # Package payment component
+│   └── ThemeProvider.tsx       # Theme provider component
+├── constants/                  # App-wide constants
+│   ├── nostr.ts                # Nostr-related constants (canonical `CORE_NPUBS`)
+│   ├── relays.ts               # Nostr relay lists and functions
+│   ├── loadingMessages.ts      # Loading messages for UI feedback
+│   ├── brandColors.ts          # Brand color definitions
+├── types/                      # TypeScript type definitions
+│   ├── nostr.d.ts              # Nostr-related types
+│   ├── graph-types.ts          # Graph visualization types
+│   ├── cart-types.ts           # Shopping cart types
+├── hooks/                      # Custom React hooks
+│   ├── useNostrProfile.ts      # Hook for fetching Nostr profiles
+│   ├── useCheckoutFlow.ts      # Hook for checkout process
+│   ├── useMediaQuery.ts        # Hook for responsive design
+├── data/                       # Data files/mocks
+│   ├── packages.ts             # Package data
+├── lib/                        # Library code
+│   ├── contexts/               # React contexts
+│   │   ├── NostrContext.tsx    # Nostr context provider
+│   ├── services/               # Service modules
+│   │   ├── NostrMessagingService.ts # Nostr messaging service
+│   ├── store/                  # State management
+│   │   ├── cart-store.ts       # Cart store
+└── utils/                      # Utility functions
+    ├── graphUtils.ts           # Graph utility functions
+    ├── profileUtils.ts         # Profile utilities
+    ├── nostrUtils.ts           # Nostr utility functions
+    ├── images.ts               # Image utility functions
