@@ -43,6 +43,8 @@ interface SocialGraphProps {
   className?: string;
   // Include social data directly (optional)
   data?: GraphData;
+  // Whether to show second-degree connections (default: false)
+  showSecondDegree?: boolean;
 }
 
 // Convert graph data to the format expected by ForceGraph2D
@@ -50,7 +52,7 @@ const convertGraphData = (data: GraphData) => {
   return {
     nodes: data.nodes.map(node => ({
       ...node,
-      val: node.val || (node.isCoreNode ? 15 : 5),
+      val: node.val || (node.isCoreNode ? 25 : 3), // Make core nodes much bigger and follows smaller
       color: node.color || (node.isCoreNode ? BRAND_COLORS.bitcoinOrange : BRAND_COLORS.lightSand),
     })),
     links: data.links.map(link => ({
@@ -73,8 +75,11 @@ const markCoreNodes = (graphData: GraphData, coreNpubs: string[]) => {
   graphData.nodes.forEach(node => {
     if (node.npub && coreNpubSet.has(node.npub)) {
       node.isCoreNode = true;
-      node.val = (node.val || 1) * 1.5;
+      node.val = 25; // Make core nodes much bigger
       node.color = BRAND_COLORS.bitcoinOrange; // Use brand color instead of hardcoded
+    } else {
+      // Non-core nodes should be smaller
+      node.val = 3;
     }
   });
   
@@ -83,6 +88,11 @@ const markCoreNodes = (graphData: GraphData, coreNpubs: string[]) => {
 
 // Function to preload images for better render performance
 const preloadImage = (url: string): Promise<HTMLImageElement> => {
+  // Skip invalid URLs
+  if (!url || url === DEFAULT_PROFILE_IMAGE || !url.startsWith('http')) {
+    return Promise.resolve(new Image());
+  }
+
   // Check if image is already in cache
   if (IMAGE_CACHE.has(url)) {
     return Promise.resolve(IMAGE_CACHE.get(url)!);
@@ -90,18 +100,31 @@ const preloadImage = (url: string): Promise<HTMLImageElement> => {
   
   return new Promise((resolve, reject) => {
     const img = new Image();
+    img.crossOrigin = "anonymous"; // Try to avoid CORS issues
+    
     img.onload = () => {
       IMAGE_CACHE.set(url, img);
       resolve(img);
     };
+    
     img.onerror = () => {
+      console.warn(`Failed to load image: ${url}`);
       // Use default image on error
       const defaultImg = new Image();
       defaultImg.src = DEFAULT_PROFILE_IMAGE;
       IMAGE_CACHE.set(url, defaultImg);
       resolve(defaultImg);
     };
+    
+    // Set src after adding event handlers
     img.src = url;
+    
+    // Set a timeout to avoid hanging on image load
+    setTimeout(() => {
+      if (!img.complete) {
+        img.src = DEFAULT_PROFILE_IMAGE;
+      }
+    }, 5000);
   });
 };
 
@@ -128,6 +151,7 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
   width = '100%',
   className = '',
   data,
+  showSecondDegree = false,
 }) => {
   const { ndk, getUserProfile, shortenNpub, reconnect, ndkReady, getConnectedRelays } = useNostr();
   const [graph, setGraph] = useState<GraphData | null>(null);
@@ -727,73 +751,103 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
       // Process second-degree connections to find all 168 expected connections
       console.log(`Processing ${firstDegreeConnections.size} first-degree connections`);
       
-      // Use a smaller subset of first-degree connections if there are too many
-      // to avoid overwhelming the relays and browser
-      let firstDegreeForSecondLevel = firstDegreeConnections;
-      if (firstDegreeConnections.size > 50) {
-        console.log("Limiting first-degree connections for second-degree processing");
-        firstDegreeForSecondLevel = new Set(
-          Array.from(firstDegreeConnections).slice(0, 50)
-        );
-      }
-      
-      const { nodes: updatedNodes, links: updatedLinks } = await processSecondDegreeConnections(
-        firstDegreeForSecondLevel,
-        coreKeys,
-        nodes,
-        links,
-        addedPubkeys
-      );
-      console.log(`Graph now has ${updatedLinks.length} links and ${updatedNodes.length} nodes`);
-      
-      // Fetch profiles for first-degree connections
-      const firstDegreeNodes = updatedNodes.filter(node => 
-        !node.isCoreNode && firstDegreeConnections.has(node.pubkey)
-      );
-      
-      console.log(`Fetching profiles for ${firstDegreeNodes.length} first-degree connections`);
-      const firstDegreeWithProfiles = await fetchProfiles(firstDegreeNodes);
-      
-      // Update nodes with profile information
-      const finalNodes = updatedNodes.map(node => {
-        if (!node.isCoreNode && firstDegreeConnections.has(node.pubkey)) {
-          // Find the updated node with profile
-          const updatedNode = firstDegreeWithProfiles.find(n => n.id === node.id);
-          return updatedNode || node;
+      // Only process second-degree connections if enabled
+      if (showSecondDegree) {
+        // Use a smaller subset of first-degree connections if there are too many
+        // to avoid overwhelming the relays and browser
+        let firstDegreeForSecondLevel = firstDegreeConnections;
+        if (firstDegreeConnections.size > 50) {
+          console.log("Limiting first-degree connections for second-degree processing");
+          firstDegreeForSecondLevel = new Set(
+            Array.from(firstDegreeConnections).slice(0, 50)
+          );
         }
-        return node;
-      });
-      
-      // Count how many second-degree connections we have
-      const secondDegreeCount = finalNodes.filter(node => 
-        !node.isCoreNode && !firstDegreeConnections.has(node.pubkey)
-      ).length;
-      console.log(`Graph contains ${secondDegreeCount} second-degree connections`);
-      
-      // Final graph data
-      const graphData: GraphData = {
-        nodes: finalNodes,
-        links: updatedLinks,
-        lastUpdated: Date.now()
-      };
-      
-      // Mark core nodes to ensure proper visualization
-      const markedGraphData = markCoreNodes(graphData, effectiveNpubs);
-      
-      // Update state and refs directly
-      setGraph(markedGraphData);
-      graphDataRef.current = markedGraphData;
-      
-      // Only cache for this session
-      GRAPH_CACHE.data = markedGraphData;
-      GRAPH_CACHE.timestamp = Date.now();
-      
-      console.log(`Final graph has ${markedGraphData.links.length} links and ${markedGraphData.nodes.length} nodes`);
-      
-      // Preload images for all nodes
-      for (const node of finalNodes) {
-        if (node.picture && node.picture !== DEFAULT_PROFILE_IMAGE) {
-          preloadImage(node.picture).catch(() => {});
+        
+        const { nodes: updatedNodes, links: updatedLinks } = await processSecondDegreeConnections(
+          firstDegreeForSecondLevel,
+          coreKeys,
+          nodes,
+          links,
+          addedPubkeys
+        );
+        console.log(`Graph now has ${updatedLinks.length} links and ${updatedNodes.length} nodes`);
+        
+        // Fetch profiles for first-degree connections
+        const firstDegreeNodes = updatedNodes.filter(node => 
+          !node.isCoreNode && firstDegreeConnections.has(node.pubkey)
+        );
+        
+        console.log(`Fetching profiles for ${firstDegreeNodes.length} first-degree connections`);
+        const firstDegreeWithProfiles = await fetchProfiles(firstDegreeNodes);
+        
+        // Update nodes with profile information
+        const finalNodes = updatedNodes.map(node => {
+          if (!node.isCoreNode && firstDegreeConnections.has(node.pubkey)) {
+            // Find the updated node with profile
+            const updatedNode = firstDegreeWithProfiles.find(n => n.id === node.id);
+            return updatedNode || node;
+          }
+          return node;
+        });
+        
+        // Count how many second-degree connections we have
+        const secondDegreeCount = finalNodes.filter(node => 
+          !node.isCoreNode && !firstDegreeConnections.has(node.pubkey)
+        ).length;
+        console.log(`Graph contains ${secondDegreeCount} second-degree connections`);
+        
+        // Final graph data
+        const graphData: GraphData = {
+          nodes: finalNodes,
+          links: updatedLinks,
+          lastUpdated: Date.now()
+        };
+        
+        // Mark core nodes to ensure proper visualization
+        const markedGraphData = markCoreNodes(graphData, effectiveNpubs);
+        
+        // Update state and refs directly
+        setGraph(markedGraphData);
+        graphDataRef.current = markedGraphData;
+        
+        // Only cache for this session
+        GRAPH_CACHE.data = markedGraphData;
+        GRAPH_CACHE.timestamp = Date.now();
+        
+        console.log(`Final graph has ${markedGraphData.links.length} links and ${markedGraphData.nodes.length} nodes`);
+        
+        // Preload images for all nodes
+        for (const node of finalNodes) {
+          if (node.picture && node.picture !== DEFAULT_PROFILE_IMAGE) {
+            preloadImage(node.picture).catch(() => {});
+          }
+        }
+      } else {
+        // Final graph data
+        const graphData: GraphData = {
+          nodes: nodes,
+          links: links,
+          lastUpdated: Date.now()
+        };
+        
+        // Mark core nodes to ensure proper visualization
+        const markedGraphData = markCoreNodes(graphData, effectiveNpubs);
+        
+        // Update state and refs directly
+        setGraph(markedGraphData);
+        graphDataRef.current = markedGraphData;
+        
+        // Only cache for this session
+        GRAPH_CACHE.data = markedGraphData;
+        GRAPH_CACHE.timestamp = Date.now();
+        
+        console.log(`Final graph has ${markedGraphData.links.length} links and ${markedGraphData.nodes.length} nodes`);
+        
+        // Preload images for all nodes
+        for (const node of nodes) {
+          if (node.picture && node.picture !== DEFAULT_PROFILE_IMAGE) {
+            preloadImage(node.picture).catch(() => {});
+          }
         }
       }
     } catch (err) {
@@ -805,7 +859,7 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
     }
   }, [
     isNdkReady, effectiveNpubs, ndk, shortenNpub, 
-    maxConnections, fetchProfiles, processSecondDegreeConnections, getConnectedRelays
+    maxConnections, fetchProfiles, processSecondDegreeConnections, getConnectedRelays, showSecondDegree
   ]);
 
   // Update the forceRefresh implementation after buildGraph is defined
@@ -926,8 +980,11 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
     
     // Apply hover effect using slightly larger size
     const isHovered = node === selectedNode;
+    const isCoreNode = node.isCoreNode;
     const hoverScale = isHovered ? 1.2 : 1;
-    const size = (node.val || 5) * Math.min(2, Math.max(0.5, 1 / globalScale)) * hoverScale;
+    // Use different base sizes for core vs. regular nodes
+    const baseSize = isCoreNode ? 18 : 4;
+    const size = baseSize * Math.min(2, Math.max(0.5, 1 / globalScale)) * hoverScale;
     
     // Helper function to draw a circle
     const drawCircle = (color: string) => {
@@ -941,6 +998,13 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
       ctx.lineWidth = isHovered ? 1.5 : 0.5;
       ctx.stroke();
     };
+    
+    // Force preload the image if it exists and isn't already in cache
+    if (node.picture && node.picture !== DEFAULT_PROFILE_IMAGE && !IMAGE_CACHE.has(node.picture)) {
+      preloadImage(node.picture).catch(() => {
+        console.warn(`Failed to preload image for node: ${node.name || node.npub}`);
+      });
+    }
     
     // Draw the node image if available
     if (node.picture && node.picture !== DEFAULT_PROFILE_IMAGE) {
@@ -976,7 +1040,7 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
           ctx.beginPath();
           ctx.arc(x, y, size + 1, 0, 2 * Math.PI);
           ctx.strokeStyle = node.isCoreNode ? BRAND_COLORS.bitcoinOrange : BRAND_COLORS.blueGreen;
-          ctx.lineWidth = isHovered ? 1.5 : 1.5;
+          ctx.lineWidth = isHovered ? 2.5 : 2;
           ctx.stroke();
           
           // Add glow effect for hovered nodes
@@ -993,7 +1057,14 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
         }
       } else {
         // No cached image yet, try to load it
-        preloadImage(node.picture).catch(() => {});
+        preloadImage(node.picture)
+          .then(img => {
+            // Once loaded, force a repaint
+            if (forceGraphRef.current) {
+              forceGraphRef.current.refresh();
+            }
+          })
+          .catch(() => {});
         // Draw fallback circle
         drawCircle(node.color || BRAND_COLORS.lightSand);
       }
@@ -1014,7 +1085,18 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
       }
     }
     
-    // Draw node label only on hover
+    // For core nodes, add a small star indicator
+    if (node.isCoreNode && !isHovered) {
+      const starSize = size / 2;
+      ctx.fillStyle = BRAND_COLORS.bitcoinOrange;
+      
+      // Draw a small star or indicator dot
+      ctx.beginPath();
+      ctx.arc(x + size * 0.7, y - size * 0.7, starSize / 2, 0, 2 * Math.PI);
+      ctx.fill();
+    }
+    
+    // Draw node label only on hover - nowhere else!
     if (isHovered) {
       const labelText = node.name || shortenNpub(node.npub || '');
       if (labelText) {
@@ -1051,17 +1133,6 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
         ctx.fillStyle = textColor;
         ctx.fillText(labelText, x, y + size + 2 + bgHeight/2);
       }
-    }
-    
-    // For core nodes, add a small star indicator
-    if (node.isCoreNode && !isHovered) {
-      const starSize = size / 2;
-      ctx.fillStyle = BRAND_COLORS.bitcoinOrange;
-      
-      // Draw a small star or indicator dot
-      ctx.beginPath();
-      ctx.arc(x + size * 0.7, y - size * 0.7, starSize / 2, 0, 2 * Math.PI);
-      ctx.fill();
     }
   }, [shortenNpub, selectedNode]);
 
@@ -1280,26 +1351,47 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
         <div className="absolute top-2 right-2 bg-white dark:bg-gray-800 p-3 rounded-lg shadow-lg z-20 max-w-[250px] transition-all duration-300 ease-in-out">
           <div className="flex items-center mb-2">
             {selectedNode.picture ? (
-              <img 
-                src={selectedNode.picture} 
-                    alt={selectedNode.name || shortenNpub(selectedNode.npub || '')}
-                className="w-10 h-10 rounded-full mr-2 border-2 border-forest"
-                    onError={(e) => {
-                      (e.target as HTMLImageElement).src = DEFAULT_PROFILE_IMAGE;
-                    }}
-                  />
+              <a
+                href={`https://njump.me/${selectedNode.npub}`}
+                target="_blank"
+                rel="noopener noreferrer" 
+                className="block mr-2" 
+              >
+                <img 
+                  src={selectedNode.picture} 
+                  alt={selectedNode.name || shortenNpub(selectedNode.npub || '')}
+                  className="w-10 h-10 rounded-full border-2 border-forest hover:border-bitcoin transition-colors"
+                  onError={(e) => {
+                    (e.target as HTMLImageElement).src = DEFAULT_PROFILE_IMAGE;
+                  }}
+                />
+              </a>
             ) : (
-              <div className="w-10 h-10 rounded-full bg-gray-200 mr-2 border-2 border-forest flex items-center justify-center">
-                <span className="text-xs font-medium text-gray-600">
-                  {(selectedNode.name?.substring(0, 2) || shortenNpub(selectedNode.npub || '').substring(0, 2)).toUpperCase()}
-                </span>
+              <a
+                href={`https://njump.me/${selectedNode.npub}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="block mr-2"
+              >
+                <div className="w-10 h-10 rounded-full bg-gray-200 border-2 border-forest hover:border-bitcoin transition-colors flex items-center justify-center">
+                  <span className="text-xs font-medium text-gray-600">
+                    {(selectedNode.name?.substring(0, 2) || shortenNpub(selectedNode.npub || '').substring(0, 2)).toUpperCase()}
+                  </span>
                 </div>
+              </a>
             )}
-                <div>
-              <h3 className="font-semibold">{selectedNode.name || shortenNpub(selectedNode.npub || '')}</h3>
+            <div>
+              <a
+                href={`https://njump.me/${selectedNode.npub}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="hover:underline"
+              >
+                <h3 className="font-semibold">{selectedNode.name || shortenNpub(selectedNode.npub || '')}</h3>
+              </a>
               <p className="text-xs text-gray-500 dark:text-gray-400">{shortenNpub(selectedNode.npub || '')}</p>
-                </div>
-              </div>
+            </div>
+          </div>
           
           <div className="flex space-x-2 mt-2">
             <button 
@@ -1307,7 +1399,7 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
               onClick={() => {
                 // Open user's profile in new tab
                 if (selectedNode.npub) {
-                  window.open(`https://primal.net/p/${selectedNode.npub}`, '_blank');
+                  window.open(`https://njump.me/${selectedNode.npub}`, '_blank');
                 }
               }}
             >
