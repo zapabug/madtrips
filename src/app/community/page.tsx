@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState, useCallback, memo } from 'react';
+import React, { useEffect, useState, useCallback, memo, useMemo } from 'react';
 import Link from 'next/link';
 import { SocialGraphVisualization } from '../../components/community/SocialGraphVisualization';
 import { NostrProfileImage } from '../../components/community/NostrProfileImage';
@@ -8,6 +8,7 @@ import { NostrFeed } from '../../components/community/CommunityFeed';
 import { useNostr } from '../../lib/contexts/NostrContext';
 import { BRAND_COLORS } from '../../constants/brandColors';
 import MultiUserNostrFeed from '../../components/community/MultiUserNostrFeed';
+import MadeiraFeed from '../../components/community/MadeiraFeed';
 import { MultiTipJar } from '../../components/tip/MultiTipJar';
 
 // Extract Core Profiles to avoid recreating on each render
@@ -38,11 +39,10 @@ const CommunityUpdates = memo(() => (
   <div className="mb-8 bg-white dark:bg-gray-800 rounded-lg shadow-lg p-4">
     <h2 className="text-2xl font-bold mb-4 text-[#14857C]">Community Updates</h2>
     <div className="w-full h-[500px] overflow-hidden border-2 border-forest rounded-lg">
-      <MultiUserNostrFeed 
+      <MadeiraFeed 
         npubs={CORE_NPUBS} 
-        limit={25} 
-        autoScroll={true} 
-        scrollInterval={5000} 
+        limit={25}
+        useCorePubs={true}
       />
     </div>
   </div>
@@ -52,18 +52,18 @@ CommunityUpdates.displayName = 'CommunityUpdates';
 
 // Memoized Social Graph section
 const SocialGraphSection = memo(() => (
-  <div className="mb-8 bg-forest text-white rounded-lg shadow-md p-4">
-    <h3 className="text-xl font-semibold mb-4 text-sand">Community Connections</h3>
-    <div className="h-[400px] w-full mb-4">
+  <div className="mb-8 bg-white dark:bg-gray-800 rounded-lg shadow-lg p-4">
+    <h3 className="text-2xl font-bold mb-4 text-sand bg-forest inline-block px-4 py-1 rounded-lg">Community Connections</h3>
+    <div className="h-[400px] w-full mb-4 border-2 border-forest rounded-lg overflow-hidden">
       <SocialGraphVisualization 
         height={400} 
-        className="rounded-lg border border-gray-200"
+        className="w-full h-full"
       />
     </div>
     
-    <p className="mb-4 text-sm">
-      The Bitcoin Madeira community is a network of individuals, businesses, and organizations 
-      committed to promoting Bitcoin adoption and education in Madeira.
+    <p className="text-gray-600 dark:text-gray-300 text-sm">
+      Discover how the Bitcoin Madeira community connects. This visualization shows relationships between community members,
+      highlighting Bitcoin advocates and businesses supporting adoption on the island.
     </p>
   </div>
 ));
@@ -72,8 +72,8 @@ SocialGraphSection.displayName = 'SocialGraphSection';
 
 // Memoized Community Feed section
 const CommunityFeed = memo(() => (
-  <div className="mb-8">
-    <h3 className="text-xl font-semibold mb-4 text-bitcoin">Community Feed</h3>
+  <div className="mb-8 bg-white dark:bg-gray-800 rounded-lg shadow-lg p-4">
+    <h3 className="text-xl font-bold mb-4 text-bitcoin">Community Feed</h3>
     <div className="w-full h-[600px] rounded-lg overflow-hidden border-2 border-forest">
       <NostrFeed
         npubs={CORE_NPUBS}
@@ -89,13 +89,22 @@ const CommunityFeed = memo(() => (
 CommunityFeed.displayName = 'CommunityFeed';
 
 export default function CommunityPage(): React.ReactElement {
-  const { getUserProfile, reconnect, ndkReady } = useNostr();
+  const { getUserProfile, reconnect, ndkReady, getConnectedRelays } = useNostr();
   const [profileNames, setProfileNames] = useState<{[key: string]: string}>({});
   const [connected, setConnected] = useState(false);
+  
+  // Get current connection status
+  const connectionStatus = useMemo(() => {
+    const relays = getConnectedRelays();
+    return {
+      connected: relays.length > 0,
+      count: relays.length,
+      relays
+    };
+  }, [getConnectedRelays]);
 
   // Reconnect to Nostr relays on page load
   useEffect(() => {
-    // Always try to reconnect when the page loads to ensure fresh relay connections
     const initializeNostr = async () => {
       try {
         const success = await reconnect();
@@ -133,7 +142,6 @@ export default function CommunityPage(): React.ReactElement {
     
     const fetchProfileNames = async (): Promise<void> => {
       if (!ndkReady) {
-        console.log('Community page: NDK not ready, deferring profile fetch');
         return;
       }
       
@@ -157,7 +165,9 @@ export default function CommunityPage(): React.ReactElement {
       }
     };
 
-    fetchProfileNames();
+    if (ndkReady) {
+      fetchProfileNames();
+    }
     
     return () => {
       isMounted = false;
@@ -177,7 +187,7 @@ export default function CommunityPage(): React.ReactElement {
         <CommunityFeed />
         
         {/* Support the community */}
-        <div className="mb-12 mt-8">
+        <div className="mb-12 mt-8 bg-white dark:bg-gray-800 rounded-lg shadow-lg p-4">
           <div className="text-center mb-4">
             <h2 className="text-2xl font-bold text-bitcoin">Support the Community</h2>
             <p className="mt-2 text-gray-600 dark:text-gray-300">

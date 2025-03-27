@@ -1,0 +1,217 @@
+Below is a detailed low-level design (LLD) document that you can feed to Cursor AI. This design focuses on the "Community Updates" feature with image prioritization, profile picture overlays, hashtag filtering, and social graph integration.
+
+---
+
+# Low-Level Design (LLD) for Community Updates Feed
+
+## 1. Overview
+
+**Purpose:**  
+Build a responsive, community-focused feed that displays image-rich posts. The feed is seeded by core npubs and extended by a social graph (friends-of-friends) component. It filters posts using specific hashtags and prioritizes image-based content while hiding extraneous links.
+
+**Key Features:**
+
+- **Image Prioritization:** Display posts with images and overlay user profile pictures.
+- **Core Npubs and Social Graph Integration:** Start with core npubs and extend feed using friends-of-friends data.
+- **Hashtag Filtering:** Filter posts using hashtags:  
+  `#madeira`, `#travelmadeira`, `#visitmadeira`, `#funchal`, `#fanal`, `#espetada`, `#freemadeira`, `#madstr`.
+- **Initial Data Load and Dynamic Updates:**  
+  Load an initial set of 25 older posts, then update dynamically as the social graph fetches more connections and new posts arrive.
+- **UI Presentation:**  
+  Use a flexbox layout for a responsive, visually engaging presentation that hides unnecessary links and emphasizes pictures.
+
+---
+
+## 2. System Components
+
+### A. Data Fetching & Filtering Module
+
+1. **Core Npubs Fetcher:**
+   - **Input:** Array of core npubs (provided).
+   - **Operation:** Query the primary relay (e.g., `wss://relay.olas.app`) using the NDK library.
+   - **Output:** Posts from core npubs, including media content.
+
+2. **Hashtag Filter:**
+   - **Input:** Posts returned from the core fetcher.
+   - **Operation:** Apply filters on the `#t` field to include hashtags like `madeira`, `travelmadeira`, etc.
+   - **Output:** Filtered posts meeting hashtag criteria.
+
+3. **Image Extraction & Prioritization:**
+   - **Input:** Post content.
+   - **Operation:** Use regex or a dedicated parser to extract image URLs. Mark or flag posts that are image-rich.
+   - **Output:** Posts with an additional `images` field (array).
+
+### B. Social Graph Module
+
+1. **Social Graph Fetcher:**
+   - **Input:** List of core npubs.
+   - **Operation:**  
+     - Fetch contact lists (e.g., NIP-02 kind: 3 events) for each core npub.
+     - Traverse one or two hops (friends-of-friends) with a configurable depth.
+   - **Output:** Extended list of npubs (including core and connections).
+
+2. **Graph-Based Feed Updater:**
+   - **Operation:**  
+     - Merge the extended npubs list with core npubs.
+     - Feed this list into the data fetching module to retrieve posts.
+     - Prioritize posts based on image presence, recency, and relevance.
+
+### C. Community Feed UI Module
+
+1. **Initial Post Loader:**
+   - **Operation:**  
+     - On component mount, fetch 25 of the oldest posts from the combined feed (core + social graph).
+     - Cache these posts locally for performance.
+   - **Output:** Display list (initial set) of posts.
+
+2. **Dynamic Post Inserter:**
+   - **Operation:**  
+     - As new posts arrive via real-time updates or social graph refreshes, integrate them into the local cache.
+     - Ensure the list is re-sorted (by timestamp) and maintain a cap (if necessary).
+
+3. **Post Renderer (PostItem Component):**
+   - **Responsibilities:**  
+     - Render the post content with an emphasis on the image.
+     - Overlay the user’s profile picture (positioned using absolute positioning on the image).
+     - Hide unnecessary links or text (filter out extraneous metadata).
+   - **Responsive Behavior:**  
+     - Use CSS (flexbox/grid) to ensure responsiveness.
+     - Profile overlays should scale or reposition for mobile vs. desktop.
+
+4. **Layout Manager:**
+   - **Operation:**  
+     - Use a flexbox container to arrange posts.  
+     - The container supports reflow on different screen sizes.
+   - **Additional Styling:**  
+     - Optionally, apply a slight zoom effect on image hover.
+     - Ensure spacing and margins are optimized for both mobile and desktop.
+
+---
+
+## 3. Data Flow
+
+1. **Initialization:**
+   - **Step 1:** The application starts by loading a pre-defined list of core npubs.
+   - **Step 2:** The Data Fetching module queries the relay with these npubs and the hashtag filters.
+   - **Step 3:** The Social Graph module concurrently fetches friends-of-friends data to extend the npubs list.
+
+2. **Initial Feed Population:**
+   - **Step 1:** The combined list (core + social graph) is used to fetch posts.
+   - **Step 2:** The first 25 oldest posts are cached and rendered in the feed UI.
+
+3. **Dynamic Updates:**
+   - **Step 1:** The system subscribes to real-time updates from the relay.
+   - **Step 2:** New posts are filtered (hashtag, image-check) and merged into the cache.
+   - **Step 3:** The UI refreshes to include these new posts, reordering as needed.
+
+4. **User Interaction:**
+   - **Step 1:** Users scroll through or swipe in the flexbox-based feed.
+   - **Step 2:** Clicking on a post could lead to a detailed view or open the user profile.
+   - **Step 3:** Profile overlays on each post allow quick identification of the content creator.
+
+---
+
+## 4. Pseudo-code / Code Snippets
+
+### A. Data Fetching and Filtering Example (TypeScript)
+
+```typescript
+// Extract image URLs from content
+function extractImages(content: string): string[] {
+  const imageRegex = /(https?:\/\/[^\s]+\.(jpg|jpeg|png|gif))/gi;
+  return content.match(imageRegex) || [];
+}
+
+// Fetch posts from core npubs with hashtag filtering
+async function fetchPostsByNpubs(npubs: string[], hashtags: string[]): Promise<FeedItem[]> {
+  // Construct query with npubs and hashtag filter (example structure)
+  const query = {
+    authors: npubs,
+    hashtags: hashtags,
+    limit: 100, // fetch a maximum of 100 posts
+  };
+  const posts = await ndk.fetch(query);
+  return posts.filter(post => extractImages(post.content).length > 0)
+              .map(post => ({
+                ...post,
+                images: extractImages(post.content),
+              }));
+}
+```
+
+### B. Social Graph Fetcher Example
+
+```typescript
+// Fetch friends-of-friends for each core npub (simplified)
+async function fetchSocialGraph(coreNpubs: string[]): Promise<string[]> {
+  let extendedNpubs = new Set(coreNpubs);
+  for (const npub of coreNpubs) {
+    const contacts = await ndk.fetch({ author: npub, kind: 3 });
+    contacts.forEach(contact => extendedNpubs.add(contact.pubkey));
+  }
+  return Array.from(extendedNpubs);
+}
+```
+
+### C. Community Feed Component Example (React)
+
+```tsx
+import React, { useEffect, useState } from 'react';
+
+export default function CommunityFeed() {
+  const [posts, setPosts] = useState<FeedItem[]>([]);
+  const coreNpubs = ['npub1...', 'npub2...']; // provided core npubs
+  const hashtags = ['madeira', 'travelmadeira', 'visitmadeira', 'funchal', 'fanal', 'espetada', 'freemadeira', 'madstr'];
+
+  // Load initial posts
+  useEffect(() => {
+    async function loadInitialPosts() {
+      const extendedNpubs = await fetchSocialGraph(coreNpubs);
+      const fetchedPosts = await fetchPostsByNpubs(extendedNpubs, hashtags);
+      // Sort posts oldest-first and pick initial 25
+      const sortedPosts = fetchedPosts.sort((a, b) => a.createdAt - b.createdAt);
+      setPosts(sortedPosts.slice(0, 25));
+    }
+    loadInitialPosts();
+  }, []);
+
+  // Render posts using flexbox layout
+  return (
+    <div className="community-feed flex flex-wrap gap-4">
+      {posts.map((post) => (
+        <div key={post.id} className="post-item relative w-full sm:w-1/2 md:w-1/3">
+          <img src={post.images[0]} alt="Community post" className="w-full h-auto object-cover" />
+          <div className="profile-overlay absolute top-2 left-2 rounded-full border-2 border-white">
+            <img src={`https://profilepics.example.com/${post.pubkey}`} alt="Profile" className="w-10 h-10 rounded-full" />
+          </div>
+          <div className="hidden-links">
+            {/* Optionally hide links or extraneous metadata */}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+```
+
+---
+
+## 5. Considerations & Future Enhancements
+
+- **Real-Time Updates:**  
+  Establish WebSocket subscriptions to continuously update the feed with new posts. Merge these updates into the cache with proper sorting.
+
+- **Performance Optimizations:**  
+  - Cache data locally to reduce redundant network calls.
+  - Limit social graph depth to prevent performance degradation.
+  - Implement lazy loading of images.
+
+- **Error Handling:**  
+  Provide fallbacks if fetching posts or social graph data fails. Display loading indicators or error messages as appropriate.
+
+- **UI Enhancements:**  
+  Further refine the overlay styling, add animations for new posts, and optimize for mobile interactions using swipe or scroll gestures.
+
+---
+
+This LLD outlines the system’s data flow, component responsibilities, and key implementation details to build the Community Updates feed. It should serve as a comprehensive blueprint for integrating with Cursor AI and moving forward with development.

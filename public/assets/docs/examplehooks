@@ -1,8 +1,11 @@
-import socialGraph from "../utils/socialGraph"
+exaple use local storage
+
+
+import socialGraph from "../../src/utils/socialGraph"
 import {useEffect, useState} from "react"
 import { NostrEvent } from "../../../src"
 import {NDKEvent} from "@nostr-dev-kit/ndk"
-import ndk from "../utils/ndk"
+import ndk from "../../src/utils/ndk"
 
 const useFollows = (pubKey: string, includeSelf = false) => {
   const [follows, setFollows] = useState([

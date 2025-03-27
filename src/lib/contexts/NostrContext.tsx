@@ -38,6 +38,7 @@ export interface NostrContextType {
   userProfilePicture: string | null;
   ndkReady: boolean;
   reconnect: () => Promise<boolean>;
+  getConnectedRelays: () => string[];
 }
 
 // Default context value
@@ -55,6 +56,7 @@ const defaultContextValue: NostrContextType = {
   userProfilePicture: null,
   ndkReady: false,
   reconnect: async () => false,
+  getConnectedRelays: () => [],
 };
 
 // Create the context
@@ -63,9 +65,58 @@ const NostrContext = createContext<NostrContextType>(defaultContextValue);
 // Custom hook for using the Nostr context
 export const useNostr = () => useContext(NostrContext);
 
-// Cache for user profiles to avoid repeated fetches
-const profileCache = new Map<string, { profile: UserProfile; timestamp: number }>();
-const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+// Enhanced profile cache with structured storage and TTL management
+class ProfileCache {
+  private cache = new Map<string, { profile: UserProfile; timestamp: number }>();
+  private readonly TTL = 15 * 60 * 1000; // 15 minutes
+  private readonly MAX_SIZE = 100;
+
+  get(key: string): UserProfile | null {
+    const item = this.cache.get(key);
+    if (!item) return null;
+    
+    // Check if item is expired
+    if (Date.now() - item.timestamp > this.TTL) {
+      this.cache.delete(key);
+      return null;
+    }
+    
+    return item.profile;
+  }
+  
+  set(key: string, profile: UserProfile): void {
+    // Clean up if cache is too large
+    if (this.cache.size >= this.MAX_SIZE) {
+      // Remove oldest entries
+      const entries = Array.from(this.cache.entries());
+      entries.sort((a, b) => a[1].timestamp - b[1].timestamp);
+      
+      // Remove oldest 20% of entries
+      const toRemove = Math.max(1, Math.floor(entries.length * 0.2));
+      for (let i = 0; i < toRemove; i++) {
+        this.cache.delete(entries[i][0]);
+      }
+    }
+    
+    this.cache.set(key, { profile, timestamp: Date.now() });
+  }
+  
+  clear(): void {
+    this.cache.clear();
+  }
+  
+  prune(): void {
+    const now = Date.now();
+    for (const [key, value] of this.cache.entries()) {
+      if (now - value.timestamp > this.TTL) {
+        this.cache.delete(key);
+      }
+    }
+  }
+}
+
+// Initialize profile cache
+const profileCache = new ProfileCache();
 
 // Debounce helper function
 const debounce = <F extends (...args: any[]) => any>(func: F, wait: number) => {
@@ -92,6 +143,8 @@ export const NostrProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const isConnecting = useRef<boolean>(false);
   const ndkInstance = useRef<NDK | null>(null);
   const connectedRelays = useRef<string[]>([]);
+  const lastReconnectAttempt = useRef<number>(0);
+  const reconnectCooldown = 5000; // 5 seconds between reconnect attempts
 
   // Create and configure an NDK instance using the relays from constants
   const createNDKInstance = useCallback((): NDK => {
@@ -131,7 +184,7 @@ export const NostrProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       // Connect to all configured relays
       await instance.connect();
       
-      // Wait a moment for connections to establish - increase this time for better connection chances
+      // Wait a moment for connections to establish
       await new Promise(resolve => setTimeout(resolve, 2000));
 
       // Get connection statuses
@@ -158,15 +211,15 @@ export const NostrProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         for (const url of RELAYS.BACKUP) {
           if (instance.pool.getRelay(url)) {
             // Relay exists but disconnected, try reconnecting
-          try {
-            const relay = instance.pool.getRelay(url);
-            if (relay) {
-              await relay.connect();
+            try {
+              const relay = instance.pool.getRelay(url);
+              if (relay) {
+                await relay.connect();
               }
             } catch (e) {
               console.warn(`Failed to reconnect to relay ${url}:`, e);
             }
-            } else {
+          } else {
             // Create a new relay object and add it to the pool
             try {
               const relayObj = createRelay(url);
@@ -183,7 +236,7 @@ export const NostrProvider: React.FC<{ children: ReactNode }> = ({ children }) =
             try {
               const relayObj = createRelay(url);
               await instance.pool.addRelay(relayObj);
-          } catch (e) {
+            } catch (e) {
               // Ignore errors for community relays
             }
           }
@@ -218,9 +271,9 @@ export const NostrProvider: React.FC<{ children: ReactNode }> = ({ children }) =
             if (instance.pool.getRelay(url)) continue; // Skip if already in pool
             
             try {
-                // Create a relay object and add it to the pool
-                const relayObj = createRelay(url);
-                await instance.pool.addRelay(relayObj);
+              // Create a relay object and add it to the pool
+              const relayObj = createRelay(url);
+              await instance.pool.addRelay(relayObj);
             } catch (e) {
               // Don't log errors for last resort attempts
             }
@@ -248,397 +301,252 @@ export const NostrProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       return connectedRelays.current.length > 0;
     } catch (error) {
       console.error('Error connecting to relays:', error);
-      return connectedRelays.current.length > 0;
+      return false;
     }
   }, []);
 
-  // Function to reconnect to relays - can be called by components when needed
+  // Get connected relays
+  const getConnectedRelays = useCallback((): string[] => {
+    return [...connectedRelays.current];
+  }, []);
+
+  // Reconnect to relays
   const reconnect = useCallback(async (): Promise<boolean> => {
-    if (!ndkInstance.current) {
-      console.warn('NDK not initialized, cannot reconnect');
-      // Try to create a new instance as a recovery mechanism
-      try {
-        const newInstance = createNDKInstance();
-        ndkInstance.current = newInstance;
-        setNdk(newInstance);
-        const connected = await connectToRelays(newInstance);
-        setNdkReady(connected);
-        return connected;
-      } catch (e) {
-        console.error('Failed to create new NDK instance during reconnect:', e);
-      return false;
-      }
+    const now = Date.now();
+    
+    // Check if we're already connecting or if we're in a cooldown period
+    if (isConnecting.current || (now - lastReconnectAttempt.current < reconnectCooldown)) {
+      return ndkReady;
     }
     
-    console.log('Attempting to reconnect to Nostr relays...');
-    const instance = ndkInstance.current;
+    isConnecting.current = true;
+    lastReconnectAttempt.current = now;
     
     try {
-      // Close existing connections first
-      instance.pool.relays.forEach(relay => {
-        try {
-          relay.disconnect();
-        } catch (e) {
-          // Ignore errors when closing
-        }
-      });
+      let instance = ndkInstance.current;
       
-      // Wait a moment for connections to close
-      await new Promise(resolve => setTimeout(resolve, 500));
-      
-      // Connect again with extended timeout
-      const connected = await Promise.race([
-        connectToRelays(instance),
-        new Promise<boolean>(resolve => setTimeout(() => resolve(false), 10000))
-      ]);
-      
-      setNdkReady(connected);
-      return connected;
-    } catch (error) {
-      console.error('Reconnection failed:', error);
-      return false;
-    }
-  }, [connectToRelays, createNDKInstance]);
-
-  // Initialize NDK instance
-  useEffect(() => {
-    // Prevent multiple initializations
-    if (initialized || isConnecting.current) return;
-    
-    const initializeNdk = async () => {
-      isConnecting.current = true;
-      
-      try {
-        // Create a new NDK instance
-        const instance = createNDKInstance();
+      if (!instance) {
+        instance = createNDKInstance();
         ndkInstance.current = instance;
-
-        // Add connection event listeners for debugging
-        instance.pool.on('relay:connect', (relay) => {
-          console.log(`Connected to relay: ${relay.url}`);
-        });
-        
-        instance.pool.on('relay:disconnect', (relay) => {
-          console.log(`Disconnected from relay: ${relay.url}`);
-        });
-        
-        // Using compatible event listener API 
-        instance.pool.on('connect', () => {
-          console.log('Pool connection established');
-        });
-        
-        // Connect to relays with exponential backoff retry
-        let connected = false;
-        let retryCount = 0;
-        const MAX_RETRIES = 3;
-        
-        while (!connected && retryCount < MAX_RETRIES) {
-          try {
-            connected = await connectToRelays(instance);
-            if (!connected) {
-              retryCount++;
-              const delay = Math.min(1000 * Math.pow(2, retryCount), 5000);
-              console.log(`Relay connection failed, retry ${retryCount}/${MAX_RETRIES} in ${delay}ms`);
-              await new Promise(resolve => setTimeout(resolve, delay));
-            }
-          } catch (err) {
-            console.error('Connection attempt failed:', err);
-            retryCount++;
-          }
-        }
-        
-        // Always set NDK instance and mark as ready, even if we couldn't connect to relays
-        // This allows components to use the NDK instance and implement their own retry logic
+      }
+      
+      const connected = await connectToRelays(instance);
+      
+      if (connected) {
         setNdk(instance);
         setNdkReady(true);
+      } else {
+        setNdkReady(false);
+      }
+      
+      return connected;
+    } catch (error) {
+      console.error('Error during reconnect:', error);
+      setNdkReady(false);
+      return false;
+    } finally {
+      isConnecting.current = false;
+    }
+  }, [createNDKInstance, connectToRelays, ndkReady]);
+
+  // Initialize NDK on component mount
+  useEffect(() => {
+    if (initialized) return;
+    
+    const initializeNDK = async () => {
+      try {
+        const instance = createNDKInstance();
+        ndkInstance.current = instance;
+        
+        const connected = await connectToRelays(instance);
         
         if (connected) {
-          console.log('Successfully connected to Nostr relays');
-          
-          // Check if user was previously logged in
-          try {
-            const savedNpub = localStorage.getItem('nostr_npub');
-            if (savedNpub && savedNpub.startsWith('npub')) {
-              try {
-                // Create user from npub
-                const { data } = nip19.decode(savedNpub);
-                const ndkUser = new NDKUser({ pubkey: data as string });
-                ndkUser.ndk = instance;
-                
-                setUser(ndkUser);
-                setIsLoggedIn(true);
-                
-                // Fetch user profile
-                const profile = await fetchUserProfile(instance, ndkUser);
-                if (profile) {
-                  setUserProfile(profile);
-                }
-              } catch (error) {
-                // Handle decode error silently
-                localStorage.removeItem('nostr_npub');
-              }
-            }
-          } catch (storageError) {
-            // Handle localStorage errors silently
-          }
-        } else {
-          // If we couldn't connect, still set initialized to prevent infinite retries
-          console.warn('Could not connect to any relays, using NDK in offline mode');
-          // Still mark as ready to allow components to implement their own retry logic
+          setNdk(instance);
           setNdkReady(true);
         }
         
         setInitialized(true);
       } catch (error) {
-        console.error('Failed to initialize NDK:', error);
-        // Still set NDK as ready even if initialization had issues
-        // Components can implement their own retry mechanisms
-        setNdkReady(true);
-        setInitialized(true); // Mark as initialized even on error to prevent retries
-      } finally {
-        isConnecting.current = false;
+        console.error('Error initializing NDK:', error);
+        setInitialized(true);
       }
     };
-
-    initializeNdk();
-
-    // Cleanup function to disconnect from relays
+    
+    initializeNDK();
+    
+    // Clean up on unmount
     return () => {
-      const instance = ndkInstance.current;
-      if (instance) {
-        console.log('Disconnecting from Nostr relays');
+      if (ndkInstance.current) {
         try {
-          instance.pool.relays.forEach(relay => {
-            try {
-              relay.disconnect();
-            } catch (e) {
-              // Ignore errors when closing
-            }
+          ndkInstance.current.pool.relays.forEach(relay => {
+            relay.disconnect();
           });
         } catch (e) {
-          // Ignore cleanup errors
+          // Ignore errors during cleanup
         }
-        setNdkReady(false);
-        ndkInstance.current = null;
       }
     };
-  }, [initialized, connectToRelays, createNDKInstance]);
+  }, [initialized, createNDKInstance, connectToRelays]);
 
-  /**
-   * Fetch user profile from NDK with error handling and caching
-   */
-  const fetchUserProfile = async (ndkInstance: NDK, user: NDKUser): Promise<UserProfile | null> => {
-    if (!ndkInstance || !user) return null;
-
-    try {
-      // Check cache first
-      const npub = nip19.npubEncode(user.pubkey);
-      const cachedData = profileCache.get(npub);
-      
-      if (cachedData && Date.now() - cachedData.timestamp < CACHE_TTL) {
-        return cachedData.profile;
-      }
-
-      // Fetch profile with timeout
-      let profileData;
-      try {
-        const fetchPromise = user.fetchProfile();
-        const timeoutPromise = new Promise<null>((_, reject) => 
-          setTimeout(() => reject(new Error('Profile fetch timeout')), 5000)
-        );
-        
-        profileData = await Promise.race([fetchPromise, timeoutPromise]);
-      } catch (error) {
-        console.warn('Profile fetch timeout or error:', error);
-        // Return cache even if expired rather than null on timeout
-        if (cachedData) {
-          console.log('Using expired cache for', npub);
-          return cachedData.profile;
-        }
-        return null;
-      }
-      
-      // Convert to our UserProfile format
-      const profile: UserProfile = {
-        name: profileData?.name,
-        displayName: profileData?.displayName,
-        website: profileData?.website,
-        about: profileData?.about,
-        picture: profileData?.picture,
-        banner: profileData?.banner,
-        nip05: profileData?.nip05,
-        lud16: profileData?.lud16,
-        lud06: profileData?.lud06,
-      };
-
-      // Cache the result
-      profileCache.set(npub, { profile, timestamp: Date.now() });
-      
-      return profile;
-    } catch (error) {
-      console.error('Error fetching user profile:', error);
+  // Fetch user profile
+  const getUserProfile = useCallback(async (npub: string): Promise<UserProfile | null> => {
+    if (!ndk) {
       return null;
     }
-  };
-
-  // Debounced version of getUserProfile to prevent excessive profile fetches
-  const debouncedGetUserProfile = useCallback(
-    debounce(async (npub: string): Promise<UserProfile | null> => {
-      if (!ndk || !npub) return null;
-
-      try {
-        // Check cache first
-        const cachedData = profileCache.get(npub);
-        
-        if (cachedData && Date.now() - cachedData.timestamp < CACHE_TTL) {
-          return cachedData.profile;
-        }
-
-        // Create user from npub
-        const { type, data } = nip19.decode(npub);
-        if (type !== 'npub') {
-          throw new Error('Invalid npub format');
-        }
-        
-        const targetUser = new NDKUser({ pubkey: data as string });
-        targetUser.ndk = ndk;
-        
-        // Fetch profile with timeout
-        let profileData;
+    
+    try {
+      // Check cache first
+      const cachedProfile = profileCache.get(npub);
+      if (cachedProfile) {
+        return cachedProfile;
+      }
+      
+      // Special handling for npubs
+      let pubkey: string;
+      if (npub.startsWith('npub')) {
         try {
-          const fetchPromise = targetUser.fetchProfile();
-          const timeoutPromise = new Promise<null>((_, reject) => 
-            setTimeout(() => reject(new Error('Profile fetch timeout')), 5000)
-          );
-          
-          profileData = await Promise.race([fetchPromise, timeoutPromise]);
-        } catch (error) {
-          console.warn(`Profile fetch timeout for ${npub}:`, error);
-          // Return cache even if expired rather than null on timeout
-          if (cachedData) {
-            return cachedData.profile;
-          }
+          const decoded = nip19.decode(npub);
+          pubkey = decoded.data as string;
+        } catch (e) {
+          console.error('Invalid npub:', npub, e);
           return null;
         }
-        
-        if (!profileData) return null;
-        
-        // Convert to our UserProfile format
+      } else {
+        pubkey = npub;
+      }
+      
+      // Use NDK to fetch user profile
+      const user = ndk.getUser({ pubkey });
+      await user.fetchProfile();
+      
+      if (user.profile) {
         const profile: UserProfile = {
-          name: profileData?.name,
-          displayName: profileData?.displayName,
-          website: profileData?.website,
-          about: profileData?.about,
-          picture: profileData?.picture,
-          banner: profileData?.banner,
-          nip05: profileData?.nip05,
-          lud16: profileData?.lud16,
-          lud06: profileData?.lud06,
+          name: user.profile.name,
+          displayName: user.profile.displayName,
+          website: user.profile.website,
+          about: user.profile.about,
+          picture: user.profile.image,
+          banner: user.profile.banner,
+          nip05: user.profile.nip05,
+          lud16: user.profile.lud16,
+          lud06: user.profile.lud06,
         };
-
-        // Cache the result
-        profileCache.set(npub, { profile, timestamp: Date.now() });
+        
+        // Cache the profile
+        profileCache.set(npub, profile);
         
         return profile;
-      } catch (error) {
-        console.error(`Error fetching profile for ${npub}:`, error);
-        return null;
       }
-    }, 100), // 100ms debounce
-    [ndk]
-  );
-
-  /**
-   * Get profile for any Nostr user by npub
-   */
-  const getUserProfile = useCallback(async (npub: string): Promise<UserProfile | null> => {
-    return debouncedGetUserProfile(npub);
-  }, [debouncedGetUserProfile]);
-
-  /**
-   * Login with Nostr extension
-   */
-  const login = useCallback(async () => {
-    if (!ndk) {
-      console.error('NDK not initialized');
-      return;
+    } catch (error) {
+      console.error('Error fetching user profile:', error);
     }
+    
+    return null;
+  }, [ndk]);
 
+  // Login
+  const login = useCallback(async (): Promise<void> => {
+    if (!ndk) {
+      await reconnect();
+      if (!ndk) return;
+    }
+    
     try {
-      // Create a new NIP-07 signer
+      // Use NIP-07 signer
       const signer = new NDKNip07Signer();
-      
-      // Set the signer on our NDK instance
       ndk.signer = signer;
       
-      // Get the user's public key
-      const user = await signer.user();
-      
-      if (!user) {
-        throw new Error('Failed to get user from signer');
-      }
-      
-      // Save the user
-      setUser(user);
-      setIsLoggedIn(true);
-      
-      // Save npub to local storage for persistence
-      const npub = nip19.npubEncode(user.pubkey);
-      localStorage.setItem('nostr_npub', npub);
-      
-      // Fetch user profile
-      const profile = await fetchUserProfile(ndk, user);
-      if (profile) {
+      try {
+        await signer.blockUntilReady();
+        
+        // Get user
+        const user = await signer.user();
+        if (!user) {
+          throw new Error('Failed to get user from signer');
+        }
+        
+        setUser(user);
+        setIsLoggedIn(true);
+        
+        const npubKey = nip19.npubEncode(user.pubkey);
+        
+        // Fetch user profile
+        const profile = await getUserProfile(npubKey);
         setUserProfile(profile);
+      } catch (e) {
+        // iOS Safari and other browsers might have issues with the signer
+        console.error('Error with NIP-07 signer:', e);
+        setIsLoggedIn(false);
       }
-      
-      console.log('Logged in to Nostr as:', npub);
     } catch (error) {
-      console.error('Nostr login failed:', error);
-      throw error;
+      console.error('Login failed:', error);
     }
-  }, [ndk, fetchUserProfile]);
+  }, [ndk, reconnect, getUserProfile]);
 
-  /**
-   * Logout from Nostr
-   */
-  const logout = useCallback(() => {
-    setUser(null);
-    setIsLoggedIn(false);
-    setUserProfile(null);
-    localStorage.removeItem('nostr_npub');
-    
-    // Create a new NDK instance without signer
+  // Logout
+  const logout = useCallback((): void => {
     if (ndk) {
       ndk.signer = undefined;
     }
     
-    console.log('Logged out from Nostr');
+    setUser(null);
+    setUserProfile(null);
+    setIsLoggedIn(false);
   }, [ndk]);
 
-  /**
-   * Refetch the user's profile
-   */
-  const refetchUserProfile = useCallback(async () => {
-    if (!ndk || !user) return;
+  // Refetch user profile
+  const refetchUserProfile = useCallback(async (): Promise<void> => {
+    if (!user) return;
     
     try {
-      // Remove from cache
-      const npub = nip19.npubEncode(user.pubkey);
-      profileCache.delete(npub);
-      
-      // Fetch fresh profile
-      const profile = await fetchUserProfile(ndk, user);
-      if (profile) {
-        setUserProfile(profile);
-      }
+      const npubKey = nip19.npubEncode(user.pubkey);
+      // Force a refresh by not using the cache
+      profileCache.clear();
+      const profile = await getUserProfile(npubKey);
+      setUserProfile(profile);
     } catch (error) {
-      console.error('Failed to refetch user profile:', error);
+      console.error('Error refetching user profile:', error);
     }
-  }, [ndk, user, fetchUserProfile]);
+  }, [user, getUserProfile]);
 
-  // Memoize the context value to prevent unnecessary re-renders
-  const contextValue = React.useMemo(() => ({
+  // Derived values
+  const npub = user ? nip19.npubEncode(user.pubkey) : null;
+  const userName = userProfile?.displayName || userProfile?.name || null;
+  const userProfilePicture = userProfile?.picture || null;
+
+  // Run periodic tasks
+  useEffect(() => {
+    // Prune profile cache every 5 minutes
+    const pruneInterval = setInterval(() => {
+      profileCache.prune();
+    }, 5 * 60 * 1000);
+    
+    // Monitor relay connections every 30 seconds
+    const monitorInterval = setInterval(() => {
+      if (ndk) {
+        const connected: string[] = [];
+        ndk.pool.relays.forEach((relay, url) => {
+          if (relay.status === 1) {
+            connected.push(url);
+          }
+        });
+        
+        connectedRelays.current = connected;
+        
+        // If we have no connected relays, try to reconnect
+        if (connected.length === 0 && !isConnecting.current) {
+          reconnect();
+        }
+      }
+    }, 30 * 1000);
+    
+    return () => {
+      clearInterval(pruneInterval);
+      clearInterval(monitorInterval);
+    };
+  }, [ndk, reconnect]);
+
+  const contextValue: NostrContextType = {
     ndk,
     user,
     isLoggedIn,
@@ -647,23 +555,13 @@ export const NostrProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     getUserProfile,
     shortenNpub,
     refetchUserProfile,
-    npub: user ? nip19.npubEncode(user.pubkey) : null,
-    userName: userProfile?.displayName || userProfile?.name || null,
-    userProfilePicture: userProfile?.picture || null,
+    npub,
+    userName,
+    userProfilePicture,
     ndkReady,
     reconnect,
-  }), [
-    ndk, 
-    user, 
-    isLoggedIn, 
-    login, 
-    logout, 
-    getUserProfile, 
-    refetchUserProfile, 
-    userProfile, 
-    ndkReady,
-    reconnect
-  ]);
+    getConnectedRelays,
+  };
 
   return (
     <NostrContext.Provider value={contextValue}>

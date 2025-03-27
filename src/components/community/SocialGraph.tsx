@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import dynamic from 'next/dynamic';
 import { useNostr } from '../../lib/contexts/NostrContext';
 import { GraphNode, GraphLink, GraphData } from '../../types/graph-types';
@@ -14,14 +14,19 @@ import * as d3 from 'd3';
 // Dynamically import the ForceGraph2D component with no SSR
 const ForceGraph2D = dynamic(() => import('react-force-graph-2d').then(mod => mod.default), { ssr: false });
 
-// Custom loading messages specifically for the graph component
-const GRAPH_LOADING_MESSAGES = [
-  "Negotiating TLS handshakes with paranoid relays...",
-  "Brewing relay coffee in the protocol percolator...",
-  "Riding NPUB submarines through relay channels...",
-  "Chasing kind:1 events through the stratosphere...",
-  "Bribing NIP-05 validators for VIP access...",
-];
+// Cache for graph data with a TTL
+const GRAPH_CACHE = {
+  data: null as GraphData | null,
+  timestamp: 0,
+  ttl: 5 * 60 * 1000 // 5 minutes
+};
+
+// Cache for profile images
+const IMAGE_CACHE = new Map<string, HTMLImageElement>();
+
+// Profile cache
+const PROFILE_CACHE = new Map<string, any>();
+const PROFILE_CACHE_TTL = 10 * 60 * 1000; // 10 minutes
 
 interface SocialGraphProps {
   // Primary NPUB to center the graph on (optional, defaults to first core NPUB)
@@ -76,6 +81,30 @@ const markCoreNodes = (graphData: GraphData, coreNpubs: string[]) => {
   return graphData;
 };
 
+// Function to preload images for better render performance
+const preloadImage = (url: string): Promise<HTMLImageElement> => {
+  // Check if image is already in cache
+  if (IMAGE_CACHE.has(url)) {
+    return Promise.resolve(IMAGE_CACHE.get(url)!);
+  }
+  
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      IMAGE_CACHE.set(url, img);
+      resolve(img);
+    };
+    img.onerror = () => {
+      // Use default image on error
+      const defaultImg = new Image();
+      defaultImg.src = DEFAULT_PROFILE_IMAGE;
+      IMAGE_CACHE.set(url, defaultImg);
+      resolve(defaultImg);
+    };
+    img.src = url;
+  });
+};
+
 export const SocialGraph: React.FC<SocialGraphProps> = ({
   centerNpub = CORE_NPUBS[0],
   npubs = CORE_NPUBS,
@@ -90,12 +119,19 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
   const [loading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
-  const [loadingMessage, setLoadingMessage] = useState<string>(GRAPH_LOADING_MESSAGES[0]);
-  const [nodeImages, setNodeImages] = useState<Map<string, HTMLImageElement>>(new Map());
+  const [loadingMessage, setLoadingMessage] = useState<string>(getRandomLoadingMessage('GRAPH'));
+  
   const fetchInProgress = useRef<boolean>(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const forceGraphRef = useRef<any>(null);
   const isNdkReady = !!ndk && ndkReady;
+  const graphDataRef = useRef<GraphData | null>(null);
+  
+  // Use more efficient memo for effective npubs
+  const effectiveNpubs = useMemo(() => 
+    Array.from(new Set([...npubs, centerNpub])), 
+    [npubs, centerNpub]
+  );
 
   // Initialize loading messages
   useEffect(() => {
@@ -168,7 +204,7 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
     fg.graphData(data);
   }, []);
 
-  // Process second-degree connections (followers of followers) 
+  // Process second-degree connections (followers of followers) with improved performance 
   const processSecondDegreeConnections = useCallback(async (
     firstDegreeConnections: Set<string>,
     coreKeys: string[],
@@ -183,795 +219,596 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
     const secondDegreeConnections = new Set<string>();
     
     // Take a subset of first-degree connections to process
-    // This prevents the graph from getting too large
-    const firstDegreeToProcess = Array.from(firstDegreeConnections).slice(0, Math.min(firstDegreeConnections.size, 10));
+    // Use the most connected nodes for better graph structure
+    const firstDegreeArray = Array.from(firstDegreeConnections);
+    const firstDegreeToProcess = firstDegreeArray.slice(0, Math.min(firstDegreeConnections.size, 10));
     
-    for (const pubkey of firstDegreeToProcess) {
-      // Skip if we've already processed this pubkey
-      if (processedForFollowers.has(pubkey)) continue;
-      processedForFollowers.add(pubkey);
+    // Process in smaller batches to avoid overwhelming the relays
+    const batchSize = 2;
+    for (let i = 0; i < firstDegreeToProcess.length; i += batchSize) {
+      const batch = firstDegreeToProcess.slice(i, i + batchSize);
       
-      try {
-        // Fetch this user's follows
-        const contactsEvents = await Promise.race([
-          ndk.fetchEvents({
+      // Process all pubkeys in the batch concurrently
+      await Promise.all(batch.map(async (pubkey) => {
+        // Skip if we've already processed this pubkey
+        if (processedForFollowers.has(pubkey)) return;
+        processedForFollowers.add(pubkey);
+        
+        try {
+          // Fetch this user's follows
+          const contactsEvents = await ndk.fetchEvents({
             kinds: [3], // Contact lists
             authors: [pubkey],
             limit: 1
-          }),
-          new Promise<null>((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000))
-        ]).catch(() => null);
-        
-        if (contactsEvents && contactsEvents instanceof Set && contactsEvents.size > 0) {
-          const contactList = Array.from(contactsEvents)[0];
+          });
           
-          if (contactList && contactList.tags && Array.isArray(contactList.tags)) {
-            // Extract follows that are either already known or limit new ones
-            const relevantFollows = contactList.tags
-              .filter(tag => Array.isArray(tag) && tag[0] === 'p')
-              .map(tag => tag[1])
-              .filter(followPubkey => 
-                // Include if it's already in our graph or one of our core keys
-                addedPubkeys.has(followPubkey) || 
-                coreKeys.includes(followPubkey) ||
-                // Or if we're still under our second-degree connection limit
-                secondDegreeConnections.size < 15
-              )
-              .slice(0, 5); // Limit connections per node
+          for (const event of contactsEvents) {
+            // Extract p tags (following)
+            const following = event.tags
+              .filter(tag => tag[0] === 'p')
+              .map(tag => tag[1]);
             
-            for (const followPubkey of relevantFollows) {
-              // Don't add self-connections
-              if (followPubkey === pubkey) continue;
-              
-              // If this is a new node we haven't seen before, add to second degree connections
-              if (!addedPubkeys.has(followPubkey) && !coreKeys.includes(followPubkey)) {
-                secondDegreeConnections.add(followPubkey);
-                addedPubkeys.add(followPubkey);
+            // Limit the number of connections we add per node to avoid overloading the graph
+            const limitedFollowing = following.slice(0, maxConnections);
+            
+            for (const followedPubkey of limitedFollowing) {
+              // Skip core pubkeys and already added pubkeys
+              if (coreKeys.includes(followedPubkey) || addedPubkeys.has(followedPubkey)) {
+                continue;
               }
               
-              // Add the connection if it doesn't already exist
-              const existingLink = links.find(link => 
-                (link.source === pubkey && link.target === followPubkey) ||
-                (link.source === followPubkey && link.target === pubkey)
-              );
+              // Add to second-degree connections set for later profile fetching
+              secondDegreeConnections.add(followedPubkey);
               
-              if (!existingLink) {
-                links.push({
-                  source: pubkey,
-                  target: followPubkey,
-                  type: 'follows',
-                  value: 1 // Thinner connection for second-degree relationships
-                });
-              }
+              // Create link from the first degree pubkey to the followed pubkey
+              links.push({
+                source: pubkey,
+                target: followedPubkey,
+                type: 'follows',
+              });
               
-              // Check if this is a mutual follow
-              const reverseLinkExists = links.some(link => 
-                link.source === followPubkey && link.target === pubkey
-              );
-              
-              if (reverseLinkExists) {
-                // Update both directions to mutual status
-                links.forEach(link => {
-                  if ((link.source === pubkey && link.target === followPubkey) ||
-                      (link.source === followPubkey && link.target === pubkey)) {
-                    link.type = 'mutual';
-                    link.value = 2;
-                  }
-                });
-              }
+              // Add to set of pubkeys we've added to the graph
+              addedPubkeys.add(followedPubkey);
             }
           }
+        } catch (err) {
+          console.warn('Error processing followers for pubkey:', pubkey, err);
         }
-      } catch (error) {
-        console.warn(`Error fetching follows for ${pubkey}:`, error);
-      }
+      }));
     }
     
-    // Now fetch profiles for second-degree connections
+    // Check if we need to fetch profiles for the second-degree connections
     if (secondDegreeConnections.size > 0) {
-      const secondDegreeArray = Array.from(secondDegreeConnections);
+      // Only process a limited number of second-degree connections to keep graph manageable
+      const limitedSecondDegree = Array.from(secondDegreeConnections).slice(0, Math.min(secondDegreeConnections.size, 20));
       
-      // Process in batches to not overwhelm the system
-      for (let i = 0; i < secondDegreeArray.length; i += 5) {
-        const batch = secondDegreeArray.slice(i, i + 5);
-        
-        const profilePromises = batch.map(async (pubkey) => {
-          try {
-            const npub = nip19.npubEncode(pubkey);
-            const profile = await getUserProfile(npub);
-            
-            return {
-              id: pubkey,
-              pubkey,
-              npub,
-              name: profile?.displayName || profile?.name || shortenNpub(npub),
-              picture: profile?.picture || DEFAULT_PROFILE_IMAGE,
-              isCoreNode: false,
-              val: 5, // Smaller size for second-degree connections
-              color: '#8B5CF6' // Different color for second-degree nodes
-            };
-          } catch (error) {
-            const npub = nip19.npubEncode(pubkey);
-            
-            return {
-              id: pubkey,
-              pubkey,
-              npub,
-              name: shortenNpub(npub),
-              picture: DEFAULT_PROFILE_IMAGE,
-              isCoreNode: false,
-              val: 5,
-              color: '#8B5CF6'
-            };
-          }
-        });
-        
-        const profileResults = await Promise.allSettled(profilePromises);
-        
-        profileResults.forEach(result => {
-          if (result.status === 'fulfilled') {
-            nodes.push(result.value);
-          }
+      // Create basic nodes for all second-degree connections
+      // We'll fetch profile data later if needed
+      for (const pubkey of limitedSecondDegree) {
+        const npub = nip19.npubEncode(pubkey);
+        nodes.push({
+          id: pubkey,
+          pubkey: pubkey,
+          npub: npub,
+          name: shortenNpub(npub),
+          picture: DEFAULT_PROFILE_IMAGE,
+          isCoreNode: false,
         });
       }
     }
     
     return { nodes, links };
-  }, [ndk, getUserProfile, shortenNpub]);
-  
-  // Fetch network data from Nostr - prioritizing real data only
-  const fetchNostrData = useCallback(async () => {
-    if (fetchInProgress.current) {
-      // Skip if already fetching to prevent duplicate requests
-      return;
-    }
+  }, [ndk, maxConnections, shortenNpub]);
+
+  // Function to fetch profiles for nodes
+  const fetchProfiles = useCallback(async (nodes: GraphNode[]): Promise<GraphNode[]> => {
+    if (!ndk) return nodes;
     
-    setIsLoading(true);
-    fetchInProgress.current = true;
-    setError(null);
+    // Batch profile fetching to reduce load
+    const batchSize = 5;
+    const result = [...nodes];
     
-    // Start with empty graph
-    setGraph({
-      nodes: [],
-      links: []
-    });
-    
-    if (!ndk || !ndkReady) {
-      // No NDK instance or not connected
-      // Attempt to reconnect to relays before continuing
-      await reconnect();
+    for (let i = 0; i < nodes.length; i += batchSize) {
+      const batch = nodes.slice(i, i + batchSize);
       
-      if (!ndk) {
-        setError('Nostr client not available');
-        setIsLoading(false);
-        return;
-      }
-    }
-    
-    try {
-      // Convert npubs to pubkeys
-      const pubkeyMap = new Map<string, string>();
-      const coreKeys = npubs.map(npub => {
-        try {
-          if (npub.startsWith('npub')) {
-            const decoded = nip19.decode(npub);
-            const hexKey = decoded.data as string;
-            pubkeyMap.set(hexKey, npub);
-            return hexKey;
-          }
-          return npub;
-        } catch (error) {
-          return '';
-        }
-      }).filter(key => key !== '');
-      
-      if (coreKeys.length === 0) {
-        throw new Error('No valid npubs provided');
-      }
-      
-      // Track all pubkeys we add to graph
-      const addedPubkeys = new Set<string>(coreKeys);
-      
-      // Arrays for our data
-      const nodes: GraphNode[] = [];
-      const links: GraphLink[] = [];
-      const nodeImagesMap = new Map<string, HTMLImageElement>();
-      
-      // STEP 1: Fetch core profiles
-      const fetchCoreProfiles = async (
-        coreKeys: string[]
-      ): Promise<GraphNode[]> => {
-        // Fetch basic profile info for our core nodes
-        const nodes: GraphNode[] = [];
-        
-        // Create a copy to modify core keys
-        const coreKeysToProcess = [...coreKeys];
-        
-        // Convert npubs to hex pubkeys if needed
-        const coreHexKeys: string[] = await Promise.all(
-          coreKeysToProcess.map(async (key) => {
-            if (key.startsWith('npub')) {
-              try {
-                const decoded = nip19.decode(key);
-                return decoded.data as string;
-              } catch (e) {
-                return '';
+      // Process nodes that need profile data
+      await Promise.all(batch.map(async (node, index) => {
+        if (!node.name || node.name === shortenNpub(node.npub || '')) {
+          try {
+            // Check cache first
+            const cacheKey = node.npub || node.pubkey;
+            const cachedProfile = PROFILE_CACHE.get(cacheKey);
+            const now = Date.now();
+            
+            if (cachedProfile && (now - cachedProfile.timestamp < PROFILE_CACHE_TTL)) {
+              // Use cached profile
+              result[i + index] = {
+                ...node,
+                name: cachedProfile.profile.name || cachedProfile.profile.displayName || shortenNpub(node.npub || ''),
+                picture: cachedProfile.profile.picture || DEFAULT_PROFILE_IMAGE
+              };
+              
+              // Preload the image
+              if (cachedProfile.profile.picture) {
+                preloadImage(cachedProfile.profile.picture).catch(() => {});
+              }
+            } else {
+              // Fetch profile
+              const profile = await getUserProfile(node.npub || node.pubkey);
+              
+              if (profile) {
+                // Cache the profile
+                PROFILE_CACHE.set(cacheKey, {
+                  profile,
+                  timestamp: now
+                });
+                
+                // Update the node
+                result[i + index] = {
+                  ...node,
+                  name: profile.name || profile.displayName || shortenNpub(node.npub || ''),
+                  picture: profile.picture || DEFAULT_PROFILE_IMAGE
+                };
+                
+                // Preload the image
+                if (profile.picture) {
+                  preloadImage(profile.picture).catch(() => {});
+                }
               }
             }
-            return key;
-          })
-        );
-        
-        // Filter out any invalid keys
-        const validHexKeys = coreHexKeys.filter(key => key !== '');
-        
-        // Fetch profiles for valid keys
-        const profilePromises = validHexKeys.map(async (pubkey) => {
-          try {
-            const profile = await getUserProfile(pubkeyMap.get(pubkey) || nip19.npubEncode(pubkey));
-            
-            // Preload image for smoother rendering
-            let pictureUrl = profile?.picture || DEFAULT_PROFILE_IMAGE;
-            if (pictureUrl && !/^https?:\/\//i.test(pictureUrl)) {
-              pictureUrl = DEFAULT_PROFILE_IMAGE;
-            }
-            
-            const img = new Image();
-            img.src = pictureUrl;
-            nodeImagesMap.set(pubkey, img);
-            
-            return {
-              id: pubkey,
-              pubkey,
-              npub: pubkeyMap.get(pubkey) || nip19.npubEncode(pubkey),
-              name: profile?.displayName || profile?.name || shortenNpub(pubkey),
-              picture: pictureUrl,
-              isCoreNode: true,
-              val: 20, // Larger size for core nodes
-              color: BRAND_COLORS.bitcoinOrange
-            };
           } catch (err) {
-            console.error(`Error fetching profile for ${pubkey}:`, err);
-            
-            return {
-              id: pubkey,
-              pubkey,
-              npub: pubkeyMap.get(pubkey) || nip19.npubEncode(pubkey),
-              name: shortenNpub(pubkey),
-              picture: DEFAULT_PROFILE_IMAGE,
-              isCoreNode: true,
-              val: 20,
-              color: BRAND_COLORS.bitcoinOrange
-            };
+            console.warn('Error fetching profile for node:', node.npub || node.pubkey, err);
           }
-        });
-        
-        const profileResults = await Promise.allSettled(profilePromises);
-        
-        profileResults.forEach(result => {
-          if (result.status === 'fulfilled') {
-            nodes.push(result.value);
-          }
-        });
-        
-        return nodes;
-      };
+        }
+      }));
+    }
+    
+    return result;
+  }, [ndk, getUserProfile, shortenNpub]);
+
+  // Process data and build the graph
+  const buildGraph = useCallback(async () => {
+    if (fetchInProgress.current || !isNdkReady) return;
+    fetchInProgress.current = true;
+    
+    try {
+      setIsLoading(true);
       
-      const coreProfiles = await fetchCoreProfiles(coreKeys);
+      // Check if we have cached data
+      if (GRAPH_CACHE.data && (Date.now() - GRAPH_CACHE.timestamp < GRAPH_CACHE.ttl)) {
+        // Use cached data
+        setGraph(GRAPH_CACHE.data);
+        graphDataRef.current = GRAPH_CACHE.data;
+        setIsLoading(false);
+        fetchInProgress.current = false;
+        return;
+      }
       
-      // Add core nodes to graph
-      setGraph({
-        nodes: [...coreProfiles],
-        links: []
-      });
-      setNodeImages(nodeImagesMap);
+      // Convert npubs to pubkeys for the core nodes
+      const coreKeys: string[] = [];
+      const coreNodes: GraphNode[] = [];
       
-      // STEP 2: Get direct connections for core nodes
-      // Track first-degree connections to process later
+      // Process core pubkeys
+      for (const npub of effectiveNpubs) {
+        try {
+          // Convert npub to pubkey
+          const { data: pubkey } = nip19.decode(npub);
+          coreKeys.push(pubkey as string);
+          
+          // Create node for this core pubkey
+          coreNodes.push({
+            id: pubkey as string,
+            pubkey: pubkey as string,
+            npub: npub,
+            name: shortenNpub(npub),
+            picture: DEFAULT_PROFILE_IMAGE,
+            isCoreNode: true,
+          });
+        } catch (err) {
+          console.warn('Invalid npub:', npub, err);
+        }
+      }
+      
+      // Fetch profiles for core nodes
+      const coreNodesWithProfiles = await fetchProfiles(coreNodes);
+      
+      // Process first-degree connections
+      const nodes: GraphNode[] = [...coreNodesWithProfiles];
+      const links: GraphLink[] = [];
+      const addedPubkeys = new Set<string>(coreKeys);
       const firstDegreeConnections = new Set<string>();
       
-      // Process core nodes in sequence to avoid overwhelming relays
-      for (const coreNode of coreProfiles) {
+      // Get followers for each core pubkey
+      for (const pubkey of coreKeys) {
         try {
-          // Fetch contacts with timeout
-          const contactsEvents = await Promise.race([
-            ndk.fetchEvents({
-              kinds: [3], // Contact lists
-              authors: [coreNode.pubkey],
-              limit: 1
-            }),
-            new Promise<null>((_, reject) => 
-              setTimeout(() => reject(new Error('Timeout')), 5000)
-            )
-          ]).catch(() => null);
+          const contactsEvents = await ndk.fetchEvents({
+            kinds: [3], // Contact lists
+            authors: [pubkey],
+            limit: 1
+          });
           
-          // If we have contacts
-          if (contactsEvents && contactsEvents instanceof Set && contactsEvents.size > 0) {
-            const contactList = Array.from(contactsEvents)[0];
+          for (const event of contactsEvents) {
+            // Extract p tags (following)
+            const following = event.tags
+              .filter(tag => tag[0] === 'p')
+              .map(tag => tag[1]);
             
-            // Extract follows from tags if they exist
-            if (contactList && contactList.tags && Array.isArray(contactList.tags)) {
-              const follows = contactList.tags
-                .filter(tag => Array.isArray(tag) && tag[0] === 'p')
-                .map(tag => tag[1])
-                .filter(followPubkey => coreKeys.includes(followPubkey))
-                .slice(0, maxConnections);
+            // Limit the number of connections per node
+            const limitedFollowing = following.slice(0, maxConnections);
+            
+            // Find mutual connections
+            const mutuals = new Set<string>();
+            
+            // Check for mutual follows among core nodes
+            for (const otherPubkey of coreKeys) {
+              if (pubkey === otherPubkey) continue;
               
-              // Add connections
-              for (const followPubkey of follows) {
-                if (followPubkey !== coreNode.pubkey) {
-                  links.push({
-                    source: coreNode.pubkey,
-                    target: followPubkey,
-                    type: 'follows',
-                    value: 2
-                  });
+              // Check if this core pubkey follows the other core pubkey
+              if (following.includes(otherPubkey)) {
+                // Check if the other core pubkey follows this pubkey
+                const otherContactsEvents = await ndk.fetchEvents({
+                  kinds: [3],
+                  authors: [otherPubkey],
+                  limit: 1
+                });
+                
+                for (const otherEvent of otherContactsEvents) {
+                  const otherFollowing = otherEvent.tags
+                    .filter(tag => tag[0] === 'p')
+                    .map(tag => tag[1]);
                   
-                  // Check for mutual follows
-                  const isMutual = links.some(
-                    link => link.source === followPubkey && link.target === coreNode.pubkey
-                  );
-                  
-                  if (isMutual) {
-                    // Update both links to mutual
-                    links.forEach(link => {
-                      if ((link.source === coreNode.pubkey && link.target === followPubkey) ||
-                          (link.source === followPubkey && link.target === coreNode.pubkey)) {
-                        link.type = 'mutual';
-                        link.value = 3;
-                      }
-                    });
+                  if (otherFollowing.includes(pubkey)) {
+                    mutuals.add(otherPubkey);
+                    
+                    // Add mutual link if not already added
+                    const linkId = [pubkey, otherPubkey].sort().join('-');
+                    if (!links.some(link => 
+                      (link.source === pubkey && link.target === otherPubkey) || 
+                      (link.source === otherPubkey && link.target === pubkey)
+                    )) {
+                      links.push({
+                        id: linkId,
+                        source: pubkey,
+                        target: otherPubkey,
+                        type: 'mutual',
+                        value: 2
+                      });
+                    }
                   }
                 }
               }
+            }
+            
+            // Process regular followers
+            for (const followedPubkey of limitedFollowing) {
+              // Skip core pubkeys (already handled above)
+              if (coreKeys.includes(followedPubkey)) {
+                continue;
+              }
               
-              // Also collect non-core follows for second-degree processing
-              const nonCoreFollows = contactList.tags
-                .filter(tag => Array.isArray(tag) && tag[0] === 'p')
-                .map(tag => tag[1])
-                .filter(followPubkey => !coreKeys.includes(followPubkey))
-                .slice(0, maxConnections);
+              // Add to first-degree connections
+              firstDegreeConnections.add(followedPubkey);
+              
+              // Create node for this pubkey if not already added
+              if (!addedPubkeys.has(followedPubkey)) {
+                const npub = nip19.npubEncode(followedPubkey);
+                nodes.push({
+                  id: followedPubkey,
+                  pubkey: followedPubkey,
+                  npub: npub,
+                  name: shortenNpub(npub),
+                  picture: DEFAULT_PROFILE_IMAGE,
+                  isCoreNode: false,
+                });
                 
-              nonCoreFollows.forEach(pubkey => {
-                firstDegreeConnections.add(pubkey);
-                addedPubkeys.add(pubkey);
+                addedPubkeys.add(followedPubkey);
+              }
+              
+              // Create link from the core pubkey to the followed pubkey
+              links.push({
+                source: pubkey,
+                target: followedPubkey,
+                type: 'follows',
               });
             }
           }
-          
-          // Update the graph progressively to show connections forming
-          setGraph({
-            nodes: [...coreProfiles],
-            links: [...links]
-          });
-        } catch (e) {
-          console.warn(`Error fetching contacts for ${coreNode.pubkey}:`, e);
+        } catch (err) {
+          console.warn('Error fetching contacts for pubkey:', pubkey, err);
         }
       }
       
-      // STEP 3: Get profiles for first-degree connections
-      if (firstDegreeConnections.size > 0) {
-        const firstDegreeArray = Array.from(firstDegreeConnections);
-        
-        // Process in batches to avoid overwhelming system
-        for (let i = 0; i < firstDegreeArray.length; i += 5) {
-          const batch = firstDegreeArray.slice(i, i + 5);
-          
-          const profilePromises = batch.map(async (pubkey) => {
-            try {
-              const npub = nip19.npubEncode(pubkey);
-              const profile = await getUserProfile(npub);
-              
-              // Preload image
-              let pictureUrl = profile?.picture || DEFAULT_PROFILE_IMAGE;
-              if (pictureUrl && !/^https?:\/\//i.test(pictureUrl)) {
-                pictureUrl = DEFAULT_PROFILE_IMAGE;
-              }
-              
-              const img = new Image();
-              img.src = pictureUrl;
-              nodeImagesMap.set(npub, img);
-              
-              return {
-                id: pubkey,
-                pubkey,
-                npub,
-                name: profile?.displayName || profile?.name || shortenNpub(npub),
-                picture: pictureUrl,
-                isCoreNode: false,
-                val: 10, // Medium size for first-degree connections
-                color: BRAND_COLORS.forestGreen
-              };
-            } catch (err) {
-              console.error(`Error fetching profile for ${pubkey}:`, err);
-              const npub = nip19.npubEncode(pubkey);
-              
-              return {
-                id: pubkey,
-                pubkey,
-                npub,
-                name: shortenNpub(npub),
-                picture: DEFAULT_PROFILE_IMAGE,
-                isCoreNode: false,
-                val: 10,
-                color: BRAND_COLORS.forestGreen
-              };
-            }
-          });
-          
-          const profileResults = await Promise.allSettled(profilePromises);
-          
-          // Add nodes and update images
-          profileResults.forEach(result => {
-            if (result.status === 'fulfilled') {
-              nodes.push(result.value);
-            }
-          });
-          
-          // Show first-degree nodes as they're processed
-          setGraph({
-            nodes: [...coreProfiles],
-            links: [...links]
-          });
-          setNodeImages(nodeImagesMap);
-        }
-        
-        // STEP 4: Process second-degree connections (followers of followers)
-        const { nodes: updatedNodes, links: updatedLinks } = 
-          await processSecondDegreeConnections(
-            firstDegreeConnections,
-            coreKeys,
-            nodes,
-            links,
-            addedPubkeys
-          );
-          
-        // Final graph update with all nodes and links
-        setNodeImages(nodeImagesMap);
-        setGraph({
-          nodes: updatedNodes,
-          links: updatedLinks
-        });
-      } else {
-        // If no first-degree connections found
-        setGraph({
-          nodes: coreProfiles,
-          links: []
-        });
-      }
+      // Process second-degree connections
+      const { nodes: updatedNodes, links: updatedLinks } = await processSecondDegreeConnections(
+        firstDegreeConnections,
+        coreKeys,
+        nodes,
+        links,
+        addedPubkeys
+      );
       
-      setIsLoading(false);
-    } catch (error) {
-      console.error('Error fetching social graph data:', error);
-      setError('Failed to load social graph data. Please try again.');
-      setIsLoading(false);
+      // Fetch profiles for first-degree connections
+      const firstDegreeNodes = updatedNodes.filter(node => 
+        !node.isCoreNode && firstDegreeConnections.has(node.pubkey)
+      );
+      
+      const firstDegreeWithProfiles = await fetchProfiles(firstDegreeNodes);
+      
+      // Update nodes with profile information
+      const finalNodes = updatedNodes.map(node => {
+        if (!node.isCoreNode && firstDegreeConnections.has(node.pubkey)) {
+          // Find the updated node with profile
+          const updatedNode = firstDegreeWithProfiles.find(n => n.id === node.id);
+          return updatedNode || node;
+        }
+        return node;
+      });
+      
+      // Final graph data
+      const graphData: GraphData = {
+        nodes: finalNodes,
+        links: updatedLinks,
+        lastUpdated: Date.now()
+      };
+      
+      // Mark core nodes to ensure proper visualization
+      const markedGraphData = markCoreNodes(graphData, effectiveNpubs);
+      
+      // Cache the graph data
+      GRAPH_CACHE.data = markedGraphData;
+      GRAPH_CACHE.timestamp = Date.now();
+      
+      // Update state and refs
+      setGraph(markedGraphData);
+      graphDataRef.current = markedGraphData;
+      
+      // Preload images for all nodes
+      for (const node of finalNodes) {
+        if (node.picture && node.picture !== DEFAULT_PROFILE_IMAGE) {
+          preloadImage(node.picture).catch(() => {});
+        }
+      }
+    } catch (err) {
+      console.error('Error building graph:', err);
+      setError('Failed to build social graph');
     } finally {
+      setIsLoading(false);
       fetchInProgress.current = false;
     }
-  }, [ndk, npubs, maxConnections, getUserProfile, reconnect, shortenNpub, processSecondDegreeConnections]);
+  }, [
+    isNdkReady, effectiveNpubs, ndk, shortenNpub, 
+    maxConnections, fetchProfiles, processSecondDegreeConnections
+  ]);
 
-  // Process graph data on mount or when data changes
+  // Initialize the graph when NDK is ready
   useEffect(() => {
-    const processData = async () => {
-      if (fetchInProgress.current) return;
+    if (isNdkReady && !graph) {
+      buildGraph();
+    }
+  }, [isNdkReady, graph, buildGraph]);
+
+  // Function to handle node click
+  const handleNodeClick = useCallback((node: GraphNode) => {
+    setSelectedNode(node === selectedNode ? null : node);
+  }, [selectedNode]);
+
+  // Custom node painting with improved image handling
+  const paintNode = useCallback((node: GraphNode, ctx: CanvasRenderingContext2D, globalScale: number) => {
+    const { x, y } = node as any;
+    if (typeof x !== 'number' || typeof y !== 'number') return;
+    
+    const size = (node.val || 5) * Math.min(2, Math.max(0.5, 1 / globalScale));
+    
+    // Helper function to draw a circle
+    const drawCircle = (color: string) => {
+      ctx.beginPath();
+      ctx.arc(x, y, size, 0, 2 * Math.PI);
+      ctx.fillStyle = color;
+      ctx.fill();
       
-      try {
-        setError('');
-        setIsLoading(true);
-        fetchInProgress.current = true;
-        
-        let graphData = data;
-        
-        if (!graphData) {
-          // Fetch from API if not provided directly
-          try {
-            const response = await fetch('/api/socialgraph');
-            if (!response.ok) {
-              throw new Error(`API responded with status ${response.status}`);
-            }
-            const responseData = await response.json();
-            graphData = responseData.data;
-          } catch (err) {
-            setError('Failed to load social graph data from API');
-            setIsLoading(false);
-            fetchInProgress.current = false;
-            return;
-          }
-        }
-        
-        if (graphData && graphData.nodes && graphData.links) {
-          // Mark core nodes explicitly
-          graphData = markCoreNodes(graphData, npubs);
-          
-          // Find center node
-          const centerNodeId = centerNpub.startsWith('npub') 
-            ? nip19.decode(centerNpub).data.toString()
-            : centerNpub;
-          
-          const centerNode = graphData.nodes.find(node => 
-            node.id === centerNodeId || node.npub === centerNpub
-          );
-          
-          if (centerNode) {
-            // Pin the center node in the middle
-            if (typeof width === 'number' && typeof height === 'number') {
-              centerNode.fx = width / 2;
-              centerNode.fy = height / 2;
-            }
-            centerNode.val = (centerNode.val || 1) * 2;
-            centerNode.isCoreNode = true;
-          }
-          
-          // Process data for visualization
-          setGraph(graphData);
-          
-          // Initialize the force graph with the processed data
-          initializeForceGraph(graphData);
-        } else {
-          setError('Invalid social graph data format');
-        }
-      } catch (error) {
-        setError(`Error processing social graph: ${error instanceof Error ? error.message : 'Unknown error'}`);
-      } finally {
-        setIsLoading(false);
-        fetchInProgress.current = false;
-      }
+      // Draw border
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
+      ctx.lineWidth = 0.5;
+      ctx.stroke();
     };
     
-    processData();
-  }, [data, npubs, centerNpub, height, width, initializeForceGraph]);
-
-  // Effect to initialize force graph when data changes
-  useEffect(() => {
-    if (forceGraphRef.current && graph && graph.nodes.length > 0) {
-      initializeForceGraph(graph);
+    // Draw the node image if available
+    if (node.picture && node.picture !== DEFAULT_PROFILE_IMAGE) {
+      const cachedImage = IMAGE_CACHE.get(node.picture);
+      
+      if (cachedImage) {
+        // Draw circle background first
+        drawCircle(node.color || BRAND_COLORS.lightSand);
+        
+        // Draw the image as a circle
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(x, y, size - 0.5, 0, 2 * Math.PI);
+        ctx.clip();
+        
+        try {
+          ctx.drawImage(
+            cachedImage,
+            x - size + 0.5,
+            y - size + 0.5,
+            (size - 0.5) * 2,
+            (size - 0.5) * 2
+          );
+        } catch (e) {
+          // Fallback to circle if image fails
+          drawCircle(node.color || BRAND_COLORS.lightSand);
+        }
+        
+        ctx.restore();
+        
+        // Draw highlighted border for core nodes
+        if (node.isCoreNode) {
+          ctx.beginPath();
+          ctx.arc(x, y, size + 1, 0, 2 * Math.PI);
+          ctx.strokeStyle = BRAND_COLORS.bitcoinOrange;
+          ctx.lineWidth = 1.5;
+          ctx.stroke();
+        }
+      } else {
+        // No cached image yet, try to load it
+        preloadImage(node.picture).catch(() => {});
+        // Draw fallback circle
+        drawCircle(node.color || BRAND_COLORS.lightSand);
+      }
+    } else {
+      // Draw a basic circle for nodes without images
+      drawCircle(node.color || BRAND_COLORS.lightSand);
     }
-  }, [graph, initializeForceGraph]);
+    
+    // Draw node label if globalScale is large enough
+    if (globalScale > 0.4 || node.isCoreNode) {
+      const labelText = node.name || shortenNpub(node.npub || '');
+      if (labelText) {
+        ctx.font = `${Math.max(12, size/globalScale/3)}px Sans-Serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillStyle = node.isCoreNode ? 'white' : '#333';
+        
+        // Draw text background
+        const textWidth = ctx.measureText(labelText).width;
+        const bgPadding = 2;
+        const bgHeight = Math.max(14, size/globalScale/3) + (bgPadding * 2);
+        
+        ctx.fillStyle = node.isCoreNode ? 'rgba(247, 147, 26, 0.8)' : 'rgba(255, 255, 255, 0.7)';
+        ctx.fillRect(
+          x - textWidth/2 - bgPadding,
+          y + size + 2,
+          textWidth + (bgPadding * 2),
+          bgHeight
+        );
+        
+        // Draw text
+        ctx.fillStyle = node.isCoreNode ? 'white' : '#333';
+        ctx.fillText(labelText, x, y + size + 2 + bgHeight/2);
+      }
+    }
+  }, [shortenNpub]);
 
-  // Render appropriate UI based on loading/error state
-  if (loading) {
-    return (
-      <div 
-        className={`flex flex-col items-center justify-center bg-forest rounded-lg ${className}`} 
-        style={{ height, width }}
-      >
-        <div className="text-lg font-medium text-center text-sand">
-          Loading Nostr social graph...
-        </div>
-        
-        <div className="mt-4 text-center max-w-md px-4 h-16 flex items-center justify-center">
-          <div 
-            className="animate-fade-in-out text-lg font-medium text-bitcoin"
-          >
-            {loadingMessage}
-          </div>
-        </div>
-        
-        {/* Bitcoin Orange to Ocean Blue gradient bar that fills and empties */}
-        <div className="mt-6 w-64 h-3 bg-sand dark:bg-sand/30 rounded-full overflow-hidden relative shadow-inner">
-          <div 
-            className="absolute h-full rounded-full animate-fill-empty-bar"
-            style={{ 
-              background: `linear-gradient(to right, 
-                ${BRAND_COLORS.bitcoinOrange}, 
-                ${BRAND_COLORS.deepBlue})`,
-              boxShadow: '0 0 10px rgba(247, 147, 26, 0.5)'
-            }}
-          ></div>
-        </div>
-        
-        <div className="mt-6 text-sm text-sand italic">
-          Real-time data takes a moment to load
-        </div>
-      </div>
-    );
-  }
-
-  if (error && !graph) {
-    return (
-      <div className={`flex flex-col items-center justify-center ${className}`} style={{ height, width }}>
-        <div className="text-center p-6 bg-red-50 dark:bg-red-950 rounded-lg border border-red-200 dark:border-red-800 max-w-md">
-          <h3 className="text-lg font-semibold text-red-700 dark:text-red-400 mb-2">Error Loading Social Graph</h3>
-          <p className="text-red-600 dark:text-red-300 mb-4">{error}</p>
-          
-          <div className="mt-4">
-            <button 
-              onClick={() => fetchNostrData()}
-              className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-md shadow-sm transition-colors"
-            >
-              Try Again with Nostr Data
-            </button>
-          </div>
-          
-          {!ndk && (
-            <div className="p-4 mt-4 bg-amber-50 dark:bg-amber-950 rounded-lg border border-amber-200 dark:border-amber-800">
-              <p className="text-amber-700 dark:text-amber-300 mb-2">
-                To use the social graph, you need a Nostr extension. 
-                Try installing one of these:
-              </p>
-              <ul className="list-disc list-inside text-amber-600 dark:text-amber-400">
-                <li><a href="https://getalby.com/" target="_blank" rel="noopener noreferrer" className="underline hover:text-amber-800 dark:hover:text-amber-200">Alby</a></li>
-                <li><a href="https://github.com/fiatjaf/nos2x" target="_blank" rel="noopener noreferrer" className="underline hover:text-amber-800 dark:hover:text-amber-200">nos2x</a></li>
-                <li><a href="https://getflamingo.org/" target="_blank" rel="noopener noreferrer" className="underline hover:text-amber-800 dark:hover:text-amber-200">Flamingo</a></li>
-              </ul>
-            </div>
-          )}
-          
-          <div className="mt-4 text-sm text-gray-600 dark:text-gray-400">
-            <p>We prioritize showing real-time data from the Nostr network rather than using static or mock data.</p>
-            <p className="mt-1">This ensures you always see the most up-to-date social connections.</p>
-          </div>
-        </div>
-      </div>
-    );
-  }
+  // Memory management - clear image cache on unmount
+  useEffect(() => {
+    return () => {
+      // Clean up resources when component unmounts
+      if (forceGraphRef.current) {
+        forceGraphRef.current = null;
+      }
+    };
+  }, []);
 
   return (
-    <div 
-      ref={containerRef}
-      className="social-graph-container rounded-lg shadow-lg overflow-hidden w-full h-full"
-      style={{ 
-        height: typeof height === 'number' ? `${height}px` : height,
-        width: typeof width === 'number' ? `${width}px` : width,
-        background: `linear-gradient(135deg, ${BRAND_COLORS.deepBlue} 0%, ${BRAND_COLORS.forestGreen} 100%)`,
-      }}
-    >
-      <div className="w-full h-full relative">
-        <div className="absolute top-0 left-0 z-10 p-2 flex items-center space-x-2">
-          <div className="font-medium px-3 py-1 bg-white/30 border border-gray-200 rounded shadow-sm text-sm" style={{ color: BRAND_COLORS.lightSand }}>
-            Bitcoin Madeira Social Graph
+    <div ref={containerRef} className={`relative ${className}`} style={{ height }}>
+      {loading ? (
+        <div className="absolute inset-0 flex items-center justify-center bg-gray-100 dark:bg-gray-800 bg-opacity-80 dark:bg-opacity-80 z-10">
+          <div className="text-center p-4">
+            <div className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-forest border-r-transparent align-[-0.125em] motion-reduce:animate-[spin_1.5s_linear_infinite]"></div>
+            <p className="mt-4 text-forest dark:text-sand">{loadingMessage}</p>
           </div>
-          <button 
-            onClick={() => fetchNostrData()}
-            disabled={loading}
-            className={`px-3 py-1 bg-white/20 hover:bg-white/30 rounded shadow-sm text-sm font-medium border border-gray-200 flex items-center ${loading ? 'opacity-50' : ''}`}
-            aria-label="Reload graph with real data"
-            style={{ color: BRAND_COLORS.lightSand }}
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" className={`h-4 w-4 mr-1 ${loading ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-            </svg>
-            {loading ? 'Loading...' : 'Load Nostr Data'}
-          </button>
         </div>
+      ) : null}
 
-        {error && (
-          <div className="absolute top-12 left-0 z-10 p-2 w-full">
-            <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-2 rounded max-w-md mx-auto">
-              <p className="text-sm">{error}</p>
-              <div className="flex justify-end mt-1">
-                <button 
-                  onClick={() => setError(null)} 
-                  className="text-xs text-red-600 hover:text-red-800"
-                >
-                  Dismiss
-                </button>
-              </div>
+      {error ? (
+        <div className="absolute inset-0 flex items-center justify-center bg-red-100 dark:bg-red-900 bg-opacity-80 dark:bg-opacity-80 z-10">
+          <div className="text-center p-4">
+            <p className="text-red-700 dark:text-red-200 mb-4">{error}</p>
+            <button 
+              className="px-4 py-2 bg-forest text-white rounded-md hover:bg-opacity-90 transition-colors"
+              onClick={() => {
+                setError(null);
+                buildGraph();
+              }}
+            >
+              Retry
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      {graph && (
+        <ForceGraph2D
+          ref={forceGraphRef}
+          graphData={convertGraphData(graph) as any}
+          nodeLabel={node => `${node.name || shortenNpub(((node as any) as GraphNode).npub || '')}`}
+          width={typeof width === 'number' ? width : undefined}
+          height={typeof height === 'number' ? height : undefined}
+          cooldownTime={5000}
+          onEngineStop={() => {
+            // Center graph on a core node after initial render
+            if (forceGraphRef.current && graph.nodes.length > 0) {
+              const centerNode = graph.nodes.find(node => 
+                node.npub === centerNpub || node.isCoreNode
+              );
+              if (centerNode) {
+                forceGraphRef.current.centerAt(
+                  (centerNode as any).x,
+                  (centerNode as any).y,
+                  1000
+                );
+                forceGraphRef.current.zoom(2, 1000);
+              }
+            }
+          }}
+          onNodeClick={(node) => handleNodeClick((node as any) as GraphNode)}
+          nodeCanvasObject={(node, ctx, globalScale) => paintNode((node as any) as GraphNode, ctx, globalScale)}
+          nodePointerAreaPaint={(node, color, ctx) => {
+            const { x, y } = (node as any);
+            const size = ((node as any) as GraphNode).val || 5 * 1.5;
+            ctx.beginPath();
+            ctx.arc(x, y, size, 0, 2 * Math.PI);
+            ctx.fillStyle = 'transparent';
+            ctx.fill();
+          }}
+          linkDirectionalParticles={link => (((link as any) as GraphLink).type === 'mutual' ? 4 : 0)}
+          linkDirectionalParticleSpeed={0.005}
+          linkWidth={link => (((link as any) as GraphLink).type === 'mutual' ? 2 : 1)}
+          backgroundColor="rgba(0,0,0,0)"
+        />
+      )}
+      
+      {selectedNode && (
+        <div className="absolute top-2 right-2 bg-white dark:bg-gray-800 p-3 rounded-lg shadow-lg z-20 max-w-[250px]">
+          <div className="flex items-center mb-2">
+            {selectedNode.picture ? (
+              <img 
+                src={selectedNode.picture} 
+                alt={selectedNode.name || shortenNpub(selectedNode.npub || '')}
+                className="w-10 h-10 rounded-full mr-2"
+                onError={(e) => {
+                  (e.target as HTMLImageElement).src = DEFAULT_PROFILE_IMAGE;
+                }}
+              />
+            ) : (
+              <div className="w-10 h-10 rounded-full bg-gray-200 mr-2"></div>
+            )}
+            <div>
+              <h3 className="font-semibold">{selectedNode.name || shortenNpub(selectedNode.npub || '')}</h3>
+              <p className="text-xs text-gray-500 dark:text-gray-400">{shortenNpub(selectedNode.npub || '')}</p>
             </div>
           </div>
-        )}
-
-        {selectedNode && (
-          <div className="absolute bottom-0 left-0 z-10 p-2 w-full">
-            <div className="shadow-sm p-3 max-w-xs mx-auto border border-gray-200 rounded-lg" style={{ backgroundColor: BRAND_COLORS.deepBlue }}>
-              <div className="flex items-center">
-                <div className="w-10 h-10 rounded-full overflow-hidden mr-3 border-2" style={{ borderColor: BRAND_COLORS.bitcoinOrange }}>
-                  <img 
-                    src={selectedNode.picture || DEFAULT_PROFILE_IMAGE} 
-                    alt={selectedNode.name || shortenNpub(selectedNode.npub || '')}
-                    className="w-full h-full object-cover"
-                    onError={(e) => {
-                      (e.target as HTMLImageElement).src = DEFAULT_PROFILE_IMAGE;
-                    }}
-                  />
-                </div>
-                <div>
-                  <div className="font-medium" style={{ color: BRAND_COLORS.lightSand }}>{selectedNode.name || (selectedNode.npub ? shortenNpub(selectedNode.npub) : '')}</div>
-                  <div className="text-xs" style={{ color: BRAND_COLORS.lightSand + '99' }}>{selectedNode.npub ? shortenNpub(selectedNode.npub) : ''}</div>
-                </div>
-              </div>
-              <div className="mt-2 flex justify-end">
-                <a 
-                  href={`https://njump.me/${selectedNode.npub}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-xs hover:underline"
-                  style={{ color: BRAND_COLORS.bitcoinOrange }}
-                >
-                  View on Nostr →
-                </a>
-              </div>
-            </div>
-          </div>
-        )}
-
-        <div className="w-full h-full">
-          {graph && (
-            <ForceGraph2D
-              graphData={convertGraphData(graph) as any}
-              nodeColor={(node: any) => node.color || BRAND_COLORS.lightSand}
-              nodeVal={(node: any) => node.val || 1}
-              linkColor={(link: any) => link.color || BRAND_COLORS.lightSand + '99'}
-              linkWidth={(link: any) => Math.sqrt(link.value || 1) * 1.5}
-              onNodeClick={(node: any) => setSelectedNode(node as GraphNode)}
-              width={typeof width === 'number' ? width : parseInt(width) || undefined}
-              height={typeof height === 'number' ? height : parseInt(height) || undefined}
-              nodeCanvasObject={(node: any, ctx: CanvasRenderingContext2D, globalScale: number) => {
-                // Helper function to draw fallback circle
-                const drawFallbackCircle = (node: GraphNode, ctx: CanvasRenderingContext2D, size: number) => {
-                  try {
-                    ctx.beginPath();
-                    ctx.fillStyle = node.color as string || BRAND_COLORS.lightSand;
-                    ctx.arc(node.x as number, node.y as number, size, 0, 2 * Math.PI);
-                    ctx.fill();
-                    
-                    // Add highlight border for core nodes
-                    if (node.isCoreNode) {
-                      ctx.beginPath();
-                      ctx.strokeStyle = BRAND_COLORS.bitcoinOrange; // Bitcoin orange for core nodes
-                      ctx.lineWidth = 2;
-                      ctx.arc(node.x as number, node.y as number, size + 2, 0, 2 * Math.PI);
-                      ctx.stroke();
-                    }
-                  } catch (err) {
-                    console.error('Error drawing fallback circle:', err);
-                  }
-                };
-
-                try {
-                  const graphNode = node as GraphNode;
-                  const nodeSize = graphNode.val || 5;
-                  
-                  // Always draw the fallback circle first as a base layer
-                  drawFallbackCircle(graphNode, ctx, nodeSize);
-                  
-                  // Then try to draw the profile image on top if available
-                  if (graphNode.npub) {
-                    const imageSource = nodeImages.get(graphNode.npub);
-                    
-                    if (imageSource && imageSource.complete && imageSource.naturalWidth > 0) {
-                      try {
-                        // Create circular clipping path
-                        ctx.save();
-                        ctx.beginPath();
-                        ctx.arc(graphNode.x as number, graphNode.y as number, nodeSize, 0, 2 * Math.PI);
-                        ctx.clip();
-                        
-                        // Draw the profile image
-                        const imgSize = nodeSize * 2;
-                        ctx.drawImage(
-                          imageSource, 
-                          (graphNode.x as number) - nodeSize, 
-                          (graphNode.y as number) - nodeSize, 
-                          imgSize, 
-                          imgSize
-                        );
-                        
-                        ctx.restore();
-                        
-                        // Add highlight border for core nodes
-                        if (graphNode.isCoreNode) {
-                          ctx.beginPath();
-                          ctx.strokeStyle = BRAND_COLORS.bitcoinOrange; // Bitcoin orange for core nodes
-                          ctx.lineWidth = 2;
-                          ctx.arc(graphNode.x as number, graphNode.y as number, nodeSize + 2, 0, 2 * Math.PI);
-                          ctx.stroke();
-                        }
-                      } catch (drawErr) {
-                        // Image drawing failed, but we already have the fallback circle
-                        console.warn('Error drawing profile image:', drawErr);
-                      }
-                    }
-                  }
-                } catch (err) {
-                  console.error('Error rendering node:', err);
-                  // In case of any error, don't crash the rendering
+          
+          <div className="flex space-x-2 mt-2">
+            <button 
+              className="px-3 py-1 text-xs bg-forest text-white rounded hover:bg-opacity-90 transition-colors"
+              onClick={() => {
+                // Open user's profile in new tab
+                if (selectedNode.npub) {
+                  window.open(`https://primal.net/p/${selectedNode.npub}`, '_blank');
                 }
               }}
-            />
-          )}
+            >
+              View Profile
+            </button>
+            <button 
+              className="px-3 py-1 text-xs bg-gray-200 dark:bg-gray-700 rounded hover:bg-opacity-90 transition-colors"
+              onClick={() => setSelectedNode(null)}
+            >
+              Close
+            </button>
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 };
