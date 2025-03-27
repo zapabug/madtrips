@@ -533,8 +533,15 @@ export const NostrFeed: React.FC<NostrFeedProps> = ({
       {!loading && !error && notes.length > 0 && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {notes.map(note => (
-            <div key={note.id} className="bg-white dark:bg-gray-800 rounded-lg shadow p-4 border border-gray-200 dark:border-gray-700">
-              <div className="flex items-start">
+            <div key={note.id} className="bg-white dark:bg-gray-800 rounded-lg shadow p-4 border border-gray-200 dark:border-gray-700 relative group">
+              <a 
+                href={`https://njump.me/${note.id}`}
+                target="_blank" 
+                rel="noopener noreferrer"
+                className="absolute inset-0 z-0 cursor-pointer"
+                aria-label="Open post in Nostr client"
+              ></a>
+              <div className="flex items-start relative z-10">
                 {note.author.profile?.picture ? (
                   <a 
                     href={`https://njump.me/${note.author.npub}`}
@@ -589,16 +596,17 @@ export const NostrFeed: React.FC<NostrFeedProps> = ({
                 </div>
               </div>
               
-              <p className="text-sand dark:text-gray-300 mb-3 line-clamp-4 flex-grow">{note.content}</p>
+              <p className="text-sand dark:text-gray-300 mb-3 line-clamp-4 flex-grow relative z-10">{note.content}</p>
               
               {/* Display hashtags in the note */}
               {note.hashtags.length > 0 && (
-                <div className="flex flex-wrap gap-1 mb-3">
+                <div className="flex flex-wrap gap-1 mb-3 relative z-10">
                   {note.hashtags.map(tag => (
                     <span 
                       key={tag} 
                       className="text-xs bg-bitcoin/10 text-bitcoin px-2 py-0.5 rounded-full cursor-pointer hover:bg-bitcoin/20"
-                      onClick={() => {
+                      onClick={(e) => {
+                        e.stopPropagation();
                         if (!activeHashtags.includes(tag)) {
                           setActiveHashtags(prev => [...prev, tag]);
                         }
@@ -611,7 +619,7 @@ export const NostrFeed: React.FC<NostrFeedProps> = ({
               )}
               
               {note.images.length > 0 && (
-                <div className="mt-auto">
+                <div className="mt-auto relative z-10">
                   <div className="relative w-full h-48 rounded-lg overflow-hidden">
                     <Image 
                       src={note.images[0]} 

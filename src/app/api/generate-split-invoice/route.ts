@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { generateInvoice } from '@/lib/services/LightningService';
+import { generateInvoice } from '../../../lib/services/LightningService';
 
 export async function POST(request: Request) {
   try {

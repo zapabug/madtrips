@@ -63,15 +63,8 @@ const SocialGraphSection = memo(() => (
       />
     </div>
     
-    <div className="text-gray-600 dark:text-gray-300 text-sm space-y-2">
-      <p>
-        <span className="font-medium text-forest">Discover the Bitcoin Madeira community</span> - This interactive visualization shows relationships between community members,
-        highlighting Bitcoin advocates and businesses supporting adoption on the island.
-      </p>
-      <p>
-        <span className="font-medium text-bitcoin">Pro tip:</span> Names only appear when you hover over a node. 
-        Core community members are marked with orange indicators. Click on a node to view detailed profile information.
-      </p>
+    <div className="text-center">
+      <h4 className="font-bold text-bitcoin text-xl">Discover the Bitcoin Madeira community</h4>
     </div>
   </div>
 ));

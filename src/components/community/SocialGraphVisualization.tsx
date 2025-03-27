@@ -111,7 +111,7 @@ export const SocialGraphVisualization: React.FC<SocialGraphVisualizationProps> =
   
   return (
     <div 
-      className={`relative ${className}`} 
+      className={`relative flex items-center justify-center ${className}`} 
       role="figure" 
       aria-label="Community connections"
     >
