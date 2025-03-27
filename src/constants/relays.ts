@@ -28,13 +28,25 @@ export const RELAYS = {
     "wss://relay.primal.net",
     "wss://nostr.zebedee.cloud",
     "wss://relay.eupurplerelay.net",
+    "wss://nostr.1312.media",
+    "wss://nostr.stakey.net",
+    "wss://relay.nostr.net",
+    "wss://lunchbox.sandwich.farm",
+    "wss://r.lostr.net",
+    "wss://nostr.yael.at",
+    "wss://history.nostr.watch",
+    "wss://travis-shears-nostr-relay-v2.fly.dev",
+    "wss://nostr.sprovoost.nl",
+    "wss://nostr.agentcampfire.com",
+    "wss://dvms.f7z.io",
+    "wss://fl.purplerelay.com"
   ],
 };
 
 // Default list of relays to use (combines Primary and Fast)
 export const DEFAULT_RELAYS = [
   ...RELAYS.PRIMARY,
-  ...RELAYS.FAST,
+  ...RELAYS.FAST.slice(0, 5), // Use only the first 5 fast relays by default to avoid overwhelming connections
 ];
 
 // Function to get a specific set of relays

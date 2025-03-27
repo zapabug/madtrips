@@ -7,8 +7,8 @@ import { nip19 } from 'nostr-tools';
 import { NDKEvent, NDKFilter, NDKSubscription } from '@nostr-dev-kit/ndk';
 import { NostrProfileImage } from './NostrProfileImage';
 import { extractImageUrls, extractHashtags, stripLinks } from './utils';
-import { CORE_NPUBS } from './utils'; // Import from the local file instead
-import { RELAYS } from '../../constants/relays'; // Import relay config
+import { CORE_NPUBS } from './utils';
+import { RELAYS } from '../../constants/relays';
 
 // Madeira-related hashtags to filter by
 const MADEIRA_HASHTAGS = [
@@ -56,23 +56,68 @@ const noteCache: {[key: string]: {notes: Note[], timestamp: number}} = {};
 const CACHE_TTL = 10 * 60 * 1000; // 10 minutes
 const MAX_CACHE_SIZE = 100;
 
+// Image cache for the feed
+const IMAGE_CACHE = new Map<string, HTMLImageElement>();
+const MAX_IMAGE_CACHE_SIZE = 100;
+
+// Function to preload images for better performance
+const preloadImage = (url: string): Promise<HTMLImageElement> => {
+  // Check if image is already in cache
+  if (url && IMAGE_CACHE.has(url)) {
+    return Promise.resolve(IMAGE_CACHE.get(url)!);
+  }
+  
+  return new Promise<HTMLImageElement>((resolve, reject) => {
+    if (!url) {
+      reject(new Error('Invalid image URL'));
+      return;
+    }
+    
+    const img = document.createElement('img') as HTMLImageElement;
+    img.onload = () => {
+      // Manage cache size
+      if (IMAGE_CACHE.size >= MAX_IMAGE_CACHE_SIZE) {
+        // Remove oldest item (first key in the map)
+        const firstKey = IMAGE_CACHE.keys().next().value;
+        if (firstKey) {
+          IMAGE_CACHE.delete(firstKey);
+        }
+      }
+      IMAGE_CACHE.set(url, img);
+      resolve(img);
+    };
+    img.onerror = () => {
+      reject(new Error(`Failed to load image: ${url}`));
+    };
+    img.src = url;
+  });
+};
+
 export const MadeiraFeed: React.FC<MadeiraFeedProps> = ({ 
   npubs = [],
   limit = 25,
   useCorePubs = true,
   className = ''
 }) => {
-  const { ndk, getUserProfile, shortenNpub, reconnect, ndkReady, getConnectedRelays } = useNostr();
+  const { ndk, getUserProfile, reconnect, ndkReady, getConnectedRelays } = useNostr();
   const [notes, setNotes] = useState<Note[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [retryCount, setRetryCount] = useState(0);
   const [socialGraphNpubs, setSocialGraphNpubs] = useState<string[]>([]);
   const [hasLoadedInitialNotes, setHasLoadedInitialNotes] = useState(false);
+  const [isClient, setIsClient] = useState(false);
+  const [currentNoteIndex, setCurrentNoteIndex] = useState(0);
   
   const fetchInProgress = useRef<boolean>(false);
   const subscriptionRef = useRef<NDKSubscription | null>(null);
   const isMounted = useRef<boolean>(false);
+  const carouselIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Set isClient on mount
+  useEffect(() => {
+    setIsClient(true);
+  }, []);
 
   // Use the appropriate npubs list - using canonical source
   const effectiveNpubs = useCorePubs 
@@ -305,6 +350,13 @@ export const MadeiraFeed: React.FC<MadeiraFeedProps> = ({
         // Only include notes with images 
         if (extractedImages.length === 0) continue;
         
+        // Preload the main image
+        if (extractedImages.length > 0) {
+          preloadImage(extractedImages[0]).catch(() => {
+            // Silently fail on image load errors
+          });
+        }
+        
         // Queue profile fetch (only once per pubkey)
         if (!profilePromises[npub]) {
           profilePromises[npub] = getUserProfile(npub).catch(err => {
@@ -521,36 +573,86 @@ export const MadeiraFeed: React.FC<MadeiraFeedProps> = ({
     }
   }, [ndk, effectiveNpubs, socialGraphNpubs, getUserProfile]);
 
-  // Setup effect to load data
+  // Setup carousel rotation
+  useEffect(() => {
+    if (notes.length > 0 && isClient) {
+      // Clear any existing interval
+      if (carouselIntervalRef.current) {
+        clearInterval(carouselIntervalRef.current);
+      }
+      
+      // Set up the carousel interval
+      carouselIntervalRef.current = setInterval(() => {
+        setCurrentNoteIndex(prevIndex => 
+          prevIndex >= notes.length - 1 ? 0 : prevIndex + 1
+        );
+      }, 4000); // Rotate every 4 seconds
+    }
+    
+    return () => {
+      if (carouselIntervalRef.current) {
+        clearInterval(carouselIntervalRef.current);
+      }
+    };
+  }, [notes.length, isClient]);
+
+  // Setup effect to load data and start live subscription
   useEffect(() => {
     // Set mounted flag
     isMounted.current = true;
     
-    // Initial fetch
-    if (ndkReady && !hasLoadedInitialNotes) {
-      // Make sure we're using the correct NPUBs
+    // Initial fetch after client-side render only
+    if (isClient && ndkReady && !hasLoadedInitialNotes) {
       console.log(`MadeiraFeed: Using ${CORE_NPUBS.length} core NPUBs:`, CORE_NPUBS);
       fetchNotes();
+    }
+    
+    // Set up auto-refresh timer
+    let refreshInterval: NodeJS.Timeout | null = null;
+    if (isClient) {
+      refreshInterval = setInterval(() => {
+        if (ndkReady && !fetchInProgress.current && isMounted.current) {
+          console.log('MadeiraFeed: Auto-refreshing data');
+          fetchNotes(true);
+        }
+      }, 15000); // 15 seconds
+    }
+    
+    // Setup live subscription after initial load
+    if (isClient && ndkReady && hasLoadedInitialNotes && !subscriptionRef.current) {
+      console.log('MadeiraFeed: Setting up live subscription');
+      setupSubscription();
     }
     
     return () => {
       // Clean up
       isMounted.current = false;
       
+      if (refreshInterval) {
+        clearInterval(refreshInterval);
+      }
+      
       if (subscriptionRef.current) {
         subscriptionRef.current.stop();
         subscriptionRef.current = null;
       }
     };
-  }, [ndkReady, fetchNotes, hasLoadedInitialNotes]);
+  }, [isClient, ndkReady, fetchNotes, hasLoadedInitialNotes, setupSubscription]);
 
   // Force refresh if social graph npubs change
   useEffect(() => {
-    if (hasLoadedInitialNotes && socialGraphNpubs.length > 0) {
+    if (isClient && hasLoadedInitialNotes && socialGraphNpubs.length > 0) {
       console.log(`MadeiraFeed: Social graph updated with ${socialGraphNpubs.length} NPUBs, fetching new notes`);
       fetchNotes(true); // Force refresh to include social graph npubs
+      
+      // Update subscription with new npubs
+      if (subscriptionRef.current) {
+        subscriptionRef.current.stop();
+        subscriptionRef.current = null;
+        setupSubscription();
+      }
     }
-  }, [socialGraphNpubs, fetchNotes, hasLoadedInitialNotes]);
+  }, [isClient, socialGraphNpubs, fetchNotes, hasLoadedInitialNotes, setupSubscription]);
 
   // Check for cached social graph on mount
   useEffect(() => {
@@ -596,41 +698,23 @@ export const MadeiraFeed: React.FC<MadeiraFeedProps> = ({
     return () => clearInterval(interval);
   }, [socialGraphNpubs.length]);
 
-  // Function to clear cache and refresh
-  const clearCacheAndRefresh = useCallback(() => {
-    // Clear note cache
-    const cacheKey = getCacheKey();
-    if (noteCache[cacheKey]) {
-      delete noteCache[cacheKey];
-    }
-    
-    // Reset state
-    setNotes([]);
-    setLoading(true);
-    setError(null);
-    
-    // Force refresh
-    fetchNotes(true);
-  }, [getCacheKey, fetchNotes]);
-
   // Server-side rendering placeholder to avoid hydration issues
   if (typeof window === 'undefined') {
     return (
-      <div className={`flex items-center justify-center h-full ${className}`}>
-        <div className="text-center">
-          <div className="inline-block h-8 w-8 border-t-2 border-b-2 border-forest"></div>
-          <p className="mt-2 text-gray-600">Loading Madeira updates...</p>
+      <div className={`w-full h-full flex items-center justify-center ${className}`}>
+        <div className="text-center py-20">
+          <div className="h-8 w-8 border-t-2 border-b-2 border-forest mx-auto"></div>
         </div>
       </div>
     );
   }
 
-  if (loading && notes.length === 0) {
+  // Initial client render placeholder to avoid hydration issues
+  if (!isClient) {
     return (
-      <div className={`flex items-center justify-center h-full ${className}`}>
-        <div className="text-center">
-          <div className="inline-block animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-forest"></div>
-          <p className="mt-2 text-gray-600 dark:text-gray-300">Loading Madeira updates...</p>
+      <div className={`w-full h-full flex items-center justify-center ${className}`}>
+        <div className="text-center py-20">
+          <div className="h-8 w-8 border-t-2 border-b-2 border-forest mx-auto"></div>
         </div>
       </div>
     );
@@ -638,7 +722,7 @@ export const MadeiraFeed: React.FC<MadeiraFeedProps> = ({
 
   if (error && notes.length === 0) {
     return (
-      <div className={`flex items-center justify-center h-full ${className}`}>
+      <div className={`w-full h-full flex items-center justify-center ${className}`}>
         <div className="text-center text-red-500">
           <p>{error}</p>
           <button 
@@ -653,100 +737,68 @@ export const MadeiraFeed: React.FC<MadeiraFeedProps> = ({
   }
 
   return (
-    <div className={`relative ${className}`}>
-      {/* Header */}
-      <div className="flex justify-between items-center mb-4">
-        <h2 className="text-xl font-semibold">Madeira Updates</h2>
-        
-        <div className="flex items-center space-x-2">
-          <button 
-            onClick={clearCacheAndRefresh}
-            className="text-sm px-2 py-1 bg-forest text-white rounded hover:bg-opacity-90"
-            disabled={loading}
-          >
-            {loading ? 'Refreshing...' : 'Refresh'}
-          </button>
-        </div>
-      </div>
-      
-      {/* Loading state */}
-      {loading && (
-        <div className="flex items-center justify-center h-full">
+    <div className={`w-full h-full flex items-center justify-center ${className}`}>
+      {notes.length === 0 ? (
+        <div className="flex items-center justify-center h-64 w-full">
           <div className="text-center">
             <div className="inline-block animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-forest"></div>
-            <p className="mt-2 text-gray-600 dark:text-gray-300">Loading Madeira updates...</p>
-          </div>
-        </div>
-      )}
-      
-      {notes.length === 0 ? (
-        <div className="flex items-center justify-center h-full">
-          <div className="text-center">
-            <p className="text-gray-500 mb-4">No Madeira updates found.</p>
-            <button 
-              onClick={() => fetchNotes(true)} 
-              className="px-4 py-2 bg-forest text-white rounded hover:bg-forest/80"
-            >
-              Retry
-            </button>
           </div>
         </div>
       ) : (
-        <div className="flex flex-wrap gap-4 p-4 overflow-auto h-full">
-          {notes.map(note => (
+        <div className="relative w-full h-full overflow-hidden rounded-lg shadow-md">
+          {notes.map((note, index) => (
             <div 
               key={note.id} 
-              className="relative w-full sm:w-[calc(50%-8px)] md:w-[calc(33.333%-11px)] xl:w-[calc(25%-12px)] overflow-hidden rounded-lg shadow-md hover:shadow-lg transition-shadow duration-200 aspect-square group"
+              className={`absolute inset-0 transition-opacity duration-1000 ${
+                index === currentNoteIndex ? 'opacity-100 z-10' : 'opacity-0 z-0'
+              }`}
             >
               <div className="relative w-full h-full">
                 {/* Main image */}
-                <Image
-                  src={note.images[0]}
-                  alt={note.author.name || note.author.displayName || 'Madeira update'}
-                  fill
-                  sizes="(max-width: 640px) 100vw, (max-width: 768px) 50vw, (max-width: 1024px) 33vw, 25vw"
-                  className="object-cover"
-                  unoptimized
-                  onError={(e) => {
-                    // Fallback to placeholder on error
-                    (e.target as HTMLImageElement).src = '/assets/bitcoin.png';
-                  }}
-                />
-                
-                {/* Profile overlay */}
-                <div className="absolute top-2 left-2 z-10">
-                  <NostrProfileImage 
-                    npub={note.npub} 
-                    width={40} 
-                    height={40} 
-                    className="border-2 border-white shadow-md" 
-                  />
+                <div className="w-full h-full bg-gray-200">
+                  {note.images[0] && (
+                    <Image
+                      src={note.images[0]}
+                      alt={note.author.name || note.author.displayName || 'Madeira update'}
+                      fill
+                      sizes="100vw"
+                      className="object-cover object-center"
+                      unoptimized
+                      onError={(e) => {
+                        // Fallback to placeholder on error
+                        (e.target as HTMLImageElement).src = '/assets/bitcoin.png';
+                      }}
+                    />
+                  )}
                 </div>
                 
-                {/* Content overlay - visible on hover */}
-                <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/30 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex flex-col justify-end p-3">
-                  <div className="text-white">
-                    <h3 className="font-semibold text-sm">
-                      {note.author.displayName || note.author.name || shortenNpub(note.npub)}
-                    </h3>
-                    <p className="text-xs mt-1 line-clamp-3">{note.content}</p>
-                    {note.hashtags && note.hashtags.length > 0 && (
-                      <div className="flex flex-wrap gap-1 mt-2">
-                        {note.hashtags.map(tag => (
-                          <span 
-                            key={tag} 
-                            className={`text-xxs px-1.5 py-0.5 rounded-full ${
-                              MADEIRA_HASHTAGS.includes(tag.toLowerCase()) 
-                                ? 'bg-forest/80 text-white' 
-                                : 'bg-gray-200/80 text-gray-800'
-                            }`}
-                          >
-                            #{tag}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                  </div>
+                {/* Profile overlay - clickable to navigate to profile */}
+                <div className="absolute top-2 left-2 z-20">
+                  <a 
+                    href={`https://njump.me/${note.npub}`}
+                    target="_blank" 
+                    rel="noopener noreferrer"
+                    className="block cursor-pointer transition-transform hover:scale-110"
+                  >
+                    <NostrProfileImage 
+                      npub={note.npub} 
+                      width={40} 
+                      height={40} 
+                      className="rounded-full border-2 border-white shadow-md" 
+                    />
+                  </a>
+                </div>
+                
+                {/* Carousel indicators */}
+                <div className="absolute bottom-2 left-0 right-0 flex justify-center gap-1 z-20">
+                  {notes.slice(0, 10).map((_, i) => (
+                    <div 
+                      key={i} 
+                      className={`h-1.5 rounded-full transition-all duration-300 ${
+                        i === currentNoteIndex ? 'w-4 bg-white' : 'w-1.5 bg-white/60'
+                      }`}
+                    />
+                  ))}
                 </div>
               </div>
             </div>

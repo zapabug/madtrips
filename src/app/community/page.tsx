@@ -7,7 +7,6 @@ import { NostrProfileImage } from '../../components/community/NostrProfileImage'
 import { NostrFeed } from '../../components/community/CommunityFeed';
 import { useNostr } from '../../lib/contexts/NostrContext';
 import { BRAND_COLORS } from '../../constants/brandColors';
-import MultiUserNostrFeed from '../../components/community/MultiUserNostrFeed';
 import MadeiraFeed from '../../components/community/MadeiraFeed';
 import { MultiTipJar } from '../../components/tip/MultiTipJar';
 
@@ -38,11 +37,12 @@ const CORE_NPUBS = CORE_PROFILES.map(profile => profile.npub);
 const CommunityUpdates = memo(() => (
   <div className="mb-8 bg-white dark:bg-gray-800 rounded-lg shadow-lg p-4">
     <h2 className="text-2xl font-bold mb-4 text-[#14857C]">Community Updates</h2>
-    <div className="w-full h-[500px] overflow-hidden border-2 border-forest rounded-lg">
+    <div className="w-full h-[500px] overflow-hidden border-2 border-forest rounded-lg flex items-center justify-center">
       <MadeiraFeed 
         npubs={CORE_NPUBS} 
         limit={25}
         useCorePubs={true}
+        className="w-full h-full"
       />
     </div>
   </div>

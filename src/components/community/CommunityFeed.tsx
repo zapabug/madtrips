@@ -534,38 +534,58 @@ export const NostrFeed: React.FC<NostrFeedProps> = ({
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {notes.map(note => (
             <div key={note.id} className="bg-white dark:bg-gray-800 rounded-lg shadow p-4 border border-gray-200 dark:border-gray-700">
-              <div className="flex items-center mb-3">
+              <div className="flex items-start">
                 {note.author.profile?.picture ? (
-                  <div className="w-12 h-12 rounded-full overflow-hidden mr-3 relative border-2 border-bitcoin">
+                  <a 
+                    href={`https://njump.me/${note.author.npub}`}
+                    target="_blank" 
+                    rel="noopener noreferrer"
+                    className="shrink-0 mr-3 transition-transform hover:scale-110"
+                    onClick={(e) => e.stopPropagation()}
+                  >
                     <Image 
-                      src={note.author.profile.picture} 
+                      src={note.author.profile.picture}
                       alt="Profile"
                       width={48}
                       height={48}
-                      className="object-cover"
-                      priority={true}
-                      onError={(e) => {
-                        // If image fails to load, replace with default
-                        (e.target as HTMLImageElement).src = '/assets/bitcoin.png';
-                      }}
+                      className="rounded-full border border-gray-200 dark:border-gray-700"
+                      unoptimized
                     />
-                  </div>
+                  </a>
                 ) : (
-                  <div className="w-12 h-12 bg-bitcoin/20 border-2 border-bitcoin dark:bg-gray-700 rounded-full mr-3 flex items-center justify-center text-bitcoin dark:text-gray-300">
-                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M17.982 18.725A7.488 7.488 0 0012 15.75a7.488 7.488 0 00-5.982 2.975m11.963 0a9 9 0 10-11.963 0m11.963 0A8.966 8.966 0 0112 21a8.966 8.966 0 01-5.982-2.275M15 9.75a3 3 0 11-6 0 3 3 0 016 0z" />
-                    </svg>
-                  </div>
+                  <a 
+                    href={`https://njump.me/${note.author.npub}`}
+                    target="_blank" 
+                    rel="noopener noreferrer"
+                    className="shrink-0 mr-3 transition-transform hover:scale-110"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <div className="w-12 h-12 rounded-full bg-gray-300 dark:bg-gray-700 flex items-center justify-center text-lg font-bold text-gray-600 dark:text-gray-300">
+                      {note.author.profile?.name?.substring(0, 1) || note.author.profile?.displayName?.substring(0, 1) || "?"}
+                    </div>
+                  </a>
                 )}
-                <div>
-                  <p className="text-xs text-gray-500 dark:text-gray-400">
-                    {new Date(note.created_at * 1000).toLocaleString(undefined, {
-                      month: 'short',
-                      day: 'numeric',
-                      hour: '2-digit',
-                      minute: '2-digit'
-                    })}
-                  </p>
+
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-baseline">
+                    <a 
+                      href={`https://njump.me/${note.author.npub}`}
+                      target="_blank" 
+                      rel="noopener noreferrer"
+                      className="font-medium text-gray-900 dark:text-white hover:underline"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {note.author.profile?.displayName || note.author.profile?.name || shortenNpub(note.author.npub)}
+                    </a>
+                    <p className="text-xs text-gray-500 dark:text-gray-400 ml-2">
+                      {new Date(note.created_at * 1000).toLocaleString(undefined, {
+                        month: 'short',
+                        day: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit'
+                      })}
+                    </p>
+                  </div>
                 </div>
               </div>
               
@@ -616,8 +636,8 @@ export const NostrFeed: React.FC<NostrFeedProps> = ({
                   </div>
                 </div>
               )}
-          </div>
-        ))}
+            </div>
+          ))}
         </div>
       )}
     </div>

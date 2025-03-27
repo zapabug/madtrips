@@ -129,7 +129,7 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
   className = '',
   data,
 }) => {
-  const { ndk, getUserProfile, shortenNpub, reconnect, ndkReady } = useNostr();
+  const { ndk, getUserProfile, shortenNpub, reconnect, ndkReady, getConnectedRelays } = useNostr();
   const [graph, setGraph] = useState<GraphData | null>(null);
   const [loading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -506,8 +506,68 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
       const relays = ndk?.pool?.connectedRelays || [];
       console.log(`Connected to ${relays.length} relays`);
       
-      if (relays.length === 0) {
-        throw new Error("No relays connected. Please check your connection and try again.");
+      // Try a different approach to check relay connections
+      let hasRelays = false;
+      
+      // Method 1: Check pool connections
+      if (relays.length > 0) {
+        hasRelays = true;
+      }
+      
+      // Method 2: Try to access the relay pool directly
+      try {
+        const poolRelays = Array.from(ndk?.pool?.relays?.values() || []);
+        console.log(`Pool has ${poolRelays.length} relays, checking connection status...`);
+        
+        const connectedCount = poolRelays.filter(relay => relay.status === 1).length;
+        console.log(`Found ${connectedCount} connected relays in pool`);
+        
+        if (connectedCount > 0) {
+          hasRelays = true;
+        }
+      } catch (e) {
+        console.error("Error checking relay pool:", e);
+      }
+      
+      // Method 3: Try a different NDK method to check relays
+      try {
+        if (typeof getConnectedRelays === 'function') {
+          const connectedRelaysList = getConnectedRelays();
+          console.log(`getConnectedRelays returned ${connectedRelaysList.length} relays`);
+          if (connectedRelaysList.length > 0) {
+            hasRelays = true;
+          }
+        }
+      } catch (e) {
+        console.error("Error calling getConnectedRelays:", e);
+      }
+      
+      // If still no relays, consider checking if fetch events still works despite relay status
+      if (!hasRelays) {
+        console.warn("No connected relays detected. Will attempt to continue anyway.");
+        setError("Limited relay connections. Data may be incomplete.");
+      }
+      
+      // Always continue with at least the core nodes instead of stopping with an error
+      if (!hasRelays) {
+        return {
+          nodes: effectiveNpubs.map(npub => {
+            try {
+              const { data: pubkey } = nip19.decode(npub);
+              return {
+                id: pubkey as string,
+                pubkey: pubkey as string,
+                npub: npub,
+                name: shortenNpub(npub),
+                picture: DEFAULT_PROFILE_IMAGE,
+                isCoreNode: true,
+              };
+            } catch {
+              return null;
+            }
+          }).filter(Boolean) as GraphNode[],
+          links: []
+        };
       }
       
       // Convert npubs to pubkeys for the core nodes
@@ -745,7 +805,7 @@ export const SocialGraph: React.FC<SocialGraphProps> = ({
     }
   }, [
     isNdkReady, effectiveNpubs, ndk, shortenNpub, 
-    maxConnections, fetchProfiles, processSecondDegreeConnections
+    maxConnections, fetchProfiles, processSecondDegreeConnections, getConnectedRelays
   ]);
 
   // Update the forceRefresh implementation after buildGraph is defined
