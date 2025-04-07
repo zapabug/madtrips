@@ -19,19 +19,33 @@ const MADEIRA_HASHTAGS = [
 ];
 
 interface MadeiraFeedProps {
-  profilesMap: Record<string, ProfileData>;
+  // Accept either a Map or Record for flexibility
+  profilesMap: Record<string, ProfileData> | Map<string, ProfileData>;
+  // Additional optional props
+  className?: string;
 }
 
-export default function MadeiraFeed({ profilesMap }: MadeiraFeedProps) {
+export default function MadeiraFeed({ 
+  profilesMap,
+  className = ''
+}: MadeiraFeedProps) {
+  // Convert profilesMap to Map if it's a Record
+  const profilesAsMap = profilesMap instanceof Map 
+    ? profilesMap 
+    : new Map(Object.entries(profilesMap));
+
   const { notes, loading } = useImageFeed({
     hashtags: MADEIRA_HASHTAGS,
     onlyWithImages: true,
-    profilesMap: new Map(Object.entries(profilesMap))
+    profilesMap: profilesAsMap
   });
 
   const [currentIndex, setCurrentIndex] = useState(0);
 
   useEffect(() => {
+    // Only set up auto-scroll if we have images
+    if (notes.length === 0) return;
+    
     const interval = setInterval(() => {
       setCurrentIndex((prevIndex) => (prevIndex + 1) % notes.length);
     }, 3500); // Auto-scroll every 3.5 seconds
@@ -41,7 +55,7 @@ export default function MadeiraFeed({ profilesMap }: MadeiraFeedProps) {
 
   if (loading && notes.length === 0) {
     return (
-      <div className="flex items-center justify-center p-8">
+      <div className={`flex items-center justify-center p-8 ${className}`}>
         <LoadingAnimation category="FEED" size="large" showText={true} />
       </div>
     );
@@ -49,7 +63,7 @@ export default function MadeiraFeed({ profilesMap }: MadeiraFeedProps) {
 
   if (notes.length === 0) {
     return (
-      <div className="text-center p-8">
+      <div className={`text-center p-8 ${className}`}>
         <p className="text-gray-500">No images found with Madeira-related hashtags.</p>
       </div>
     );
@@ -58,7 +72,7 @@ export default function MadeiraFeed({ profilesMap }: MadeiraFeedProps) {
   const currentNote = notes[currentIndex];
 
   return (
-    <div className="relative rounded-lg overflow-hidden shadow-md">
+    <div className={`relative rounded-lg overflow-hidden shadow-md ${className}`}>
       {currentNote.images && currentNote.images.length > 0 && (
         <div className="relative h-48">
           <Image 

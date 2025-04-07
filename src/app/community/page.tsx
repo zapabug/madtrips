@@ -9,10 +9,9 @@ import { useNostrGraph } from '../../hooks/useNostrGraph';
 import { useCachedProfiles } from '../../hooks/useCachedProfiles';
 import { CommunityFeed, MadeiraFeed } from '../../components/community';
 import { CORE_NPUBS } from '../../constants/nostr';
-import Image from 'next/image';
-import { useSocialGraph } from '../../hooks/useSocialGraph';
 import SocialGraphVisualization from '../../components/community/graph/SocialGraphVisualization';
 import LoadingAnimation from '../../components/ui/LoadingAnimation';
+import Section from '../../components/ui/Section';
 
 export default function CommunityPage() {
   // Use the shared graph hook to fetch social connections
@@ -40,129 +39,122 @@ export default function CommunityPage() {
       
       <div className="space-y-12">
         {/* Madeira Image Feed section */}
-        <section className="bg-white dark:bg-gray-800 rounded-lg shadow-md overflow-hidden">
-          <div className="p-6">
-            <h2 className="text-2xl font-bold mb-4">Madeira Moments</h2>
-            <p className="mb-6 text-gray-600 dark:text-gray-300">
-              Photos shared by the Madeira Bitcoin community and their connections. 
-              This feed shows images with #madeira related hashtags from your network.
-            </p>
+        <Section 
+          title="Madeira Moments"
+          description="Photos shared by the Madeira Bitcoin community and their connections. This feed shows images with #madeira related hashtags from your network."
+        >
+          <div className="h-[400px]">
+            <MadeiraFeed profilesMap={profiles} />
           </div>
-          
-          <div className="px-6 pb-6">
-            <div className="h-[400px]">
-              <MadeiraFeed 
-                npubs={npubsInGraph} 
-                useCorePubs={false} 
-                profilesMap={profiles}
-              />
-            </div>
-          </div>
-        </section>
+        </Section>
         
         {/* Web of Trust visualization section */}
-        <section className="bg-white dark:bg-gray-800 rounded-lg shadow-md overflow-hidden">
-          <div className="p-6">
-            <h2 className="text-2xl font-bold mb-4">Community Connections</h2>
-            <p className="mb-6 text-gray-600 dark:text-gray-300">
-              Explore the Bitcoin Madeira web of trust - visualizing connections between community members 
-              and their extended networks.
-            </p>
-          </div>
-            
-          <div className="px-6 pb-6">
-            {/* Simple visualization - can be enhanced later */}
-            <div className="h-[600px] bg-gray-100 dark:bg-gray-800 rounded-lg p-4">
-              {graphLoading ? (
-                <div className="flex flex-col items-center justify-center p-8">
-                  <LoadingAnimation category="GRAPH" size="large" showText={true} />
+        <Section
+          title="Community Connections"
+          description="Explore the Bitcoin Madeira web of trust - visualizing connections between community members and their extended networks."
+        >
+          <div className="bg-gray-100 dark:bg-gray-800 rounded-lg p-4">
+            {graphLoading ? (
+              <div className="flex flex-col items-center justify-center p-8">
+                <LoadingAnimation category="GRAPH" size="large" showText={true} />
+              </div>
+            ) : graphError ? (
+              <div className="flex flex-col items-center justify-center h-full text-red-500">
+                <p>Error loading graph: {graphError}</p>
+                <button 
+                  onClick={refreshGraph}
+                  className="mt-4 px-4 py-2 bg-orange-500 text-white rounded hover:bg-orange-600"
+                >
+                  Retry
+                </button>
+              </div>
+            ) : (
+              <div className="flex flex-col space-y-4">
+                {/* Network stats */}
+                <div className="text-sm font-medium">
+                  <span className="font-bold">Network:</span> {graphData?.nodes.length || 0} members, {graphData?.links.length || 0} connections
                 </div>
-              ) : graphError ? (
-                <div className="flex flex-col items-center justify-center h-full text-red-500">
-                  <p>Error loading graph: {graphError}</p>
-                  <button 
-                    onClick={refreshGraph}
-                    className="mt-4 px-4 py-2 bg-orange-500 text-white rounded hover:bg-orange-600"
-                  >
-                    Retry
-                  </button>
-                </div>
-              ) : graphData ? (
-                <div className="flex flex-col h-full">
-                  <div className="text-sm mb-4">
-                    <span className="font-bold">Network size:</span> {graphData.nodes.length} users, {graphData.links.length} connections
+                
+                {/* Main content */}
+                <div className="flex flex-col space-y-6">
+                  {/* Interactive graph visualization */}
+                  <div className="h-[250px] bg-white dark:bg-gray-700 rounded-lg shadow-sm overflow-hidden">
+                    <div className="px-3 py-2 bg-gray-50 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
+                      <h3 className="text-xs font-semibold text-gray-600 dark:text-gray-300">Interactive Network</h3>
+                    </div>
+                    <SocialGraphVisualization 
+                      graphData={graphData}
+                      profiles={profiles}
+                      loading={graphLoading}
+                      error={graphError}
+                      onRefresh={refreshGraph}
+                      compact={true}
+                    />
                   </div>
-                  <div className="flex-1 overflow-auto">
-                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-                      {graphData.nodes
-                        .sort((a, b) => (b.val || 0) - (a.val || 0))
-                        .slice(0, 20)
-                        .map(node => {
-                          const profile = node.npub ? profiles.get(node.npub) : null;
-                          return (
-                            <div 
-                              key={node.id} 
-                              className="bg-white dark:bg-gray-700 rounded-lg p-3 flex flex-col items-center"
-                            >
-                              <div className="w-16 h-16 rounded-full overflow-hidden mb-2 bg-gray-200">
-                                {node.picture || (profile && profile.picture) ? (
-                                  <Image 
-                                    src={node.picture || profile?.picture || ''}
-                                    alt={node.name || 'Profile'} 
-                                    width={64}
-                                    height={64}
-                                    className="w-full h-full object-cover"
-                                  />
-                                ) : (
-                                  <div className="w-full h-full flex items-center justify-center text-xl">
-                                    👤
-                                  </div>
-                                )}
-                              </div>
-                              <div className="text-center">
-                                <div className="font-bold truncate w-full">
-                                  {node.name || profile?.displayName || profile?.name || 'Unknown'}
+                  
+                  {/* Profile grid - simplified version of the original code */}
+                  <div className="bg-white dark:bg-gray-700 rounded-lg shadow-sm">
+                    <div className="px-3 py-2 bg-gray-50 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
+                      <h3 className="text-xs font-semibold text-gray-600 dark:text-gray-300">Community Members</h3>
+                    </div>
+                    <div className="p-3 overflow-y-auto max-h-[220px]">
+                      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-2">
+                        {graphData?.nodes
+                          .sort((a, b) => (b.val || 0) - (a.val || 0))
+                          .slice(0, 30)
+                          .map(node => {
+                            const profile = node.npub ? profiles.get(node.npub) : null;
+                            return (
+                              <div 
+                                key={node.id} 
+                                className="bg-gray-50 dark:bg-gray-800 rounded-lg p-2 flex flex-col items-center hover:bg-gray-100 dark:hover:bg-gray-750 transition-colors"
+                              >
+                                <div className="w-12 h-12 rounded-full overflow-hidden mb-1 bg-gray-200 border-2 border-white dark:border-gray-700 shadow-sm">
+                                  {node.picture || (profile && profile.picture) ? (
+                                    <img 
+                                      src={node.picture || profile?.picture}
+                                      alt={node.name || 'Profile'} 
+                                      className="w-full h-full object-cover"
+                                    />
+                                  ) : (
+                                    <div className="w-full h-full flex items-center justify-center text-xl">
+                                      👤
+                                    </div>
+                                  )}
                                 </div>
-                                {node.isCoreNode && (
-                                  <span className="bg-orange-100 text-orange-800 text-xs px-2 py-1 rounded-full">
-                                    Core
-                                  </span>
-                                )}
+                                <div className="text-center w-full">
+                                  <div className="font-medium text-xs truncate">
+                                    {node.name || profile?.displayName || profile?.name || 'Unknown'}
+                                  </div>
+                                  {node.isCoreNode && (
+                                    <span className="bg-orange-100 dark:bg-orange-900 text-orange-800 dark:text-orange-100 text-xs px-1 py-0.5 rounded-full inline-block mt-1">
+                                      Core
+                                    </span>
+                                  )}
+                                </div>
                               </div>
-                            </div>
-                          );
-                        })}
+                            );
+                          })}
+                      </div>
                     </div>
                   </div>
                 </div>
-              ) : (
-                <div className="flex items-center justify-center h-full">
-                  No data available
-                </div>
-              )}
-            </div>
+              </div>
+            )}
           </div>
-        </section>
+        </Section>
         
         {/* Community Feed section */}
-        <section className="bg-white dark:bg-gray-800 rounded-lg shadow-md overflow-hidden">
-          <div className="p-6">
-            <h2 className="text-2xl font-bold mb-4">Community Feed</h2>
-            <p className="mb-6 text-gray-600 dark:text-gray-300">
-              The latest posts from Bitcoin Madeira community members. Stay up to date with 
-              discussions, announcements, and activities.
-            </p>
-          </div>
-          
-          <div className="px-6 pb-6">
-            <CommunityFeed 
-              npubs={npubsInGraph} 
-              useCorePubs={false} 
-              limit={30} 
-              profilesMap={profiles}
-            />
-          </div>
-        </section>
+        <Section
+          title="Community Feed"
+          description="The latest posts from Bitcoin Madeira community members. Stay up to date with discussions, announcements, and activities."
+        >
+          <CommunityFeed 
+            npubs={npubsInGraph} 
+            limit={30} 
+            profilesMap={profiles}
+          />
+        </Section>
       </div>
     </div>
   )

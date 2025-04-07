@@ -19,7 +19,7 @@ interface CommunityFeedProps {
   showHeader?: boolean;
   hideEmpty?: boolean;
   maxHeight?: number;
-  profilesMap?: Map<string, ProfileData>;
+  profilesMap?: Map<string, ProfileData> | Record<string, ProfileData>;
 }
 
 export const CommunityFeed: React.FC<CommunityFeedProps> = ({
@@ -41,6 +41,11 @@ export const CommunityFeed: React.FC<CommunityFeedProps> = ({
   // Determine effective npubs
   const effectiveNpubs = npub ? [npub] : npubs;
   
+  // Convert profilesMap to Map if it's a Record
+  const profilesAsMap = profilesMap instanceof Map 
+    ? profilesMap 
+    : new Map(Object.entries(profilesMap));
+  
   // Use the shared image feed hook
   const { notes, loading, error, refresh } = useImageFeed({
     npubs: effectiveNpubs,
@@ -48,7 +53,7 @@ export const CommunityFeed: React.FC<CommunityFeedProps> = ({
     useCorePubs,
     limit,
     onlyWithImages: true,
-    profilesMap
+    profilesMap: profilesAsMap
   });
   
   // Extract unique hashtags from all notes for filtering
