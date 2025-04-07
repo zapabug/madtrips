@@ -6,9 +6,9 @@ export const RELAYS = {
     "wss://relay.damus.io",
     "wss://nos.lol",
     "wss://relay.nostr.band",
-    "wss://relay.snort.social",
     "wss://nostr.wine",
-    "wss://relay.nostr.info"
+    "wss://relay.nostr.info",
+    "wss://relay.primal.net"
   ],
   
   // Community-focused relays
@@ -36,7 +36,6 @@ export const RELAYS = {
     "wss://relay.primal.net",
     "wss://relay.damus.io",
     "wss://nostr.zebedee.cloud",
-    "wss://relay.snort.social",
     "wss://relay.nostr.band",
     "wss://relay.nos.social",
     "wss://nostr.oxtr.dev",
@@ -50,7 +49,7 @@ export const RELAYS = {
     "wss://purplepag.es",
     "wss://nos.lol",
     "wss://relay.damus.io",
-    "wss://relay.snort.social"
+    "wss://relay.nostr.band"
   ]
 };
 

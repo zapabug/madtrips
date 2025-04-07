@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNostr } from '../lib/contexts/NostrContext';
 import { PROFILE_CACHE_TTL } from '../components/community/utils';
 import CacheService from '../lib/services/CacheService';
@@ -18,12 +18,37 @@ export function useNostrProfile(npub: string | null, options: UseNostrProfileOpt
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const { getUserProfile, ndkReady, reconnect } = useNostr();
-  const [retryCount, setRetryCount] = useState(0);
+  
+  // Use refs instead of state for values that shouldn't trigger re-renders
+  const isMounted = useRef(true);
+  const retryCountRef = useRef(0);
+  const fetchInProgress = useRef(false);
+  
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      isMounted.current = false;
+    };
+  }, []);
+  
+  // Reset retry count when npub changes
+  useEffect(() => {
+    if (npub) {
+      retryCountRef.current = 0;
+    }
+  }, [npub]);
   
   const fetchProfile = useCallback(async (forceRefresh = false) => {
+    // Prevent concurrent fetches
+    if (fetchInProgress.current) return;
+    fetchInProgress.current = true;
+    
     if (!npub || !npub.startsWith('npub1')) {
-      setLoading(false);
-      setError('Invalid npub format');
+      if (isMounted.current) {
+        setLoading(false);
+        setError('Invalid npub format');
+      }
+      fetchInProgress.current = false;
       return;
     }
     
@@ -31,28 +56,43 @@ export function useNostrProfile(npub: string | null, options: UseNostrProfileOpt
     if (!skipCache && !forceRefresh) {
       const cachedProfile = CacheService.profileCache.get(npub);
       if (cachedProfile) {
-        setProfile(cachedProfile);
-        setLoading(false);
+        if (isMounted.current) {
+          setProfile(cachedProfile);
+          setLoading(false);
+        }
+        fetchInProgress.current = false;
         return;
       }
     }
     
-    setLoading(true);
-    setError(null);
+    if (isMounted.current) {
+      setLoading(true);
+      setError(null);
+    }
     
     try {
       // Wait for NDK to be ready
       if (!ndkReady) {
-        if (retryCount < retryAttempts) {
-          setRetryCount(prev => prev + 1);
+        if (retryCountRef.current < retryAttempts) {
+          retryCountRef.current += 1;
+          
           // Try to reconnect to relays before giving up
           await reconnect();
+          
           // Retry after a small delay
-          setTimeout(() => fetchProfile(forceRefresh), 1000);
+          fetchInProgress.current = false;
+          setTimeout(() => {
+            if (isMounted.current) {
+              fetchProfile(forceRefresh);
+            }
+          }, 1000);
           return;
         } else {
-          setError('Nostr connection not available');
-          setLoading(false);
+          if (isMounted.current) {
+            setError('Nostr connection not available');
+            setLoading(false);
+          }
+          fetchInProgress.current = false;
           return;
         }
       }
@@ -68,46 +108,67 @@ export function useNostrProfile(npub: string | null, options: UseNostrProfileOpt
           picture: profileData.picture
         } : profileData;
         
-        setProfile(processedProfile);
+        if (isMounted.current) {
+          setProfile(processedProfile);
+        }
         // Cache the processed profile
         CacheService.profileCache.set(npub, processedProfile);
       } else {
         // Try to reconnect if profile not found - might be a relay connection issue
-        if (retryCount < retryAttempts) {
-          setRetryCount(prev => prev + 1);
+        if (retryCountRef.current < retryAttempts) {
+          retryCountRef.current += 1;
+          
           // Try to reconnect
           await reconnect();
+          
           // Retry after a small delay
-          setTimeout(() => fetchProfile(forceRefresh), 1000);
+          fetchInProgress.current = false;
+          setTimeout(() => {
+            if (isMounted.current) {
+              fetchProfile(forceRefresh);
+            }
+          }, 1000);
           return;
         } else {
-          setError('Profile not found');
-          setLoading(false);
+          if (isMounted.current) {
+            setError('Profile not found');
+            setLoading(false);
+          }
         }
       }
     } catch (err) {
       console.error('Error fetching profile:', err);
       
       // Try to reconnect and retry on error
-      if (retryCount < retryAttempts) {
-        setRetryCount(prev => prev + 1);
+      if (retryCountRef.current < retryAttempts) {
+        retryCountRef.current += 1;
+        
         // Try to reconnect
         await reconnect();
+        
         // Retry after a small delay
-        setTimeout(() => fetchProfile(forceRefresh), 1000 * Math.min(retryCount + 1, 3));
+        fetchInProgress.current = false;
+        setTimeout(() => {
+          if (isMounted.current) {
+            fetchProfile(forceRefresh);
+          }
+        }, 1000 * Math.min(retryCountRef.current, 3));
         return;
       } else {
-        setError('Failed to fetch profile');
+        if (isMounted.current) {
+          setError('Failed to fetch profile');
+        }
       }
     } finally {
-      setLoading(false);
+      if (isMounted.current) {
+        setLoading(false);
+      }
+      fetchInProgress.current = false;
     }
-  }, [npub, getUserProfile, ndkReady, skipCache, retryCount, retryAttempts, reconnect, minimalProfile]);
+  }, [npub, getUserProfile, ndkReady, skipCache, reconnect, minimalProfile, retryAttempts]);
   
   useEffect(() => {
     if (npub) {
-      // Reset retry count when npub changes
-      setRetryCount(0);
       fetchProfile();
     }
   }, [fetchProfile, npub]);
@@ -120,7 +181,7 @@ export function useNostrProfile(npub: string | null, options: UseNostrProfileOpt
         CacheService.profileCache.delete(npub);
       }
       // Reset retry count for a fresh start
-      setRetryCount(0);
+      retryCountRef.current = 0;
       fetchProfile(forceRefresh);
     }
   }, [npub, fetchProfile]);

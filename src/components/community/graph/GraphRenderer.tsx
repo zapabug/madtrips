@@ -3,7 +3,6 @@
 import React, { useRef, useCallback, useEffect, memo } from 'react';
 import dynamic from 'next/dynamic';
 import { GraphNode, GraphLink, GraphData } from '../../../types/graph-types';
-import { useNostr } from '../../../lib/contexts/NostrContext';
 import { BRAND_COLORS } from '../../../constants/brandColors';
 
 // Dynamically import ForceGraph2D to avoid SSR issues
@@ -28,8 +27,10 @@ const prepareGraphData = (graphData: GraphData) => {
   return {
     nodes: graphData.nodes.map(node => ({
       ...node,
-      val: node.val || (node.isCoreNode ? 25 : 3),
-      color: node.color || (node.isCoreNode ? BRAND_COLORS.bitcoinOrange : BRAND_COLORS.lightSand),
+      val: node.isCoreNode ? 20 : 8, // Core nodes are larger
+      color: node.isCoreNode 
+        ? BRAND_COLORS.bitcoinOrange 
+        : BRAND_COLORS.lightSand,
       // Ensure fx, fy are undefined rather than null to fix type issues
       fx: node.fx === null ? undefined : node.fx,
       fy: node.fy === null ? undefined : node.fy,
@@ -37,10 +38,10 @@ const prepareGraphData = (graphData: GraphData) => {
     links: graphData.links.map(link => ({
       source: typeof link.source === 'string' ? link.source : link.source?.id || '',
       target: typeof link.target === 'string' ? link.target : link.target?.id || '',
-      value: link.value || 1,
-      color: link.color || (link.type === 'mutual' 
-        ? BRAND_COLORS.bitcoinOrange
-        : BRAND_COLORS.lightSand + '99'),
+      value: link.type === 'mutual' ? 2 : 1, // Mutual follows have thicker lines
+      color: link.type === 'mutual' 
+        ? BRAND_COLORS.bitcoinOrange 
+        : BRAND_COLORS.lightSand + '80',
     })),
   };
 };
@@ -56,7 +57,6 @@ const GraphRenderer = memo(({
   isLoggedIn = false,
   centerNodeId
 }: GraphRendererProps) => {
-  const { ndk } = useNostr();
   const graphRef = useRef<any>(null);
 
   // Format data for rendering
@@ -66,7 +66,7 @@ const GraphRenderer = memo(({
   const focusNode = useCallback((node: GraphNode | null) => {
     if (graphRef.current && node) {
       graphRef.current.centerAt(node.x, node.y, 1000);
-      graphRef.current.zoom(4, 1000);
+      graphRef.current.zoom(3, 1000);
     }
   }, []);
 
@@ -91,11 +91,39 @@ const GraphRenderer = memo(({
 
   // Handle node rendering customization
   const paintNode = useCallback((node: any, ctx: CanvasRenderingContext2D, globalScale: number) => {
+    // Calculate node radius (core nodes larger)
+    const nodeRadius = node.val;
+    
     // Node circle
     ctx.beginPath();
-    ctx.arc(node.x, node.y, node.val, 0, 2 * Math.PI, false);
+    ctx.arc(node.x, node.y, nodeRadius, 0, 2 * Math.PI, false);
     ctx.fillStyle = node.color;
     ctx.fill();
+    
+    // Add profile image if available
+    if (node.picture) {
+      // Use a clip path for the circle
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(node.x, node.y, nodeRadius - 2, 0, 2 * Math.PI, false);
+      ctx.clip();
+      
+      // Create a temporary image to draw profile picture
+      const img = new Image();
+      img.src = node.picture;
+      
+      // Draw the image if it's loaded
+      if (img.complete) {
+        const imgSize = nodeRadius * 2;
+        ctx.drawImage(img, node.x - nodeRadius, node.y - nodeRadius, imgSize, imgSize);
+      } else {
+        // Draw a placeholder
+        ctx.fillStyle = '#888';
+        ctx.fill();
+      }
+      
+      ctx.restore();
+    }
     
     // Add border for selected node
     if (selectedNode && node.id === selectedNode.id) {
@@ -105,7 +133,7 @@ const GraphRenderer = memo(({
     }
     
     // Only show labels for core nodes or when zoomed in
-    if (node.isCoreNode || globalScale > 0.9) {
+    if (node.isCoreNode || globalScale > 1.2) {
       const fontSize = node.isCoreNode ? 14 : 12;
       ctx.font = `${fontSize}px Sans-Serif`;
       ctx.fillStyle = 'white';
@@ -118,7 +146,7 @@ const GraphRenderer = memo(({
       ctx.shadowOffsetX = 1;
       ctx.shadowOffsetY = 1;
       
-      ctx.fillText(node.name || (node.npub ? node.npub.slice(0, 6) + '...' : 'Unknown'), node.x, node.y);
+      ctx.fillText(node.name || (node.npub ? node.npub.slice(0, 6) + '...' : 'Unknown'), node.x, node.y + nodeRadius + 8);
       
       // Reset shadow
       ctx.shadowColor = 'transparent';
@@ -151,15 +179,15 @@ const GraphRenderer = memo(({
         ref={graphRef}
         graphData={graphData}
         nodeCanvasObject={paintNode}
-        nodeLabel={(node: any) => node.name || 'Unknown'}
-        linkColor={(link: any) => link.color || BRAND_COLORS.lightSand + '99'}
+        nodeLabel={(node: any) => node.name || node.npub || 'Unknown'}
+        linkColor={(link: any) => link.color}
         linkWidth={(link: any) => link.value}
         linkDirectionalArrowLength={3}
         linkDirectionalArrowRelPos={1}
-        linkCurvature={0.2}
+        linkCurvature={0.1}
         linkDirectionalParticles={1}
         linkDirectionalParticleWidth={(link: any) => link.value}
-        linkDirectionalParticleSpeed={0.005}
+        linkDirectionalParticleSpeed={0.01}
         onNodeClick={(node: any) => onNodeClick && onNodeClick(node)}
         onNodeHover={onNodeHover}
         nodeRelSize={6}

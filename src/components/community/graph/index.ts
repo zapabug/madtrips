@@ -10,5 +10,5 @@ export { default as SocialGraphVisualization } from './SocialGraphVisualization'
 export { default as ClearGraphCache } from './ClearGraphCache';
 export { CacheUsageExample } from './CacheUsageExample';
 
-// Also export any types or utilities that might be useful
+// Export the graph data hook and types from our new utility
 export * from '../../../hooks/useGraphData'; 

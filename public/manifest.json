@@ -1,0 +1,21 @@
+{
+  "name": "MadTrips - Bitcoin-Powered Adventure in Madeira",
+  "short_name": "MadTrips",
+  "description": "Experience Madeira with Bitcoin-powered trips and connect with the local crypto community.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#f7931a",
+  "icons": [
+    {
+      "src": "/assets/favicon.ico",
+      "sizes": "64x64",
+      "type": "image/x-icon"
+    },
+    {
+      "src": "/assets/apple-touch-icon.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    }
+  ]
+} 

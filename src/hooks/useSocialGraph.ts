@@ -2,13 +2,10 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useNostr } from '../lib/contexts/NostrContext';
 import { GraphNode, GraphLink, GraphData } from '../types/graph-types';
 import { nip19 } from 'nostr-tools';
-import { DEFAULT_PROFILE_IMAGE } from '../utils/profileUtils';
 import { BRAND_COLORS } from '../constants/brandColors';
 import { getRandomLoadingMessage, getLoadingMessageSequence } from '../constants/loadingMessages';
 import useCache from './useCache';
-import { MCPNostrOptions, validateNostrData, fetchProfilesWithWoT } from '../../mcp/nostr-integration';
-import RelayService from '../lib/services/RelayService';
-import NDK, { NDKEvent, NDKFilter, NDKUser, NDKSubscription } from '@nostr-dev-kit/ndk';
+import NDK, { NDKEvent, NDKFilter, NDKSubscription } from '@nostr-dev-kit/ndk';
 
 // Safety utility function to prevent array length errors
 const safeArrayLimit = <T>(arr: T[] | undefined | null, maxLength = 10000): T[] => {
@@ -50,7 +47,6 @@ interface UseSocialGraphProps {
   centerNpub?: string;
   maxConnections?: number;
   showSecondDegree?: boolean;
-  continuousLoading?: boolean;
   maxSecondDegreeNodes?: number;
 }
 
@@ -78,10 +74,9 @@ export const useSocialGraph = ({
   centerNpub,
   maxConnections = 25,
   showSecondDegree = false,
-  continuousLoading = false,
   maxSecondDegreeNodes = 50,
 }: UseSocialGraphProps): UseSocialGraphResult => {
-  const { getUserProfile, shortenNpub, ndkReady } = useNostr();
+  const { getUserProfile, shortenNpub, ndkReady, ndk, relayCount: contextRelayCount, reconnect } = useNostr();
   const cache = useCache();
 
   // State for graph data and UI
@@ -93,13 +88,10 @@ export const useSocialGraph = ({
   const [isClient, setIsClient] = useState(false);
   const [relayCount, setRelayCount] = useState(0);
   const [isConnecting, setIsConnecting] = useState(false);
-  const [profilesLoaded, setProfilesLoaded] = useState(0);
   const [secondDegreeNpubs, setSecondDegreeNpubs] = useState<string[]>([]);
-  const [hasRealData, setHasRealData] = useState(false);
 
   // Refs to track internal state across renders
   const fetchInProgress = useRef<boolean>(false);
-  const continuousUpdateActive = useRef<boolean>(false);
   const graphDataRef = useRef<GraphData | null>(null);
 
   // Track active subscriptions for cleanup
@@ -112,12 +104,11 @@ export const useSocialGraph = ({
       // Clean up all active subscriptions
       if (activeSubscriptions.current.size > 0) {
         console.log(`Cleaning up ${activeSubscriptions.current.size} graph subscriptions`);
-        activeSubscriptions.current.forEach((sub, id) => {
+        activeSubscriptions.current.forEach((sub) => {
           try {
             sub.stop();
-            console.log(`Stopped subscription: ${id}`);
           } catch (e) {
-            console.error(`Error stopping subscription ${id}:`, e);
+            console.error(`Error stopping subscription:`, e);
           }
         });
         activeSubscriptions.current.clear();
@@ -125,166 +116,94 @@ export const useSocialGraph = ({
       
       // Clear any other resources
       fetchInProgress.current = false;
-      continuousUpdateActive.current = false;
     };
-  }, []);
-
-  // Function to register a subscription for later cleanup
-  const registerSubscription = useCallback((id: string, subscription: NDKSubscription) => {
-    activeSubscriptions.current.set(id, subscription);
-  }, []);
-  
-  // Function to unregister a subscription
-  const unregisterSubscription = useCallback((id: string) => {
-    if (activeSubscriptions.current.has(id)) {
-      const sub = activeSubscriptions.current.get(id);
-      if (sub) {
-        try {
-          sub.stop();
-        } catch (e) {
-          console.error(`Error stopping subscription ${id}:`, e);
-        }
-      }
-      activeSubscriptions.current.delete(id);
-    }
   }, []);
 
   // Effective npubs to include in the graph (including center npub)
-  const effectiveNpubs = [...new Set([...npubs, ...(centerNpub ? [centerNpub] : [])])];
-
-  // New options for MCP integration
-  const mcpOptions: MCPNostrOptions = useMemo(() => ({
-    enforceRealData: true, // Always enforce real data
-    useWebOfTrust: showSecondDegree,
-    maxSecondDegreeNodes,
-    coreNpubs: effectiveNpubs,
-  }), [effectiveNpubs, showSecondDegree, maxSecondDegreeNodes]);
-
-  // Set initial state on client-side only
-  useEffect(() => {
-    setIsClient(true);
-    setLoadingMessage(getRandomLoadingMessage('GRAPH'));
-
-    // Use RelayService for relay status updates
-    const updateRelayCount = () => {
-      const relays = RelayService.getConnectedRelays();
-      setRelayCount(relays.length);
-    };
-    
-    // Initial update
-    updateRelayCount();
-    
-    // Subscribe to relay status updates
-    const unsubscribe = RelayService.onStatusUpdate((relays) => {
-      setRelayCount(relays.length);
-      
-      // If we get new relay connections while loading, try to refresh
-      if (loading && relays.length > 0 && fetchInProgress.current === false) {
-        refreshGraph();
-      }
-    });
-    
-    return () => {
-      unsubscribe(); // Clean up the subscription
-    };
-  }, [loading]);
-
-  // Initialize loading messages
-  useEffect(() => {
-    if (loading && isClient) {
-      // Set up rotation of loading messages
-      const interval = setInterval(() => {
-        const messages = getLoadingMessageSequence('GRAPH', 5);
-        const index = Math.floor(Math.random() * messages.length);
-        setLoadingMessage(messages[index]);
-      }, 3000);
-      
-      return () => clearInterval(interval);
-    }
-  }, [loading, isClient]);
-
-  // Remove the failsafe graph function as we don't want mock data
-  const createFailsafeGraph = useCallback((): GraphData | null => {
-    console.warn('Real data unavailable - returning null instead of fallback graph');
-    // Return null instead of creating a mock graph
-    return null;
-  }, []);
+  const effectiveNpubs = useMemo(() => 
+    [...new Set([...npubs, ...(centerNpub ? [centerNpub] : [])])],
+    [npubs, centerNpub]
+  );
 
   // Function to fetch profiles for nodes
   const fetchProfiles = useCallback(async (nodes: GraphNode[]): Promise<GraphNode[]> => {
-    if (!ndkReady || !nodes || !Array.isArray(nodes)) return [];
+    if (!ndkReady) return nodes;
     
-    // Apply safety limit to incoming nodes
-    const safeNodes = safeArrayLimit(nodes, 500);
-    if (safeNodes.length === 0) return [];
+    const updatedNodes = [...nodes];
     
-    // Reset profile loaded counter
-    setProfilesLoaded(0);
-    
-    // Create a new result array with the same length
-    const result = safeNodes.map(node => ({...node}));
-    let loadedCount = 0;
-    
-    // Process nodes in smaller batches
-    const batchSize = 5;
-    for (let i = 0; i < safeNodes.length; i += batchSize) {
-      const batch = safeNodes.slice(i, Math.min(i + batchSize, safeNodes.length));
+    for (const node of updatedNodes) {
+      if (!node.pubkey) continue;
       
-      // Process nodes that need profile data
-      await Promise.all(batch.map(async (node) => {
-        const nodeIndex = safeNodes.findIndex(n => n.id === node.id);
-        if (nodeIndex === -1) return;
-        
-        if (!node.name || node.name === shortenNpub(node.npub || '')) {
-          try {
-            // Check cache first
-            const npubKey = node.npub || '';
-            const cachedProfile = cache.getCachedProfile(npubKey);
-            
-            if (cachedProfile) {
-              // Use cached profile
-              result[nodeIndex] = {
-                ...node,
-                name: cachedProfile.displayName || cachedProfile.name || shortenNpub(node.npub || ''),
-                picture: cachedProfile.picture || DEFAULT_PROFILE_IMAGE
-              };
-              
-              loadedCount++;
-              setProfilesLoaded(loadedCount);
-              return;
-            }
-            
-            // Fetch from Nostr if not in cache
-            if (getUserProfile && node.npub) {
-              const profile = await getUserProfile(node.npub);
-              if (profile) {
-                // Use fetched profile
-                result[nodeIndex] = {
-                  ...node,
-                  name: profile.displayName || profile.name || shortenNpub(node.npub || ''),
-                  picture: profile.picture || DEFAULT_PROFILE_IMAGE
-                };
-                
-                // Cache the profile
-                cache.setCachedProfile(node.npub, profile);
-                loadedCount++;
-                setProfilesLoaded(loadedCount);
-              }
-            }
-          } catch (e) {
-            console.warn(`Error fetching profile for ${node.npub || 'unknown node'}:`, e);
-          }
+      try {
+        const profile = await getUserProfile(node.pubkey);
+        if (profile) {
+          node.name = profile.displayName || profile.name || node.name;
+          node.picture = profile.picture || '';
         }
-      }));
+      } catch (error) {
+        console.warn(`Failed to fetch profile for ${node.pubkey}:`, error);
+      }
     }
     
-    // Filter out any undefined entries and return
-    return result.filter(Boolean);
-  }, [getUserProfile, shortenNpub, cache, ndkReady]);
+    return updatedNodes;
+  }, [getUserProfile, ndkReady]);
+
+  // Function to fetch graph data
+  const fetchGraphData = useCallback(async (): Promise<GraphData | null> => {
+    if (fetchInProgress.current) return null;
+    
+    fetchInProgress.current = true;
+    setIsLoading(true);
+    setError(null);
+    
+    try {
+      // Check if we have cached data first
+      const cacheKey = cache.createGraphCacheKey(effectiveNpubs, showSecondDegree);
+      const cachedGraph = cache.getCachedGraph(cacheKey);
+      
+      if (cachedGraph) {
+        console.log('Using cached graph data');
+        return cachedGraph;
+      }
+
+      // Fetch real-time data from relays
+      const expandedNpubs = [...effectiveNpubs];
+      
+      // Create a basic graph with just the core npubs
+      const nodes: GraphNode[] = expandedNpubs.map(npub => ({
+        id: `node-${npub}`,
+        name: shortenNpub(npub),
+        npub,
+        pubkey: '',
+        val: 5,
+        isCoreNode: true
+      }));
+      
+      // Fetch profiles for all nodes
+      const nodesWithProfiles = await fetchProfiles(nodes);
+      
+      const result: GraphData = {
+        nodes: nodesWithProfiles,
+        links: [],
+        lastUpdated: Date.now()
+      };
+      
+      // Cache the result
+      cache.setCachedGraph(cacheKey, result);
+      
+      return result;
+    } catch (error) {
+      console.error('Error fetching graph data:', error);
+      setError('Failed to load social graph');
+      return null;
+    } finally {
+      fetchInProgress.current = false;
+      setIsLoading(false);
+    }
+  }, [cache, effectiveNpubs, showSecondDegree, shortenNpub, fetchProfiles]);
 
   // New function to fetch contacts for a single node
   const fetchNodeContacts = useCallback(async (pubkey: string, maxContacts = 50): Promise<string[]> => {
-    const ndk = RelayService.getNDK();
     if (!ndk) return [];
     
     try {
@@ -304,12 +223,12 @@ export const useSocialGraph = ({
         return [];
       }
       
-      const event = Array.from(events)[0];
+      const event = Array.from(events)[0] as NDKEvent;
       if (!event || !event.tags) return [];
       
       // Extract p tags (contacts)
-      const contactTags = event.tags.filter(tag => tag[0] === 'p');
-      const contacts = contactTags.map(tag => tag[1]);
+      const contactTags = event.tags.filter((tag: string[]) => tag[0] === 'p');
+      const contacts = contactTags.map((tag: string[]) => tag[1]);
       
       // Limit to maxContacts
       const limitedContacts = contacts.slice(0, maxContacts);
@@ -319,11 +238,73 @@ export const useSocialGraph = ({
       console.error(`Error fetching contacts for ${pubkey.substring(0, 8)}:`, error);
       return [];
     }
-  }, []);
+  }, [ndk]);
+
+  // Refresh the graph
+  const refreshGraph = useCallback(async (): Promise<void> => {
+    // Clean up any active subscriptions
+    activeSubscriptions.current.forEach((sub) => {
+      try {
+        sub.stop();
+      } catch (e) {
+        console.error(`Error stopping subscription:`, e);
+      }
+    });
+    activeSubscriptions.current.clear();
+    
+    // Clear cache for this graph
+    const cacheKey = cache.createGraphCacheKey(effectiveNpubs, showSecondDegree);
+    cache.setCachedGraph(cacheKey, null as unknown as GraphData);
+    
+    // Fetch fresh data
+    const graphData = await fetchGraphData();
+    
+    if (graphData) {
+      graphDataRef.current = graphData;
+      setGraph(graphData);
+    }
+  }, [cache, effectiveNpubs, showSecondDegree, fetchGraphData]);
+
+  // Set initial state on client-side only
+  useEffect(() => {
+    setIsClient(true);
+    setLoadingMessage(getRandomLoadingMessage('GRAPH'));
+
+    // Use relayCount from context instead of duplicating logic
+    setRelayCount(contextRelayCount);
+    
+    // Update relay count periodically from context
+    const intervalId = setInterval(() => {
+      setRelayCount(contextRelayCount);
+      
+      // If we get new relay connections while loading, try to refresh
+      if (loading && contextRelayCount > 0 && fetchInProgress.current === false) {
+        refreshGraph();
+      }
+    }, 5000);
+    
+    return () => {
+      clearInterval(intervalId);
+    };
+  }, [loading, contextRelayCount, refreshGraph]);
+
+  // Initialize loading messages
+  useEffect(() => {
+    if (loading && isClient) {
+      // Set up rotation of loading messages
+      const interval = setInterval(() => {
+        const messages = getLoadingMessageSequence('GRAPH', 5);
+        const index = Math.floor(Math.random() * messages.length);
+        setLoadingMessage(messages[index]);
+      }, 3000);
+      
+      return () => clearInterval(interval);
+    }
+  }, [loading, isClient]);
 
   // Expand a single node to show its connections
   const expandNode = useCallback(async (nodeId: string): Promise<void> => {
-    if (!graphDataRef.current || !nodeId) return;
+    if (!graphDataRef.current || !nodeId || !ndk) return;
     
     const node = graphDataRef.current.nodes.find(n => n.id === nodeId);
     if (!node || !node.pubkey) return;
@@ -388,7 +369,8 @@ export const useSocialGraph = ({
         // Use safe array merge to prevent length errors
         const updatedGraph = {
           nodes: safeMergeArrays(graphDataRef.current.nodes, newNodes, 5000),
-          links: safeMergeArrays(graphDataRef.current.links, newLinks, 10000)
+          links: safeMergeArrays(graphDataRef.current.links, newLinks, 10000),
+          lastUpdated: Date.now()
         };
         
         graphDataRef.current = updatedGraph;
@@ -402,7 +384,8 @@ export const useSocialGraph = ({
             
             const updatedGraph = {
               nodes: safeMergeArrays(filteredNodes, updatedNodes, 5000),
-              links: safeArrayLimit(graphDataRef.current!.links, 10000)
+              links: safeArrayLimit(graphDataRef.current!.links, 10000),
+              lastUpdated: Date.now()
             };
             
             graphDataRef.current = updatedGraph;
@@ -415,111 +398,20 @@ export const useSocialGraph = ({
     } finally {
       setIsConnecting(false);
     }
-  }, [shortenNpub, fetchNodeContacts, fetchProfiles]);
+  }, [shortenNpub, fetchNodeContacts, fetchProfiles, ndk]);
 
-  // Function to connect more relays
+  // Function to connect more relays - use NostrContext's reconnect
   const connectMoreRelays = useCallback(async () => {
     setIsConnecting(true);
     
     try {
-      // Use RelayService to reconnect instead of direct reconnect
-      const success = await RelayService.reconnect();
-      
-      if (success) {
-        console.log('Successfully reconnected to relays');
-      } else {
-        console.warn('Failed to reconnect to relays');
-      }
+      await reconnect();
     } catch (error) {
       console.error('Error connecting more relays:', error);
     } finally {
       setIsConnecting(false);
     }
-  }, []);
-
-  // Refresh the graph
-  const refreshGraph = useCallback(async (): Promise<void> => {
-    cleanupSubscriptions();
-    
-    // Clear cache for this graph
-    const cacheKey = cache.createGraphCacheKey(effectiveNpubs, showSecondDegree);
-    cache.setCachedGraph(cacheKey, null);
-    
-    // Fetch fresh data
-    const graphData = await fetchGraphData();
-    
-    if (graphData) {
-      graphDataRef.current = graphData;
-      setGraph(graphData);
-    }
-  }, [cleanupSubscriptions, cache, effectiveNpubs, showSecondDegree, fetchGraphData]);
-
-  // Function to start continuous graph updates
-  const startContinuousUpdates = useCallback(() => {
-    if (continuousUpdateActive.current || !graphDataRef.current) return;
-    
-    continuousUpdateActive.current = true;
-    
-    // Set up an interval to update node profiles periodically
-    const intervalId = setInterval(async () => {
-      if (!graphDataRef.current || !ndkReady) return;
-      
-      try {
-        // Copy current graph with safety limits and validate structure
-        const currentNodes = safeArrayLimit(graphDataRef.current.nodes, 5000).filter(node => 
-          node && node.id && (typeof node.id === 'string')
-        );
-        
-        const currentLinks = safeArrayLimit(graphDataRef.current.links, 10000).filter(link => 
-          link && 
-          typeof link.source === 'string' && 
-          typeof link.target === 'string'
-        );
-
-        const currentGraph = { 
-          nodes: currentNodes,
-          links: currentLinks,
-          lastUpdated: graphDataRef.current.lastUpdated
-        };
-        
-        // Update profiles for nodes that need it
-        const updatedNodes = await fetchProfiles(currentGraph.nodes);
-        
-        // Validate updated nodes
-        const validUpdatedNodes = updatedNodes.filter(node => 
-          node && node.id && (typeof node.id === 'string')
-        );
-        
-        // Only update if we have valid changes
-        if (validUpdatedNodes.length > 0 && 
-            JSON.stringify(validUpdatedNodes) !== JSON.stringify(currentGraph.nodes)) {
-          
-          const updatedGraph = {
-            ...currentGraph,
-            nodes: validUpdatedNodes,
-            lastUpdated: Date.now()
-          };
-          
-          setGraph(updatedGraph);
-          graphDataRef.current = {...updatedGraph};
-          
-          // Update cache
-          cache.setCachedGraph(effectiveNpubs, showSecondDegree, updatedGraph);
-        }
-      } catch (error) {
-        console.error('Error during continuous update:', error);
-        // Stop continuous updates if we encounter multiple errors
-        continuousUpdateActive.current = false;
-        clearInterval(intervalId);
-      }
-    }, 30000); // Every 30 seconds
-    
-    // Clean up function
-    return () => {
-      clearInterval(intervalId);
-      continuousUpdateActive.current = false;
-    };
-  }, [ndkReady, fetchProfiles, cache, effectiveNpubs, showSecondDegree]);
+  }, [reconnect]);
 
   // Initial graph load on component mount (once we're on the client)
   useEffect(() => {
@@ -528,10 +420,9 @@ export const useSocialGraph = ({
     }
   }, [isClient, graph, refreshGraph]);
 
-  // Check if a user follows another user
+  // Check if a user follows another user - use the ndk instance from context
   const isUserFollowing = useCallback(async (fromPubkey: string, toPubkey: string): Promise<boolean> => {
-    const ndkInstance = RelayService.getNDK();
-    if (!ndkInstance) {
+    if (!ndk) {
       throw new Error('NDK not initialized');
     }
     
@@ -542,23 +433,22 @@ export const useSocialGraph = ({
         limit: 1
       };
       
-      const events = await ndkInstance.fetchEvents([filter], { closeOnEose: true });
-      const event = Array.from(events)[0];
+      const events = await ndk.fetchEvents([filter], { closeOnEose: true });
+      const event = Array.from(events)[0] as NDKEvent;
       
       if (!event) return false;
       
       // Check if toPubkey is in the p tags
-      return event.tags.some(tag => tag[0] === 'p' && tag[1] === toPubkey);
+      return event.tags.some((tag: string[]) => tag[0] === 'p' && tag[1] === toPubkey);
     } catch (error) {
       console.error('Error checking following status:', error);
       return false;
     }
-  }, []);
+  }, [ndk]);
 
-  // Follow a user
+  // Follow a user - use the ndk instance from context
   const followUser = useCallback(async (fromPubkey: string, toPubkey: string): Promise<boolean> => {
-    const ndkInstance = RelayService.getNDK();
-    if (!ndkInstance) {
+    if (!ndk) {
       throw new Error('NDK not initialized');
     }
     
@@ -570,21 +460,21 @@ export const useSocialGraph = ({
         limit: 1
       };
       
-      const events = await ndkInstance.fetchEvents([filter], { closeOnEose: true });
-      const oldEvent = Array.from(events)[0];
+      const events = await ndk.fetchEvents([filter], { closeOnEose: true });
+      const oldEvent = Array.from(events)[0] as NDKEvent;
       
       // Create new event tags, preserving existing contacts
       const tags = oldEvent ? [...oldEvent.tags] : [];
       
       // Check if already following
-      const alreadyFollowing = tags.some(tag => tag[0] === 'p' && tag[1] === toPubkey);
+      const alreadyFollowing = tags.some((tag: string[]) => tag[0] === 'p' && tag[1] === toPubkey);
       if (alreadyFollowing) return true;
       
       // Add the new contact
       tags.push(['p', toPubkey]);
       
       // Create and publish new contact list
-      const newEvent = new NDKEvent(ndkInstance);
+      const newEvent = new NDKEvent(ndk);
       newEvent.kind = 3;
       newEvent.tags = tags;
       
@@ -594,12 +484,11 @@ export const useSocialGraph = ({
       console.error('Error following user:', error);
       return false;
     }
-  }, []);
+  }, [ndk]);
 
-  // Unfollow a user
+  // Unfollow a user - use the ndk instance from context
   const unfollowUser = useCallback(async (fromPubkey: string, toPubkey: string): Promise<boolean> => {
-    const ndkInstance = RelayService.getNDK();
-    if (!ndkInstance) {
+    if (!ndk) {
       throw new Error('NDK not initialized');
     }
     
@@ -611,16 +500,16 @@ export const useSocialGraph = ({
         limit: 1
       };
       
-      const events = await ndkInstance.fetchEvents([filter], { closeOnEose: true });
-      const oldEvent = Array.from(events)[0];
+      const events = await ndk.fetchEvents([filter], { closeOnEose: true });
+      const oldEvent = Array.from(events)[0] as NDKEvent;
       
       if (!oldEvent) return false;
       
       // Remove the contact from tags
-      const tags = oldEvent.tags.filter(tag => !(tag[0] === 'p' && tag[1] === toPubkey));
+      const tags = oldEvent.tags.filter((tag: string[]) => !(tag[0] === 'p' && tag[1] === toPubkey));
       
       // Create and publish new contact list
-      const newEvent = new NDKEvent(ndkInstance);
+      const newEvent = new NDKEvent(ndk);
       newEvent.kind = 3;
       newEvent.tags = tags;
       
@@ -630,7 +519,7 @@ export const useSocialGraph = ({
       console.error('Error unfollowing user:', error);
       return false;
     }
-  }, []);
+  }, [ndk]);
 
   // Return the graph and utility functions
   return {

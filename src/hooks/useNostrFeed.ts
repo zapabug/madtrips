@@ -28,9 +28,35 @@ export interface Note {
 const noteCache: {[key: string]: {notes: Note[], timestamp: number}} = {};
 const CACHE_TTL = 10 * 60 * 1000; // 10 minutes
 
-// Image cache removed as unused
-// const IMAGE_CACHE = new Map<string, HTMLImageElement>();
-// const MAX_IMAGE_CACHE_SIZE = 100;
+// Image cache for preloading images
+const IMAGE_CACHE = new Map<string, HTMLImageElement | null>();
+const MAX_IMAGE_CACHE_SIZE = 100;
+
+// Helper function to preload and cache images
+const preloadImage = (url: string | undefined): HTMLImageElement | null => {
+  if (!url || typeof url !== 'string') return null;
+  
+  const validUrl = url.trim();
+  if (!validUrl) return null;
+  
+  const cached = IMAGE_CACHE.get(validUrl);
+  if (cached) return cached;
+  
+  const img = document.createElement('img');
+  img.src = validUrl;
+  
+  // Add to cache
+  if (IMAGE_CACHE.size >= MAX_IMAGE_CACHE_SIZE) {
+    // Remove oldest entry
+    const firstKey = IMAGE_CACHE.keys().next().value;
+    if (firstKey) {
+      IMAGE_CACHE.delete(firstKey);
+    }
+  }
+  IMAGE_CACHE.set(validUrl, img);
+  
+  return img;
+};
 
 interface UseNostrFeedOptions {
   npubs?: string[];
@@ -197,7 +223,14 @@ export function useNostrFeed({
     try {
       // Extract event data
       const id = event.id;
-      const content = event.content;
+      const content = event.content || '';
+      
+      // Validate content is a string
+      if (typeof content !== 'string') {
+        console.warn('Event content is not a string:', content);
+        return null;
+      }
+      
       const pubkey = event.pubkey;
       const created_at = event.created_at || 0;
       const npub = nip19.npubEncode(pubkey);
@@ -222,7 +255,7 @@ export function useNostrFeed({
         hashtags,
       };
       
-      // Get profile info
+      // Get profile info immediately
       getUserProfile(npub).then(profile => {
         if (profile && isMounted.current) {
           setNotes(prevNotes => {
@@ -277,37 +310,11 @@ export function useNostrFeed({
         
         return;
       }
-        
-      // Check cache first
-      const cacheKey = getCacheKey();
-      const cachedNotes = noteCache[cacheKey];
-      
-      if (cachedNotes && Date.now() - cachedNotes.timestamp < CACHE_TTL) {
-        console.log(`Using cached notes for ${cacheKey}`);
-        setNotes(cachedNotes.notes);
-        setLoading(false);
-        setHasLoadedInitialNotes(true);
-        return;
-      }
-      
-      console.log(`Fetching notes with parameters:`, { 
-        npubs: npubs.length > 0 ? npubs.slice(0, 3) : 'all', 
-        requiredHashtags, 
-        limit 
-      });
       
       // Combine user's npubs with social graph npubs if WoT enabled
       const effectiveNpubs = useWebOfTrust && socialGraphNpubs.length > 0
         ? [...new Set([...npubs, ...socialGraphNpubs.slice(0, 50)])]
         : npubs;
-      
-      // Enhanced subscription options
-      const mcpOptions: MCPNostrOptions = {
-        enforceRealData: true,
-        useWebOfTrust: useWebOfTrust && npubs.length > 0,
-        maxSecondDegreeNodes: 50,
-        coreNpubs: effectiveNpubs,
-      };
       
       // Create filters
       let filter: NDKFilter = {
@@ -340,8 +347,7 @@ export function useNostrFeed({
         }
       }
       
-      // Create a regular subscription instead of using createEnhancedSubscription
-      // to avoid type issues
+      // Create a regular subscription
       console.log('Creating subscription with filter:', filter);
       const subscription = ndk.subscribe(
         filter,
@@ -351,26 +357,87 @@ export function useNostrFeed({
       // Store the subscription reference for cleanup
       subscriptionRef.current = subscription;
       
+      // Set up event handler for subscription
+      subscription.on('event', (event: NDKEvent) => {
+        if (!isMounted.current) return;
+        
+        try {
+          const note = processEvent(event);
+          if (note) {
+            setNotes(prevNotes => {
+              // Check if we already have this note
+              if (prevNotes.some(n => n.id === note.id)) {
+                return prevNotes;
+              }
+              
+              // Add the new note and sort
+              const newNotes = [...prevNotes, note]
+                .sort((a, b) => b.created_at - a.created_at)
+                .slice(0, limit);
+              
+              return filterNotes(newNotes);
+            });
+          }
+        } catch (err) {
+          console.warn('Error processing event from subscription:', err);
+        }
+      });
+      
       // Process events
       const processedNotes: Note[] = [];
       
       // Use NDK to fetch events with a timeout
       const timeoutPromise = new Promise<Set<NDKEvent>>((_, reject) => 
-        setTimeout(() => reject(new Error('Timeout fetching notes')), 10000)
+        setTimeout(() => reject(new Error('Timeout fetching notes')), 60000)
       );
       
-      const eventsPromise = ndk.fetchEvents([filter], { 
-        closeOnEose: true,
-        groupable: false
-      });
-      
-      const events = await Promise.race([eventsPromise, timeoutPromise]);
-      
-      for (const event of events) {
-        const note = processEvent(event);
-        if (note) {
-          processedNotes.push(note);
+      try {
+        // Make up to 3 attempts to fetch events
+        let events: Set<NDKEvent> = new Set();
+        let attempt = 0;
+        const maxAttempts = 3;
+        
+        while (attempt < maxAttempts) {
+          attempt++;
+          try {
+            console.log(`Attempting to fetch events (attempt ${attempt}/${maxAttempts})...`);
+            
+            const eventsPromise = ndk.fetchEvents([filter], { 
+              closeOnEose: true,
+              groupable: false
+            });
+            
+            events = await Promise.race([eventsPromise, timeoutPromise]);
+            
+            // If we got some events, break out of the retry loop
+            if (events.size > 0) {
+              console.log(`Successfully fetched ${events.size} events on attempt ${attempt}`);
+              break;
+            } else if (attempt < maxAttempts) {
+              console.log(`No events received on attempt ${attempt}, retrying...`);
+              await new Promise(resolve => setTimeout(resolve, 1000));
+            }
+          } catch (err) {
+            if (attempt >= maxAttempts) {
+              console.warn(`All ${maxAttempts} fetch attempts failed:`, err);
+              throw err;
+            } else {
+              console.warn(`Fetch attempt ${attempt} failed, retrying:`, err);
+              await new Promise(resolve => setTimeout(resolve, 1000));
+            }
+          }
         }
+        
+        // Process the events we received
+        for (const event of events) {
+          const note = processEvent(event);
+          if (note) {
+            processedNotes.push(note);
+          }
+        }
+      } catch (err) {
+        console.warn('Error fetching events:', err);
+        // Continue with subscription events
       }
       
       // Sort by timestamp (newest first)
@@ -382,12 +449,6 @@ export function useNostrFeed({
       // Update state
       setNotes(filteredNotes);
       setHasLoadedInitialNotes(true);
-      
-      // Cache results
-      noteCache[cacheKey] = {
-        notes: filteredNotes,
-        timestamp: Date.now()
-      };
       
       console.log(`Loaded ${filteredNotes.length} notes out of ${processedNotes.length} fetched`);
       
@@ -407,7 +468,6 @@ export function useNostrFeed({
     requiredHashtags, 
     useWebOfTrust, 
     socialGraphNpubs, 
-    getCacheKey, 
     processEvent, 
     filterNotes
   ]);

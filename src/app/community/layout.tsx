@@ -1,8 +1,8 @@
 import { Metadata } from 'next';
 
 export const metadata: Metadata = {
-  title: 'Bitcoin Community | MadTrips',
-  description: 'Explore the Bitcoin community in Madeira through interactive social graphs.'
+  title: 'MadTrips - Bitcoin Madeira Community',
+  description: 'Connect with the Bitcoin Madeira community, view relationships, and stay up to date with the latest posts.',
 };
 
 export default function CommunityLayout({

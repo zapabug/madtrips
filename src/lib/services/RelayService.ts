@@ -51,6 +51,14 @@ class RelayService {
   }
   
   /**
+   * Get the NDK instance - safer accessor that ensures we have an instance
+   */
+  public static getNDK(): NDK | null {
+    const instance = RelayService.getInstance();
+    return instance.ndk;
+  }
+  
+  /**
    * Initialize NDK once and return the instance
    * This is the recommended way to initialize NDK from anywhere in the app
    */
@@ -128,6 +136,124 @@ class RelayService {
   }
   
   /**
+   * Safely create a relay object compatible with NDK
+   * Avoids the 'relay.off is not a function' error by ensuring proper relay object structure
+   */
+  private createSafeRelay(url: string): NDKRelay {
+    // Create a basic relay object with the minimum required properties
+    const relay: Partial<NDKRelay> = { 
+      url,
+      status: NDKRelayStatus.DISCONNECTED,
+      connect: async function() { return Promise.resolve(); }, // Async function returning a Promise
+      disconnect: function() { /* Will be replaced by NDK */ }
+    };
+    
+    // Return as NDKRelay (NDK will set up the remaining properties when it's added to the pool)
+    return relay as NDKRelay;
+  }
+  
+  /**
+   * Safely add a relay to the NDK pool
+   */
+  private addRelayToPool(url: string): boolean {
+    if (!this.ndk || !this.ndk.pool) return false;
+    
+    try {
+      // Check if relay already exists
+      if (this.ndk.pool.relays.has(url)) {
+        return true; // Already exists, consider this a success
+      }
+      
+      // Create a safe relay object
+      const relay = this.createSafeRelay(url);
+      
+      // Add to the pool using the set method (safer than addRelay)
+      this.ndk.pool.relays.set(url, relay);
+      console.log(`Added relay to pool: ${url}`);
+      return true;
+    } catch (error) {
+      console.error(`Failed to add relay ${url}:`, error);
+      return false;
+    }
+  }
+  
+  /**
+   * Connect to relays with structured retry logic
+   * @param attemptsLeft Number of connection attempts to make
+   * @param timeout Connection timeout in milliseconds
+   * @returns Promise resolving to a boolean indicating success
+   */
+  private async connectWithRetry(attemptsLeft = 3, timeout = 15000): Promise<boolean> {
+    if (!this.ndk) {
+      console.warn('Cannot connect: NDK not initialized');
+      return false;
+    }
+    
+    if (attemptsLeft <= 0) {
+      console.error('Maximum connection attempts reached');
+      return false;
+    }
+
+    try {
+      console.log(`Connection attempt ${4 - attemptsLeft}/3 with ${timeout}ms timeout...`);
+      
+      // Connect with timeout
+      const connectPromise = this.ndk.connect();
+      const timeoutPromise = new Promise<void>((_, reject) => {
+        setTimeout(() => reject(new Error('Connection timeout')), timeout);
+      });
+      
+      await Promise.race([connectPromise, timeoutPromise]);
+      
+      // Check if we actually have connected relays
+      const hasConnectedRelays = this.isReady();
+      
+      if (!hasConnectedRelays) {
+        throw new Error('Connected but no relays are actually connected');
+      }
+      
+      console.log('Successfully connected to Nostr relays');
+      return true;
+    } catch (error) {
+      console.warn(`Connection attempt ${4 - attemptsLeft} failed:`, error);
+      
+      if (attemptsLeft > 1) {
+        // Add additional fallback relays for the next attempt
+        const fallbackRelays = [
+          "wss://relay.damus.io",
+          "wss://nos.lol", 
+          "wss://relay.nostr.band",
+          "wss://relay.primal.net",
+          "wss://relay.current.fyi", 
+          "wss://nostr-pub.wellorder.net",
+          "wss://relay.nostr.info",
+          "wss://nostr.wine"
+        ];
+        
+        // Shuffle the array to get different relays each time
+        const shuffled = [...fallbackRelays].sort(() => 0.5 - Math.random());
+        
+        // Add 2 new relays each retry
+        let addedCount = 0;
+        for (let i = 0; i < 3; i++) {
+          if (shuffled[i]) {
+            if (this.addRelayToPool(shuffled[i])) {
+              addedCount++;
+              if (addedCount >= 2) break;
+            }
+          }
+        }
+        
+        // Delay before retry
+        await new Promise(r => setTimeout(r, 1000));
+        return this.connectWithRetry(attemptsLeft - 1, timeout + 5000);
+      }
+      
+      return false;
+    }
+  }
+  
+  /**
    * Connect to relays
    */
   public async connect(): Promise<boolean> {
@@ -145,19 +271,13 @@ class RelayService {
     this.isConnecting = true;
     
     try {
-      // Set a timeout to prevent hanging connections
-      const connectPromise = this.ndk.connect();
-      const timeoutPromise = new Promise<void>((_, reject) => {
-        setTimeout(() => reject(new Error('Connection timeout')), 10000);
-      });
-      
-      // Use Promise.race to implement timeout
-      await Promise.race([connectPromise, timeoutPromise]);
+      // Use the connectWithRetry method for structured retry logic
+      const connected = await this.connectWithRetry();
       
       // Update relay status after connection
       this.updateRelayStatus();
       
-      return this.isReady();
+      return connected;
     } catch (error) {
       console.error('Error connecting to relays:', error);
       this.updateRelayStatus();
@@ -171,21 +291,102 @@ class RelayService {
    * Reconnect to relays with cooldown protection
    */
   public async reconnect(): Promise<boolean> {
-    // Implement cooldown to prevent rapid reconnection attempts
     const now = Date.now();
     if (now - this.lastReconnectAttempt < this.reconnectCooldown) {
-      console.log(`Reconnect attempt too soon, waiting ${(this.reconnectCooldown - (now - this.lastReconnectAttempt))/1000}s`);
+      const waitTime = Math.ceil((this.reconnectCooldown - (now - this.lastReconnectAttempt)) / 1000);
+      console.log(`Reconnect attempt too soon, waiting ${waitTime}s`);
+      await new Promise(resolve => setTimeout(resolve, this.reconnectCooldown));
+    }
+    
+    this.lastReconnectAttempt = Date.now();
+    
+    try {
+      if (this.isConnecting) {
+        console.log("Already attempting to connect");
+        return false;
+      }
+      
+      this.isConnecting = true;
+      console.log("Starting reconnection process");
+      
+      // Clean up existing connections
+      this.disconnectAll();
+      
+      // Add a fresh set of relays from various reliable sources
+      const reliableRelays = [
+        "wss://relay.damus.io",
+        "wss://nos.lol", 
+        "wss://relay.nostr.band",
+        "wss://relay.primal.net",
+        "wss://relay.current.fyi",
+        "wss://purplepag.es",
+        "wss://nostr-pub.wellorder.net"
+      ];
+      
+      // Shuffle the relays to avoid always hitting the same ones first
+      const shuffledRelays = [...reliableRelays].sort(() => 0.5 - Math.random());
+      
+      // Take the first 4 relays
+      const selectedRelays = shuffledRelays.slice(0, 4);
+      console.log("Selected relays for reconnection:", selectedRelays);
+      
+      // If we have an existing NDK instance
+      if (this.ndk) {
+        // Add the selected relays to the pool
+        for (const relay of selectedRelays) {
+          this.addRelayToPool(relay);
+        }
+        
+        // Use connectWithRetry for structured retry logic
+        const connected = await this.connectWithRetry();
+        
+        if (connected) {
+          this.startMonitoring();
+          return true;
+        }
+        
+        // If still not connected, try with a new NDK instance as a last resort
+        console.log("Trying with new NDK instance...");
+        this.cleanup();
+        
+        this.ndk = new NDK({
+          explicitRelayUrls: [...selectedRelays, ...DEFAULT_RELAYS.slice(0, 2)],
+          enableOutboxModel: false,
+          autoConnectUserRelays: false,
+          debug: false
+        });
+        
+        const finalAttempt = await this.connectWithRetry();
+        
+        if (finalAttempt) {
+          this.startMonitoring();
+        }
+        
+        return finalAttempt;
+      } else {
+        // No existing NDK instance, create a new one
+        console.log("No existing NDK instance, creating new one...");
+        this.ndk = new NDK({
+          explicitRelayUrls: [...selectedRelays, ...DEFAULT_RELAYS.slice(0, 2)],
+          enableOutboxModel: false,
+          autoConnectUserRelays: false,
+          debug: false
+        });
+        
+        const result = await this.connectWithRetry();
+        
+        if (result) {
+          this.startMonitoring();
+        }
+        
+        return result;
+      }
+    } catch (error) {
+      console.error("Failed to reconnect:", error);
       return false;
+    } finally {
+      this.isConnecting = false;
     }
-    
-    this.lastReconnectAttempt = now;
-    
-    if (!this.ndk) {
-      await this.initialize();
-      return this.isReady();
-    }
-    
-    return await this.connect();
   }
   
   /**
@@ -340,19 +541,19 @@ class RelayService {
   }
   
   /**
-   * Get NDK instance
-   */
-  public getNDK(): NDK | null {
-    return this.ndk;
-  }
-  
-  /**
    * Clean up resources
    */
   public cleanup(): void {
     this.stopMonitoring();
     this.disconnectAll();
     this.ndk = null;
+  }
+  
+  /**
+   * Static method to easily reconnect relays without needing the instance directly
+   */
+  public static async reconnect(): Promise<boolean> {
+    return RelayService.getInstance().reconnect();
   }
 }
 

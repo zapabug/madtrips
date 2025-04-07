@@ -28,9 +28,9 @@ export const STATIC_RELAYS = {
     "wss://relay.damus.io",
     "wss://nos.lol",
     "wss://relay.nostr.band",
-    "wss://relay.snort.social",
     "wss://nostr.wine",
-    "wss://relay.nostr.info"
+    "wss://relay.nostr.info",
+    "wss://relay.primal.net"
   ],
   COMMUNITY: [
     "wss://purplepag.es",
@@ -44,15 +44,15 @@ export const STATIC_RELAYS = {
     "wss://relay.primal.net",
     "wss://relay.damus.io",
     "wss://nostr.zebedee.cloud",
-    "wss://relay.snort.social",
-    "wss://relay.nostr.band"
+    "wss://relay.nostr.band",
+    "wss://relay.nos.social"
   ],
   MADEIRA: [
     "wss://relay.current.fyi",
     "wss://purplepag.es",
     "wss://nos.lol",
     "wss://relay.damus.io",
-    "wss://relay.snort.social"
+    "wss://relay.nostr.band"
   ]
 };
 
@@ -124,8 +124,8 @@ export const createEnhancedSubscription = (
       "wss://relay.damus.io",
       "wss://nos.lol",
       "wss://relay.nostr.band",
-      "wss://relay.snort.social",
-      "wss://nostr.wine"
+      "wss://nostr.wine",
+      "wss://relay.primal.net"
     ];
     
     // Check if we're loading a single profile/specific NPUB
@@ -207,11 +207,11 @@ export const createEnhancedSubscription = (
         "wss://relay.nostr.band",
         "wss://relay.damus.io",
         "wss://nos.lol",
-        "wss://relay.snort.social",
         "wss://nostr.wine",
         "wss://relay.nostr.info",
         "wss://relay.nostrati.com",
-        "wss://relay.nostrplebs.com"
+        "wss://relay.nostrplebs.com",
+        "wss://relay.primal.net"
       ];
       
       // Try fallback relays
@@ -236,7 +236,8 @@ export const createEnhancedSubscription = (
     const sub = ndk.subscribe(filters, { 
       closeOnEose: false,
       // Important: Set timeout to ensure we don't hang
-      timeout: isFreeMadeira ? 25000 : (isSingleProfile ? 15000 : 30000)
+      // Increase timeouts for all types of requests for better reliability
+      timeout: isFreeMadeira ? 45000 : (isSingleProfile ? 30000 : 60000)
     });
     
     // Keep track of events received
