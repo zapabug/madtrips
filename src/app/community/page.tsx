@@ -12,8 +12,12 @@ import { CORE_NPUBS } from '../../constants/nostr';
 import SocialGraphVisualization from '../../components/community/graph/SocialGraphVisualization';
 import LoadingAnimation from '../../components/ui/LoadingAnimation';
 import Section from '../../components/ui/Section';
+import { useEffect, useState } from 'react';
 
 export default function CommunityPage() {
+  // Debug state for graph visualization
+  const [graphDebugInfo, setGraphDebugInfo] = useState<string | null>(null);
+  
   // Use the shared graph hook to fetch social connections
   const { 
     graphData,
@@ -32,6 +36,15 @@ export default function CommunityPage() {
   const {
     profiles
   } = useCachedProfiles(npubsInGraph);
+
+  // Debug log for graph data
+  useEffect(() => {
+    if (graphData) {
+      console.log('Graph data loaded:', 
+        `${graphData.nodes.length} nodes, ${graphData.links.length} links`);
+      setGraphDebugInfo(`Graph data loaded at ${new Date().toLocaleTimeString()}`);
+    }
+  }, [graphData]);
   
   return (
     <div className="container mx-auto px-4 py-12">
@@ -43,8 +56,12 @@ export default function CommunityPage() {
           title="Madeira Moments"
           description="Photos shared by the Madeira Bitcoin community and their connections. This feed shows images with #madeira related hashtags from your network."
         >
-          <div className="h-[400px]">
-            <MadeiraFeed profilesMap={profiles} />
+          <div className="bg-gray-100 dark:bg-gray-800 rounded-lg p-4">
+            <div className="h-[400px] flex items-center justify-center">
+              <div className="w-full max-w-2xl h-full">
+                <MadeiraFeed profilesMap={profiles} />
+              </div>
+            </div>
           </div>
         </Section>
         
@@ -70,46 +87,71 @@ export default function CommunityPage() {
               </div>
             ) : (
               <div className="flex flex-col space-y-4">
-                {/* Network stats */}
-                <div className="text-sm font-medium">
-                  <span className="font-bold">Network:</span> {graphData?.nodes.length || 0} members, {graphData?.links.length || 0} connections
+                {/* Network stats with debug info */}
+                <div className="text-sm font-medium mb-2 flex justify-between">
+                  <span>
+                    <span className="font-bold">Network:</span> {graphData?.nodes.length || 0} members, {graphData?.links.length || 0} connections
+                  </span>
+                  {graphDebugInfo && (
+                    <span className="text-xs text-gray-500">{graphDebugInfo}</span>
+                  )}
                 </div>
                 
                 {/* Main content */}
                 <div className="flex flex-col space-y-6">
-                  {/* Interactive graph visualization */}
-                  <div className="h-[250px] bg-white dark:bg-gray-700 rounded-lg shadow-sm overflow-hidden">
-                    <div className="px-3 py-2 bg-gray-50 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
-                      <h3 className="text-xs font-semibold text-gray-600 dark:text-gray-300">Interactive Network</h3>
+                  {/* Graph visualization - retaining the original component */}
+                  <div className="h-[500px] bg-white dark:bg-gray-700 rounded-lg shadow-sm overflow-hidden">
+                    <div className="px-3 py-2 bg-gray-50 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center">
+                      <h3 className="text-sm font-semibold text-gray-600 dark:text-gray-300">Interactive Network</h3>
+                      <span className="text-xs text-gray-500">Experimental Feature</span>
                     </div>
-                    <SocialGraphVisualization 
-                      graphData={graphData}
-                      profiles={profiles}
-                      loading={graphLoading}
-                      error={graphError}
-                      onRefresh={refreshGraph}
-                      compact={true}
-                    />
+                    <div className="h-full w-full relative">
+                      {/* This empty div is for the graph canvas */}
+                      <div id="graph-container" className="absolute inset-0"></div>
+                      
+                      <SocialGraphVisualization 
+                        graphData={graphData}
+                        profiles={profiles}
+                        loading={false} // Already handled by our conditional rendering
+                        error={null}
+                        onRefresh={refreshGraph}
+                      />
+                      
+                      {/* Debug overlay only shown if the graph visualization fails to render */}
+                      <div className="absolute bottom-2 right-2">
+                        <button 
+                          onClick={refreshGraph}
+                          className="bg-orange-500 text-white px-2 py-1 text-xs rounded hover:bg-orange-600"
+                        >
+                          Refresh Graph
+                        </button>
+                      </div>
+                      
+                      {/* Message explaining how to use the graph */}
+                      <div className="absolute top-2 left-2 bg-black/50 text-white text-xs p-2 rounded max-w-xs">
+                        <p>Click and drag to move. Scroll to zoom. Click nodes to focus.</p>
+                      </div>
+                    </div>
                   </div>
                   
-                  {/* Profile grid - simplified version of the original code */}
+                  {/* Profile grid - now smaller with scrolling */}
                   <div className="bg-white dark:bg-gray-700 rounded-lg shadow-sm">
                     <div className="px-3 py-2 bg-gray-50 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
-                      <h3 className="text-xs font-semibold text-gray-600 dark:text-gray-300">Community Members</h3>
+                      <h3 className="text-sm font-semibold text-gray-600 dark:text-gray-300">Community Members</h3>
                     </div>
-                    <div className="p-3 overflow-y-auto max-h-[220px]">
-                      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-2">
+                    <div className="max-h-[300px] overflow-y-auto p-4">
+                      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
                         {graphData?.nodes
                           .sort((a, b) => (b.val || 0) - (a.val || 0))
-                          .slice(0, 30)
+                          .slice(0, 50) // Increased from 25 to 50 since we now have scrolling
                           .map(node => {
                             const profile = node.npub ? profiles.get(node.npub) : null;
                             return (
                               <div 
                                 key={node.id} 
-                                className="bg-gray-50 dark:bg-gray-800 rounded-lg p-2 flex flex-col items-center hover:bg-gray-100 dark:hover:bg-gray-750 transition-colors"
+                                className="bg-gray-50 dark:bg-gray-800 rounded-lg p-3 flex flex-col items-center hover:bg-gray-100 dark:hover:bg-gray-750 transition-colors"
                               >
-                                <div className="w-12 h-12 rounded-full overflow-hidden mb-1 bg-gray-200 border-2 border-white dark:border-gray-700 shadow-sm">
+                                <div className="w-12 h-12 rounded-full overflow-hidden mb-2 bg-gray-200 border-2 border-white dark:border-gray-700 shadow-sm">
                                   {node.picture || (profile && profile.picture) ? (
                                     <img 
                                       src={node.picture || profile?.picture}
@@ -117,7 +159,7 @@ export default function CommunityPage() {
                                       className="w-full h-full object-cover"
                                     />
                                   ) : (
-                                    <div className="w-full h-full flex items-center justify-center text-xl">
+                                    <div className="w-full h-full flex items-center justify-center text-sm">
                                       👤
                                     </div>
                                   )}
@@ -127,7 +169,7 @@ export default function CommunityPage() {
                                     {node.name || profile?.displayName || profile?.name || 'Unknown'}
                                   </div>
                                   {node.isCoreNode && (
-                                    <span className="bg-orange-100 dark:bg-orange-900 text-orange-800 dark:text-orange-100 text-xs px-1 py-0.5 rounded-full inline-block mt-1">
+                                    <span className="bg-orange-100 dark:bg-orange-900 text-orange-800 dark:text-orange-100 text-xs px-1.5 py-0.5 rounded-full inline-block mt-1">
                                       Core
                                     </span>
                                   )}
@@ -147,12 +189,14 @@ export default function CommunityPage() {
         {/* Community Feed section */}
         <Section
           title="Community Feed"
-          description="The latest posts from Bitcoin Madeira community members. Stay up to date with discussions, announcements, and activities."
+          description="Notes with images from Bitcoin Madeira community members. A visual representation of community conversations and shared moments."
         >
           <CommunityFeed 
             npubs={npubsInGraph} 
             limit={30} 
             profilesMap={profiles}
+            filterLinks={true}
+            hashtags={[]}
           />
         </Section>
       </div>

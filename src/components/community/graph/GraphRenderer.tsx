@@ -58,6 +58,7 @@ const GraphRenderer = memo(({
   centerNodeId
 }: GraphRendererProps) => {
   const graphRef = useRef<any>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
 
   // Format data for rendering
   const graphData = prepareGraphData(graph);
@@ -88,6 +89,22 @@ const GraphRenderer = memo(({
       }
     }
   }, [centerNodeId, graph.nodes, focusNode]);
+
+  // Update graph on resize
+  useEffect(() => {
+    if (graphRef.current) {
+      // Force a render when height or width changes
+      graphRef.current.d3Force('center', null);
+      graphRef.current.d3Force('charge', null);
+      
+      // Re-center the graph
+      setTimeout(() => {
+        if (graphRef.current) {
+          graphRef.current.zoomToFit(400, 20);
+        }
+      }, 300);
+    }
+  }, [height, width]);
 
   // Handle node rendering customization
   const paintNode = useCallback((node: any, ctx: CanvasRenderingContext2D, globalScale: number) => {
@@ -174,7 +191,7 @@ const GraphRenderer = memo(({
   }
 
   return (
-    <div style={{ height, width, position: 'relative' }}>
+    <div ref={containerRef} style={{ height, width, position: 'relative' }}>
       <ForceGraph2D
         ref={graphRef}
         graphData={graphData}
@@ -195,6 +212,12 @@ const GraphRenderer = memo(({
         cooldownTicks={100}
         d3AlphaDecay={0.02}
         d3VelocityDecay={0.1}
+        onEngineStop={() => {
+          // Auto-fit the graph when it stops
+          if (graphRef.current) {
+            graphRef.current.zoomToFit(400, 20);
+          }
+        }}
       />
     </div>
   );

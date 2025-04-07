@@ -7,7 +7,7 @@
 
 'use client'
 
-import React from 'react'
+import React, { useRef, useEffect, useState } from 'react'
 import SocialGraph from './SocialGraph'
 import { GraphData } from '../../../types/graph-types'
 import { ProfileData } from '../../../hooks/useCachedProfiles'
@@ -39,8 +39,34 @@ const SocialGraphVisualization: React.FC<SocialGraphVisualizationProps> = ({
   onRefresh,
   compact = false
 }) => {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [containerHeight, setContainerHeight] = useState<number | undefined>(undefined);
+
+  // Measure the container height on mount and whenever the component updates
+  useEffect(() => {
+    if (containerRef.current) {
+      setContainerHeight(containerRef.current.clientHeight);
+    }
+    
+    // Set up a resize observer to update the height when the container resizes
+    const resizeObserver = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        setContainerHeight(entry.contentRect.height);
+      }
+    });
+    
+    if (containerRef.current) {
+      resizeObserver.observe(containerRef.current);
+    }
+    
+    return () => {
+      resizeObserver.disconnect();
+    };
+  }, []);
+
   return (
     <div 
+      ref={containerRef}
       className={`relative h-full ${className}`} 
       role="figure" 
       aria-label="Community network graph"
@@ -52,6 +78,7 @@ const SocialGraphVisualization: React.FC<SocialGraphVisualizationProps> = ({
         isLoading={loading}
         error={error}
         compact={compact}
+        height={containerHeight}
       />
       
       {/* Refresh button - only show if not in compact mode */}

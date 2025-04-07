@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React from 'react';
 import Image from 'next/image';
 import { NostrProfileImage } from '../profile/NostrProfileImage';
 import { useImageFeed } from '../../../hooks/useImageFeed';
@@ -20,6 +20,7 @@ interface CommunityFeedProps {
   hideEmpty?: boolean;
   maxHeight?: number;
   profilesMap?: Map<string, ProfileData> | Record<string, ProfileData>;
+  filterLinks?: boolean;
 }
 
 export const CommunityFeed: React.FC<CommunityFeedProps> = ({
@@ -33,11 +34,9 @@ export const CommunityFeed: React.FC<CommunityFeedProps> = ({
   showHeader = true,
   hideEmpty = false,
   maxHeight,
-  profilesMap = new Map()
+  profilesMap = new Map(),
+  filterLinks = true
 }) => {
-  // State for UI
-  const [activeTag, setActiveTag] = useState<string | null>(null);
-  
   // Determine effective npubs
   const effectiveNpubs = npub ? [npub] : npubs;
   
@@ -49,21 +48,25 @@ export const CommunityFeed: React.FC<CommunityFeedProps> = ({
   // Use the shared image feed hook
   const { notes, loading, error, refresh } = useImageFeed({
     npubs: effectiveNpubs,
-    hashtags: activeTag ? [...hashtags, activeTag] : hashtags,
+    hashtags,
     useCorePubs,
     limit,
     onlyWithImages: true,
-    profilesMap: profilesAsMap
+    profilesMap: profilesAsMap,
+    filterLinks
   });
-  
-  // Extract unique hashtags from all notes for filtering
-  const uniqueTags = Array.from(
-    new Set(notes.flatMap(note => note.hashtags))
-  ).sort();
 
   // Format date for display
   const formatDate = (timestamp: number) => {
     return formatDistanceToNow(new Date(timestamp * 1000), { addSuffix: true });
+  };
+
+  // Format content to show only the first few lines
+  const formatContent = (content: string, maxLength: number = 100) => {
+    if (!content) return '';
+    if (content.length <= maxLength) return content;
+    
+    return content.substring(0, maxLength) + '...';
   };
 
   return (
@@ -89,89 +92,49 @@ export const CommunityFeed: React.FC<CommunityFeedProps> = ({
         </div>
       )}
       
-      {/* Tags filter */}
-      {uniqueTags.length > 0 && (
-        <div className="flex flex-wrap gap-2 mb-4">
-          {activeTag && (
-            <button
-              onClick={() => setActiveTag(null)}
-              className="px-3 py-1 bg-orange-500 text-white text-sm rounded-full hover:bg-orange-600"
-            >
-              Clear filter
-            </button>
-          )}
-          {uniqueTags.slice(0, 10).map(tag => (
-            <button
-              key={tag}
-              onClick={() => setActiveTag(tag)}
-              className={`px-3 py-1 text-sm rounded-full ${
-                activeTag === tag 
-                  ? 'bg-orange-500 text-white' 
-                  : 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-300 dark:hover:bg-gray-600'
-              }`}
-            >
-              #{tag}
-            </button>
-          ))}
-        </div>
-      )}
-      
       {/* Notes Grid */}
       {loading && showLoadingAnimation ? (
         <div className="flex justify-center items-center py-10">
           <LoadingAnimation category="FEED" size="large" showText={true} />
         </div>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
           {notes.map(note => (
-            <div key={note.id} className="relative aspect-square group rounded-lg overflow-hidden">
+            <div key={note.id} className="bg-white dark:bg-gray-700 rounded-lg overflow-hidden shadow-md hover:shadow-lg transition-shadow">
               {/* Image */}
-              <Image
-                src={note.images[0]}
-                alt="Community post"
-                fill
-                className="object-cover transition-transform group-hover:scale-105"
-                unoptimized
-              />
+              <div className="relative h-48 w-full">
+                <Image
+                  src={note.images[0]}
+                  alt="Note image"
+                  fill
+                  className="object-cover"
+                  unoptimized
+                />
+              </div>
               
-              {/* Overlay with metadata */}
-              <div className="absolute inset-0 bg-gradient-to-t from-black/70 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-200">
-                <div className="absolute bottom-0 left-0 right-0 p-4">
-                  <div className="flex items-center space-x-2 mb-2">
-                    <NostrProfileImage
-                      npub={note.npub}
-                      width={32}
-                      height={32}
-                      className="rounded-full border-2 border-white"
-                    />
-                    <div>
-                      <div className="text-white text-sm font-medium">
-                        {note.author.displayName || note.author.name || 'Unknown'}
-                      </div>
-                      <div className="text-white/80 text-xs">
-                        {formatDate(note.created_at)}
-                      </div>
+              {/* Note content */}
+              <div className="p-4">
+                {/* Note text */}
+                <p className="text-gray-700 dark:text-gray-200 mb-3">
+                  {formatContent(note.content)}
+                </p>
+                
+                {/* Author info */}
+                <div className="flex items-center mt-3 pt-3 border-t border-gray-200 dark:border-gray-600">
+                  <NostrProfileImage
+                    npub={note.npub}
+                    width={36}
+                    height={36}
+                    className="rounded-full"
+                  />
+                  <div className="ml-2">
+                    <div className="font-medium text-sm dark:text-white">
+                      {note.author.displayName || note.author.name || 'Unknown'}
+                    </div>
+                    <div className="text-xs text-gray-500 dark:text-gray-400">
+                      {formatDate(note.created_at)}
                     </div>
                   </div>
-                  
-                  {/* Hashtags */}
-                  {note.hashtags.length > 0 && (
-                    <div className="flex flex-wrap gap-1 mt-2">
-                      {note.hashtags.slice(0, 3).map(tag => (
-                        <span 
-                          key={tag}
-                          className="text-xs px-2 py-0.5 bg-black/30 text-white rounded-full"
-                        >
-                          #{tag}
-                        </span>
-                      ))}
-                      {note.hashtags.length > 3 && (
-                        <span className="text-xs px-2 py-0.5 bg-black/30 text-white rounded-full">
-                          +{note.hashtags.length - 3}
-                        </span>
-                      )}
-                    </div>
-                  )}
                 </div>
               </div>
             </div>
@@ -184,10 +147,7 @@ export const CommunityFeed: React.FC<CommunityFeedProps> = ({
         <div className="flex flex-col items-center justify-center h-40 bg-gray-100 dark:bg-gray-800 rounded-lg">
           <p className="text-gray-500 dark:text-gray-400 mb-2">No posts to display</p>
           <button 
-            onClick={() => {
-              setActiveTag(null);
-              refresh();
-            }}
+            onClick={() => refresh()}
             className="px-3 py-1 bg-orange-500 text-white rounded-md hover:bg-orange-600"
           >
             Refresh

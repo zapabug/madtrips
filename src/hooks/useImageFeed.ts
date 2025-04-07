@@ -39,6 +39,7 @@ interface UseImageFeedOptions {
   limit?: number;
   onlyWithImages?: boolean;
   profilesMap?: Map<string, ProfileData>;
+  filterLinks?: boolean;
 }
 
 interface UseImageFeedResult {
@@ -59,6 +60,7 @@ export function useImageFeed({
   limit = 25,
   onlyWithImages = true,
   profilesMap = new Map(),
+  filterLinks = false,
 }: UseImageFeedOptions = {}): UseImageFeedResult {
   const { ndk, getUserProfile, ndkReady } = useNostr();
   const cache = useCache();
@@ -154,6 +156,14 @@ export function useImageFeed({
         const images = extractImages(event.content, event.tags);
         if (onlyWithImages && images.length === 0) continue;
         
+        // Filter out notes with links if filterLinks is true
+        if (filterLinks) {
+          // URLs that aren't image URLs
+          const urlRegex = /https?:\/\/[^\s]+(?!\.(jpg|jpeg|png|gif|webp))/gi;
+          const hasNonImageLinks = urlRegex.test(event.content);
+          if (hasNonImageLinks) continue;
+        }
+        
         // Extract hashtags
         const noteHashtags = extractHashtags(event.content, event.tags);
         
@@ -229,7 +239,7 @@ export function useImageFeed({
     }
     
     return processedNotes.sort((a, b) => b.created_at - a.created_at);
-  }, [extractImages, extractHashtags, hashtags, onlyWithImages, ndk, getUserProfile, profilesMap]);
+  }, [extractImages, extractHashtags, hashtags, onlyWithImages, ndk, getUserProfile, profilesMap, filterLinks]);
 
   // Convert NDKEvent to NostrPost for caching
   const ndkEventToNostrPost = (event: NDKEvent): any => {

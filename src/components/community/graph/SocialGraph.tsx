@@ -13,6 +13,7 @@ interface SocialGraphProps {
   isLoading: boolean;
   error: string | null;
   compact?: boolean;
+  height?: number;
 }
 
 export default function SocialGraph({ 
@@ -20,7 +21,8 @@ export default function SocialGraph({
   profilesMap,
   isLoading, 
   error,
-  compact = false
+  compact = false,
+  height
 }: SocialGraphProps) {
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
 
@@ -53,12 +55,15 @@ export default function SocialGraph({
     );
   }
 
+  // Calculate height to use - use prop value, or derive from compact mode
+  const graphHeight = height || (compact ? 300 : 500);
+
   // Use GraphRenderer for interactive visualization
   return (
     <div className="w-full h-full">
       <GraphRenderer 
         graph={graphData}
-        height={compact ? 300 : 500}
+        height={graphHeight}
         onNodeClick={handleNodeClick}
         selectedNode={selectedNode}
       />

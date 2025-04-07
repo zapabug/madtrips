@@ -34,7 +34,7 @@ export default function MadeiraFeed({
     ? profilesMap 
     : new Map(Object.entries(profilesMap));
 
-  const { notes, loading } = useImageFeed({
+  const { notes, loading, refresh } = useImageFeed({
     hashtags: MADEIRA_HASHTAGS,
     onlyWithImages: true,
     profilesMap: profilesAsMap
@@ -55,7 +55,7 @@ export default function MadeiraFeed({
 
   if (loading && notes.length === 0) {
     return (
-      <div className={`flex items-center justify-center p-8 ${className}`}>
+      <div className={`flex items-center justify-center h-full w-full ${className}`}>
         <LoadingAnimation category="FEED" size="large" showText={true} />
       </div>
     );
@@ -63,8 +63,14 @@ export default function MadeiraFeed({
 
   if (notes.length === 0) {
     return (
-      <div className={`text-center p-8 ${className}`}>
-        <p className="text-gray-500">No images found with Madeira-related hashtags.</p>
+      <div className={`flex flex-col items-center justify-center h-full w-full text-center p-8 ${className}`}>
+        <p className="text-gray-500 mb-4">No images found with Madeira-related hashtags.</p>
+        <button 
+          onClick={refresh}
+          className="px-3 py-1 bg-orange-500 text-white rounded-md hover:bg-orange-600"
+        >
+          Refresh
+        </button>
       </div>
     );
   }
@@ -72,9 +78,9 @@ export default function MadeiraFeed({
   const currentNote = notes[currentIndex];
 
   return (
-    <div className={`relative rounded-lg overflow-hidden shadow-md ${className}`}>
+    <div className={`relative w-full h-full rounded-lg overflow-hidden shadow-md ${className}`}>
       {currentNote.images && currentNote.images.length > 0 && (
-        <div className="relative h-48">
+        <div className="relative w-full h-full">
           <Image 
             src={currentNote.images[0]} 
             alt="Nostr post" 
@@ -84,17 +90,35 @@ export default function MadeiraFeed({
           />
         </div>
       )}
-      {currentNote.author && currentNote.author.picture && (
-        <div className="absolute bottom-2 left-2">
-          <div className="relative w-10 h-10 rounded-full overflow-hidden">
-            <Image 
-              src={currentNote.author.picture} 
-              alt="Profile" 
-              fill
-              className="object-cover"
-              unoptimized
-            />
+      
+      <div className="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-black/70 to-transparent">
+        <div className="flex items-center">
+          {currentNote.author && currentNote.author.picture && (
+            <div className="relative w-10 h-10 rounded-full overflow-hidden border-2 border-white">
+              <Image 
+                src={currentNote.author.picture} 
+                alt="Profile" 
+                fill
+                className="object-cover"
+                unoptimized
+              />
+            </div>
+          )}
+          <div className="ml-2 text-white">
+            <div className="font-medium text-sm">
+              {currentNote.author?.displayName || currentNote.author?.name || 'Unknown'}
+            </div>
+            <div className="text-xs opacity-80">
+              #{currentNote.hashtags[0] || 'madeira'}
+            </div>
           </div>
+        </div>
+      </div>
+      
+      {/* Image count indicator */}
+      {notes.length > 1 && (
+        <div className="absolute top-2 right-2 bg-black/50 text-white text-xs px-2 py-1 rounded">
+          {currentIndex + 1} / {notes.length}
         </div>
       )}
     </div>
