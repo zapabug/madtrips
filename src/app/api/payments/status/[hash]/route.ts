@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { getLightningService } from '../../../../../lib/services/LightningPaymentService';
 
 // Get LNBits configuration from environment variables
@@ -6,8 +6,8 @@ const LNBITS_ENDPOINT = process.env.LNBITS_ENDPOINT || '';
 const LNBITS_API_KEY = process.env.LNBITS_API_KEY || '';
 
 export async function GET(
-  request: Request,
-  { params }: { params: { hash: string } }
+  request: NextRequest,
+  { params }: { params: Promise<{ hash: string }> }
 ) {
   try {
     // Validate environment variables
@@ -18,7 +18,7 @@ export async function GET(
       );
     }
 
-    const { hash } = params;
+    const { hash } = await params;
 
     // Validate payment hash
     if (!hash) {

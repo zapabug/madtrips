@@ -9,6 +9,7 @@ export interface GraphNode {
   npub?: string;          // Public key in npub format
   name?: string;          // User name if available
   picture?: string;       // Profile image URL
+  nip05?: string;         // NIP-05 identifier for verification
   followers?: number;     // Number of followers
   following?: number;     // Number of users being followed
   group?: number;         // Group/cluster number
@@ -21,6 +22,7 @@ export interface GraphNode {
   val?: number;           // Node size value
   color?: string;         // Node color
   isCoreNode?: boolean;   // Whether this is a core node
+  isSecondDegree?: boolean; // Whether this is a second-degree connection
 }
 
 // Connection between nodes
@@ -38,6 +40,8 @@ export interface GraphData {
   nodes: GraphNode[];
   links: GraphLink[];
   lastUpdated?: number;   // Timestamp of last update
+  nodeCount?: number;     // Number of nodes (for internal tracking)
+  linkCount?: number;     // Number of links (for internal tracking)
 }
 
 // Graph visualization settings

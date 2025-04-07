@@ -1,23 +1,19 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNostr } from '../lib/contexts/NostrContext';
 import { PROFILE_CACHE_TTL } from '../components/community/utils';
-
-// Global profile cache
-const profileCache = new Map<string, {
-  profile: any;
-  timestamp: number;
-}>();
+import CacheService from '../lib/services/CacheService';
 
 interface UseNostrProfileOptions {
   skipCache?: boolean;
   retryAttempts?: number;
+  minimalProfile?: boolean; // Only fetch minimal profile data
 }
 
 /**
  * Hook for fetching and caching Nostr profiles
  */
 export function useNostrProfile(npub: string | null, options: UseNostrProfileOptions = {}) {
-  const { skipCache = false, retryAttempts = 2 } = options;
+  const { skipCache = false, retryAttempts = 2, minimalProfile = false } = options;
   const [profile, setProfile] = useState<any>(null);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
@@ -33,9 +29,9 @@ export function useNostrProfile(npub: string | null, options: UseNostrProfileOpt
     
     // Check cache first unless skipCache is true or forceRefresh is true
     if (!skipCache && !forceRefresh) {
-      const cachedProfile = profileCache.get(npub);
-      if (cachedProfile && (Date.now() - cachedProfile.timestamp) < PROFILE_CACHE_TTL) {
-        setProfile(cachedProfile.profile);
+      const cachedProfile = CacheService.profileCache.get(npub);
+      if (cachedProfile) {
+        setProfile(cachedProfile);
         setLoading(false);
         return;
       }
@@ -65,13 +61,16 @@ export function useNostrProfile(npub: string | null, options: UseNostrProfileOpt
       const profileData = await getUserProfile(npub);
       
       if (profileData) {
-        setProfile(profileData);
+        // If minimalProfile is true, only include essential fields
+        const processedProfile = minimalProfile ? {
+          name: profileData.name,
+          displayName: profileData.displayName,
+          picture: profileData.picture
+        } : profileData;
         
-        // Store in cache
-        profileCache.set(npub, {
-          profile: profileData,
-          timestamp: Date.now()
-        });
+        setProfile(processedProfile);
+        // Cache the processed profile
+        CacheService.profileCache.set(npub, processedProfile);
       } else {
         // Try to reconnect if profile not found - might be a relay connection issue
         if (retryCount < retryAttempts) {
@@ -103,7 +102,7 @@ export function useNostrProfile(npub: string | null, options: UseNostrProfileOpt
     } finally {
       setLoading(false);
     }
-  }, [npub, getUserProfile, ndkReady, skipCache, retryCount, retryAttempts, reconnect]);
+  }, [npub, getUserProfile, ndkReady, skipCache, retryCount, retryAttempts, reconnect, minimalProfile]);
   
   useEffect(() => {
     if (npub) {
@@ -117,7 +116,8 @@ export function useNostrProfile(npub: string | null, options: UseNostrProfileOpt
     // Clear from cache first if force refresh
     if (npub) {
       if (forceRefresh) {
-        profileCache.delete(npub);
+        // Delete only the specific profile from cache
+        CacheService.profileCache.delete(npub);
       }
       // Reset retry count for a fresh start
       setRetryCount(0);

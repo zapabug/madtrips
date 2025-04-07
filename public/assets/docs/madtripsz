@@ -1,0 +1,129 @@
+
+Let me provide a detailed overview of your client architecture and how the components work together:
+
+# MadTrips Client Architecture
+
+## Core Architecture
+
+Your application is built using Next.js with a client-side React architecture that heavily leverages the Nostr protocol for decentralized social networking. The application appears to be focused on Bitcoin and community features for Madeira.
+
+## Key Context Providers
+
+### 1. NostrContext (src/lib/contexts/NostrContext.tsx)
+This is the foundational provider that handles all Nostr protocol interactions:
+- Manages relay connections to the Nostr network
+- Handles user authentication via NIP-07 compatible extensions
+- Provides profile fetching capabilities
+- Manages caching of user profiles for performance
+- Exposes methods for interacting with the Nostr network
+
+## Component Hierarchy
+
+### Page Structure
+- Root Layout → App Layout → Page Components
+- Each page renders specialized components for different sections of the application
+
+### Key Page Components
+
+1. **Community Page**
+   - Displays Bitcoin Madeira community information
+   - Contains three main visualization components:
+     - Community Updates (MadeiraFeed)
+     - Social Graph visualization 
+     - Community Feed (NostrFeed)
+
+2. **API Routes**
+   - `/api/generate-split-invoice` - Handles Lightning invoice generation
+
+## Core Components
+
+### Community Components
+
+1. **SocialGraph**
+   - Visualizes relationships between community members
+   - Uses ForceGraph2D for network visualization
+   - Fetches connection data from Nostr
+   - Implements caching for performance
+   - Allows users to explore the Bitcoin Madeira community network
+   - Supports adjustable visualization density (simplified or detailed view)
+
+2. **MadeiraFeed**
+   - Displays content from Madeira-focused Nostr accounts
+   - Filters for Madeira-related content and hashtags
+   - Shows carousel-style updates from core community members
+   - Posts open in njump when clicked
+
+3. **CommunityFeed (NostrFeed)**
+   - Shows a feed of posts from community members
+   - Displays profile images, content, and timestamps
+   - Posts open in njump when clicked
+   - Supports hashtag filtering
+
+### Lightning Components
+
+1. **MultiTipJar**
+   - Allows users to tip multiple community members
+   - Integrates with Lightning Network for payments
+
+2. **LightningService**
+   - Backend service for generating Lightning invoices
+   - Connects to Lightning Network infrastructure
+
+## Data Flow
+
+1. **User Authentication**
+   - Browser extension (NIP-07 compatible) → NostrProvider → App components
+   - Login process:
+     1. User clicks login
+     2. NostrContext initializes Nostr signer
+     3. Extension provides user public key
+     4. App fetches user profile from Nostr relays
+
+2. **Content Loading**
+   - NostrContext connects to relays
+   - Components request data through NostrContext hooks
+   - Data is fetched from Nostr network
+   - Results are cached and displayed
+
+3. **Social Graph Data Flow**
+   - Fetches contacts for core members
+   - Builds network visualization data
+   - Processes mutual connections
+   - Renders interactive graph
+
+4. **User Interaction Flow**
+   - UI events → Component handlers → NostrContext methods → Relay network
+   - For Lightning payments: UI → API routes → LightningService → Payment processor
+
+## Key Integrations
+
+1. **Nostr Protocol**
+   - Uses NDK (Nostr Development Kit) for relay communication
+   - Implements NIP-07 for browser extension integration
+
+2. **Lightning Network**
+   - Handles Bitcoin payments through API routes
+   - Generates split invoices for multi-recipient payments
+
+## Technical Features
+
+1. **Caching System**
+   - Profile cache with TTL (time-to-live)
+   - Social graph cache for performance
+   - Image preloading for smoother UX
+
+2. **Relay Management**
+   - Automatic reconnection to ensure data availability
+   - Fallback relay system with primary, backup, and community relays
+   - Connection monitoring
+
+3. **Error Handling**
+   - Graceful degradation when services are unavailable
+   - User-friendly error messages
+   - Automatic retry mechanisms
+
+4. **Responsive Design**
+   - Components adapt to different screen sizes
+   - Mobile-optimized interactions
+
+This architecture creates a decentralized application that connects Madeira's Bitcoin community through Nostr and Lightning Network integrations, providing social features, visualizations, and payment capabilities in a cohesive user experience.

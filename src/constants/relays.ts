@@ -3,10 +3,12 @@ import { NDKRelay } from '@nostr-dev-kit/ndk';
 export const RELAYS = {
   // Primary relays - essential for core app functionality
   PRIMARY: [
-    "wss://relay.primal.net",
+    "wss://relay.damus.io",
+    "wss://nos.lol",
     "wss://relay.nostr.band",
     "wss://relay.snort.social",
-    "wss://relay.olas.app"
+    "wss://nostr.wine",
+    "wss://relay.nostr.info"
   ],
   
   // Community-focused relays
@@ -14,6 +16,9 @@ export const RELAYS = {
     "wss://purplepag.es",
     "wss://nostr.mutinywallet.com",
     "wss://relay.nostrati.com",
+    "wss://relay.sendstr.com",
+    "wss://relay.nostromo.social",
+    "wss://eden.nostr.land"
   ],
   
   // Backup relays when primary fails
@@ -21,32 +26,39 @@ export const RELAYS = {
     "wss://nos.lol",
     "wss://nostr.fmt.wiz.biz",
     "wss://relay.current.fyi",
+    "wss://relay.nostr.bg",
+    "wss://nostr.bitcoiner.social",
+    "wss://nostr-pub.wellorder.net"
   ],
   
   // Fast relays optimized for quick responses
   FAST: [
     "wss://relay.primal.net",
+    "wss://relay.damus.io",
     "wss://nostr.zebedee.cloud",
-    "wss://relay.eupurplerelay.net",
-    "wss://nostr.1312.media",
-    "wss://nostr.stakey.net",
-    "wss://relay.nostr.net",
-    "wss://lunchbox.sandwich.farm",
-    "wss://r.lostr.net",
-    "wss://nostr.yael.at",
-    "wss://history.nostr.watch",
-    "wss://travis-shears-nostr-relay-v2.fly.dev",
-    "wss://nostr.sprovoost.nl",
-    "wss://nostr.agentcampfire.com",
-    "wss://dvms.f7z.io",
-    "wss://fl.purplerelay.com"
+    "wss://relay.snort.social",
+    "wss://relay.nostr.band",
+    "wss://relay.nos.social",
+    "wss://nostr.oxtr.dev",
+    "wss://relay.nostrplebs.com",
+    "wss://relay.wellorder.net"
   ],
+  
+  // Special Madeira-focused relays
+  MADEIRA: [
+    "wss://relay.current.fyi",
+    "wss://purplepag.es",
+    "wss://nos.lol",
+    "wss://relay.damus.io",
+    "wss://relay.snort.social"
+  ]
 };
 
-// Default list of relays to use (combines Primary and Fast)
+// Default list of relays to use (combines more reliable relays for better connectivity)
 export const DEFAULT_RELAYS = [
-  ...RELAYS.PRIMARY,
-  ...RELAYS.FAST.slice(0, 5), // Use only the first 5 fast relays by default to avoid overwhelming connections
+  ...RELAYS.PRIMARY.slice(0, 4),
+  ...RELAYS.FAST.slice(0, 3),
+  ...RELAYS.MADEIRA.slice(0, 2)
 ];
 
 // Function to get a specific set of relays
@@ -62,6 +74,7 @@ export const getAllRelays = () => {
     ...RELAYS.COMMUNITY,
     ...RELAYS.BACKUP,
     ...RELAYS.FAST,
+    ...RELAYS.MADEIRA
   ];
 };
 

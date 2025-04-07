@@ -3,7 +3,8 @@
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { useEffect, useState, useCallback, useMemo } from 'react'
-import { NostrProfileHeader } from '../../components/community/NostrProfileHeader'
+import { NostrProfileHeader } from '../../components/community/profile/NostrProfileHeader'
+import Image from 'next/image'
 
 // Extracted constants and reusable styles
 const MADTRIPS_NPUB = "npub1dxd02kcjhgpkyrx60qnkd6j42kmc72u5lum0rp2ud8x5zfhnk4zscjj6hh"
@@ -129,11 +130,7 @@ export function Navigation() {
             {/* Logo/Profile section - Fixed mobile width issue */}
             <div className="w-auto max-w-[calc(100%-50px)] sm:w-auto overflow-hidden">
               <Link href="/" className="flex items-center text-xl font-bold text-ocean dark:text-bitcoin hover:text-bitcoin transition-colors group">
-                <NostrProfileHeader 
-                  npub={MADTRIPS_NPUB} 
-                  showImage={true}
-                  className="text-xl text-ocean dark:text-bitcoin group-hover:text-bitcoin" 
-                />
+                <NostrProfileHeader npub={MADTRIPS_NPUB} />
               </Link>
             </div>
 

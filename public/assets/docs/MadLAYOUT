@@ -16,12 +16,26 @@ src/
 │   └── favicon.ico             # App favicon
 ├── components/                 # Reusable UI components
 │   ├── community/              # Community components
-│   │   ├── SocialGraph.tsx     # Social graph visualization
-│   │   ├── SocialGraphVisualization.tsx # Simplified graph visualization
-│   │   ├── CommunityFeed.tsx   # Nostr feed component (renamed from NostrFeed)
-│   │   ├── MultiUserNostrFeed.tsx # Multi-user Nostr feed
-│   │   ├── NostrProfileImage.tsx  # Profile image component
-│   │   └── NostrProfileHeader.tsx # Profile header component
+│   │   ├── graph/              # Graph visualization components
+│   │   │   ├── SocialGraph.tsx         # Main graph component
+│   │   │   ├── GraphRenderer.tsx       # Graph rendering component
+│   │   │   ├── GraphControls.tsx       # UI controls for the graph
+│   │   │   ├── NodeTooltip.tsx         # Tooltip for graph nodes
+│   │   │   ├── SocialGraphVisualization.tsx # Simplified graph visualization
+│   │   │   ├── ClearGraphCache.tsx     # Cache clearing utility
+│   │   │   ├── CacheUsageExample.tsx   # Example of cache usage
+│   │   │   └── index.ts               # Exports for graph components
+│   │   ├── feed/               # Feed components
+│   │   │   ├── CommunityFeed.tsx      # Community feed component
+│   │   │   ├── MadeiraFeed.tsx        # Madeira-specific feed
+│   │   │   └── index.ts               # Exports for feed components
+│   │   ├── profile/            # Profile components
+│   │   │   ├── NostrProfileImage.tsx  # Profile image component
+│   │   │   ├── NostrProfileHeader.tsx # Profile header component
+│   │   │   └── index.ts               # Exports for profile components
+│   │   ├── index.ts            # Re-exports for easier imports
+│   │   ├── utils.ts            # Community-specific utility functions
+│   │   └── README.md           # Documentation for community components
 │   ├── checkout/               # Checkout components
 │   ├── tip/                    # Tipping components
 │   │   ├── MultiTipJar.tsx     # Multiple recipient tipping
@@ -46,6 +60,8 @@ src/
 │   └── cart-types.ts           # Shopping cart types
 ├── hooks/                      # Custom React hooks
 │   ├── useNostrProfile.ts      # Hook for fetching Nostr profiles
+│   ├── useGraphData.ts         # Hook for managing social graph data
+│   ├── useCache.ts             # Hook for centralized caching
 │   ├── useCheckoutFlow.ts      # Hook for checkout process
 │   └── useMediaQuery.ts        # Hook for responsive design
 ├── data/                       # Data files/mocks
@@ -54,6 +70,7 @@ src/
 │   ├── contexts/               # React contexts
 │   │   └── NostrContext.tsx    # Nostr context provider
 │   ├── services/               # Service modules
+│   │   ├── CacheService.ts     # Centralized caching service
 │   │   └── NostrMessagingService.ts # Nostr messaging service
 │   └── store/                  # State management
 │       └── cart-store.ts       # Cart store
@@ -65,73 +82,28 @@ src/
 
 
 
-//Proper layout for the app
-src/
-├── app/                        # Next.js app directory
-│   ├── community/              # Community page route
-│   │   ├── page.tsx            # Community page component
-│   │   ├── layout.tsx          # Community-specific layout
-│   │   ├── checkout/           # Checkout page route
-│   ├── packages/               # Packages page route
-│   ├── map/                    # Map page route
-│   ├── admin/                  # Admin page route
-│   ├── diagnosis/              # Diagnosis page route
-│   ├── api/                    # API routes
-│   ├── layout.tsx              # Root layout
-│   ├── page.tsx                # Home page
-│   ├── providers.tsx           # App providers
-│   ├── metadata.ts             # App metadata
-│   ├── globals.css             # Global styles
-│   └── favicon.ico             # App favicon
-├── components/                 # Reusable UI components
-│   ├── community/              # Community components
-│   │   ├── CommunityFeed.tsx   # Nostr feed (only images & hashtags) from graph compoonent
-│   │   ├── SocialGraph.tsx     # Social graph visualization
-│   │   ├── SocialGraphVisualization.tsx # Social graph visualization
-│   │   ├── MultiUserNostrFeed.tsx # Multi-user Nostr feed
-│   │   ├── RecommendedFollows.tsx # Friends-of-friends suggestion
-│   │   ├── MultiTipJar.tsx     # community tipping component
-│   │   ├── RecommendedClients.tsx # Suggested clients (new)
-│   │   ├── NostrProfileImage.tsx  # Profile image component
-│   │   ├── NostrProfileHeader.tsx # Profile header component
-│   ├── checkout/               # Checkout components
-│   ├── tip/                    # Tipping components
-│   ├── map/                    # Map components
-│   ├── layout/                 # Layout components
-│   ├── home/                   # Home page components
-│   ├── nostr/                  # Nostr-specific components
-│   │   ├── NostrLoginButton.tsx    # Nostr login button
-│   │   ├── ClientNostrSigner.tsx   # Client-side Nostr signer
-│   │   ├── NostrLink.tsx           # Nostr link component
-│   │   ├── NostrPayment.tsx        # Nostr payment component
-│   ├── payments/                 # Payment components
-│   │   ├── LightningPaymentButton.tsx # Lightning payments
-│   │   ├── PackagePayment.tsx      # Package payment component
-│   └── ThemeProvider.tsx       # Theme provider component
-├── constants/                  # App-wide constants
-│   ├── nostr.ts                # Nostr-related constants (canonical `CORE_NPUBS`)
-│   ├── relays.ts               # Nostr relay lists and functions
-│   ├── loadingMessages.ts      # Loading messages for UI feedback
-│   ├── brandColors.ts          # Brand color definitions
-├── types/                      # TypeScript type definitions
-│   ├── nostr.d.ts              # Nostr-related types
-│   ├── graph-types.ts          # Graph visualization types
-│   ├── cart-types.ts           # Shopping cart types
-├── hooks/                      # Custom React hooks
-│   ├── useNostrProfile.ts      # Hook for fetching Nostr profiles
-│   ├── useCheckoutFlow.ts      # Hook for checkout process
-│   ├── useMediaQuery.ts        # Hook for responsive design
-├── data/                       # Data files/mocks
-│   ├── packages.ts             # Package data
-├── lib/                        # Library code
-│   ├── contexts/               # React contexts
-│   │   ├── NostrContext.tsx    # Nostr context provider
-│   ├── services/               # Service modules
-│   │   ├── NostrMessagingService.ts # Nostr messaging service
-│   ├── store/                  # State management
-│   │   ├── cart-store.ts       # Cart store
-└── utils/                      # Utility functions
-    ├── graphUtils.ts           # Graph utility functions
-    ├── profileUtils.ts         # Profile utilities
-    ├── nostrUtils.ts           # Nostr utility functions
-    ├── images.ts               # Image utility functions
+
+NostrContext (Authentication & Relay Management)
+  │
+  ├─────► NostrLoginButton (User Authentication)
+  │
+  ├─────► CacheService (Centralized Data Cache)
+  │        │
+  │        ├─────► ProfileCache
+  │        ├─────► PostCache
+  │        ├─────► GraphCache
+  │        └─────► ImageCache
+  │
+  ├─────► useSocialGraph (Social Graph Logic)
+  │        │
+  │        └─────► SocialGraph (Graph Visualization)
+  │                 │
+  │                 ├─────► GraphRenderer
+  │                 ├─────► GraphControls
+  │                 └─────► NodeTooltip
+  │
+  └─────► useNostrFeed (Feed Management)
+           │
+           └─────► CommunityFeed (Post Display)
+                    │
+                    └─────► PostItem

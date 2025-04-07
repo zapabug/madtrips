@@ -75,11 +75,34 @@ MadTrips uses an optimized architecture that leverages Next.js App Router and AP
 - **Server Components**: Using React Server Components for improved performance and reduced client-side JavaScript.
 - **Minimal Server-Side Logic**: Server-side operations are limited only to those requiring secrets or security (like payment processing).
 
+### Centralized Caching System
+
+The application uses a centralized caching system to improve performance and reduce relay load:
+
+- **CacheService**: A singleton service that manages different types of caches:
+  - Profile cache: Stores user profiles to minimize duplicate requests
+  - Post cache: Stores Nostr posts with configurable retention
+  - Graph cache: Stores social graph data for efficient community visualization
+  - Image cache: Preloads and caches profile images and post images
+
+- **Component Integration**:
+  - SocialGraph populates the cache with community connections
+  - MadeiraFeed and CommunityFeed read from this cache
+  - All components share profile data through the same cache
+
+- **Benefits**:
+  - Reduced network requests to Nostr relays
+  - Better user experience with faster loading
+  - Consistent data across components
+  - Type-safe cache access through the useCache hook
+
 ### Folder Structure
 
 - `/src/app/api/*` - Next.js API Routes replacing Express.js endpoints
 - `/src/lib/*` - Shared libraries for both client and server
 - `/src/components/*` - React components, including client-side Nostr integration
+- `/src/lib/services/CacheService.ts` - Centralized caching system
+- `/src/hooks/useCache.ts` - React hook for accessing the cache
 
 ### API Routes
 
@@ -97,3 +120,46 @@ MadTrips uses an optimized architecture that leverages Next.js App Router and AP
 3. **Improved Performance**: API routes can be deployed at the edge for faster response times
 4. **Better Developer Experience**: Single codebase and seamless TypeScript integration
 5. **Enhanced Security**: Sensitive operations remain server-side while moving non-sensitive operations to the client
+
+## Recent Fixes
+
+### Graph Rendering Issues
+- Optimized relay connection management to limit connections to a maximum of 4 properly connected relays
+- Added connection delay between relay connections to prevent overwhelming the system
+- Improved the continuous loading feature to be less aggressive with 3 nodes per batch instead of 5
+- Added error handling to prevent crashes during graph refreshes
+- Improved cache timestamp handling for better cache validation
+
+### Feed/Event Fetching Issues
+- Added proper timeout handling for Nostr event fetching to prevent hanging requests
+- Improved error recovery for subscription connections with automatic health checks
+- Fixed reconnection logic for better relay connection stability
+- Added closeOnEose option to fetchEvents calls for more reliable event fetching
+- Implemented subscription health monitoring with automatic reconnection
+- Added additional error handling to prevent subscription crashes
+
+### General Improvements
+- Better handling of connected relays tracking
+- Improved error reporting in the UI
+- More robust relay connection status detection
+- Fixed race conditions in the reconnection logic
+- Better state management for loading indicators
+- Cache statistics tracking for monitoring hit/miss rates
+
+## Running the Project
+
+```bash
+# Install dependencies
+npm install
+
+# Run the development server
+npm run dev
+```
+
+## Contributors
+
+- MadTrips Team
+
+## License
+
+MIT

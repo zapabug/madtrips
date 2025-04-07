@@ -1,7 +1,8 @@
 'use client'
 
+import React, { useState, useEffect } from 'react'
 import Image from 'next/image'
-import { useNostrProfile } from '../../hooks/useNostrProfile'
+import { useNostrProfile } from '../../../hooks/useNostrProfile'
 
 interface NostrProfileImageProps {
   npub: string

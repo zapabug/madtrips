@@ -2,6 +2,7 @@
 import React, { useEffect, useState, useRef, useCallback, memo } from 'react';
 import { useNostr } from '../lib/contexts/NostrContext';
 import Image from 'next/image';
+import RelayService from '../lib/services/RelayService';
 
 // Memoize the component to reduce unnecessary rerenders
 const NostrLoginButton: React.FC = memo(() => {
@@ -87,7 +88,7 @@ const NostrLoginButton: React.FC = memo(() => {
               }
               if (!ndkReady) {
                 console.warn("NDK is not ready");
-                reconnect().catch(err => {
+                RelayService.reconnect().catch(err => {
                   console.error("Failed to reconnect relays:", err);
                 });
               }
@@ -127,7 +128,7 @@ const NostrLoginButton: React.FC = memo(() => {
   // Try to reconnect relays if necessary
   useEffect(() => {
     if (!ndkReady && !loginInProgress.current) {
-      reconnect().catch(err => {
+      RelayService.reconnect().catch(err => {
         console.warn('Relay reconnect failed:', err);
       });
     }
@@ -179,7 +180,7 @@ const NostrLoginButton: React.FC = memo(() => {
           
           // Try reconnecting relays if needed
           if (!ndkReady) {
-            await reconnect();
+            await RelayService.reconnect();
           }
           
           // Launch after initialization
@@ -187,7 +188,7 @@ const NostrLoginButton: React.FC = memo(() => {
         } else {
           // Try reconnecting relays if needed
           if (!ndkReady) {
-            await reconnect();
+            await RelayService.reconnect();
           }
           
           // Import dynamically to avoid SSR issues

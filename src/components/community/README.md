@@ -1,64 +1,89 @@
 # Community Components
 
-This directory contains components related to the community features of MadTrips, primarily focused on Nostr integration.
+This directory contains components for the Bitcoin Madeira community features, including social graph visualization and Nostr feed components.
 
-## Component Overview
+## Component Structure
 
-- **CommunityFeed**: Displays posts from popular Nostr users with Bitcoin Madeira hashtags
-- **MadeiraFeed**: A specialized feed displaying image-rich Madeira-specific posts from core NPUBs and their connections
-- **MultiUserNostrFeed**: Displays posts from core NPUBs and user with optimized fetching 
-- **SocialGraph**: Interactive visualization of the Bitcoin Madeira community social graph
-- **SocialGraphVisualization**: Lightweight wrapper for displaying the social graph
-- **NostrProfileImage**: Reusable component for displaying Nostr profile images
-- **NostrProfileHeader**: Component for displaying a Nostr profile header with name and image
+The community components have been refactored to follow a more modular and maintainable structure:
 
-## Architectural Decisions
+```
+community/
+├── graph/                     # Social graph components
+│   ├── SocialGraph.tsx        # Main container component
+│   ├── GraphRenderer.tsx      # Visualization rendering
+│   ├── GraphControls.tsx      # UI controls for the graph
+│   ├── NodeTooltip.tsx        # Node tooltip component
+│   └── index.ts               # Re-exports for easier imports
+├── CommunityFeed.tsx          # Nostr feed component
+├── MadeiraFeed.tsx            # Madeira-specific feed
+├── SocialGraphVisualization.tsx # Wrapper for SocialGraph
+├── NostrProfileImage.tsx      # Profile image component
+├── NostrProfileHeader.tsx     # Profile header component
+├── ClearGraphCache.tsx        # Cache clearing utility
+├── utils.ts                   # Shared utilities
+└── index.ts                   # Re-exports for easier imports
+```
 
-### Centralized Constants
+## Hooks
 
-Core definitions like `CORE_NPUBS` are imported from `src/constants/nostr.ts` to ensure consistency across the application.
+The data-fetching and state management logic has been extracted to custom hooks:
 
-### Shared Utilities
+- `useSocialGraph`: Handles graph data loading and processing
+- `useCache`: Provides caching capabilities for profiles, posts, and graph data
+- `useNostrProfile`: Fetches and caches user profiles
 
-The `utils.ts` file contains shared utilities for all community components, including:
-- Helper functions for processing text content and extracting images from Nostr posts
-- Graph data interfaces and processing functions
-- Common hashtag definitions
+## Cache System
 
-### Component Optimization
+A centralized caching system has been implemented to improve performance:
 
-Components are optimized for performance through:
-- Memoization of component rendering
-- Efficient data fetching with caching
-- Proper handling of Nostr relay connections
-- Shared data structures to prevent redundant code
+- `CacheService`: Singleton service for managing different types of caches:
+  - Profile cache: Stores user profile data
+  - Graph cache: Stores processed graph data
+  - Image cache: Stores preloaded images
 
-### Component Relationships
+## Import Examples
 
-- **SocialGraph** fetches live Nostr data to build a visual network of community connections
-- **MadeiraFeed** utilizes the social graph's connection data to display content from both core NPUBs and their connections
-- Both components use caching to reduce load on Nostr relays while maintaining fresh data
+```tsx
+// Import from the graph directory
+import { SocialGraph, GraphRenderer } from '@/components/community/graph';
 
-## Data Flow
+// Import from the community directory
+import { 
+  SocialGraphVisualization, 
+  CommunityFeed, 
+  MadeiraFeed, 
+  NostrProfileImage 
+} from '@/components/community';
+```
 
-1. The Nostr context establishes connections to relays
-2. Feed components request data through the Nostr context
-3. Profile data is cached to minimize redundant requests
-4. The reconnection system ensures reliable data fetching
-5. The social graph maps relationships between community members
-6. Feed components can use these relationships to enrich their content
+## Component Usage
 
-## Special Features
+### SocialGraph
 
-- **Image-focused**: The MadeiraFeed specifically targets posts with images to create a visually rich experience
-- **Hashtag filtering**: Posts are filtered to focus on Madeira-related content
-- **Interactive graph**: The SocialGraph visualizes connections between community members
-- **Live updates**: All feeds support real-time updates through Nostr subscriptions
+```tsx
+<SocialGraph
+  npubs={CORE_NPUBS}
+  maxConnections={15}
+  showSecondDegree={false}
+  continuousLoading={true}
+  height={600}
+  width="100%"
+/>
+```
 
-## Future Improvements
+### CommunityFeed
 
-- Further optimize the MultiUserNostrFeed to reduce render cycles
-- Implement virtualization for large feeds
-- Add more interactive features to the social graph visualization
-- Improve mutual connection detection in the social graph
-- Add better error recovery for network issues 
+```tsx
+<CommunityFeed 
+  npubs={CORE_NPUBS} 
+  limit={10} 
+  hashtags={['bitcoin', 'madeira']}
+/>
+```
+
+## Performance Considerations
+
+- The `SocialGraph` component now uses a failsafe mechanism to ensure it always renders, even with connection issues
+- Graph loading is optimized with timeouts and error handling
+- Image loading is done incrementally and cached
+- The cache system prevents unnecessary network requests and calculations 

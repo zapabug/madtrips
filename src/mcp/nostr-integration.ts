@@ -1,0 +1,1 @@
+/home/lfg/Git/madtrips/mcp/nostr-integration.ts
