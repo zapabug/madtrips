@@ -80,6 +80,17 @@ const NostrContext = createContext<NostrContextType>(defaultContextValue);
 // Custom hook for using the Nostr context
 export const useNostr = () => useContext(NostrContext);
 
+// Add this before the NostrProvider component
+// This Map is used to prevent excessive error logging for the same relay+error combination
+const errorLogThrottles = new Map<string, number>();
+
+// This adds the lastLogTime property to NDKRelay for type safety
+declare module '@nostr-dev-kit/ndk' {
+  interface NDKRelay {
+    lastLogTime?: number;
+  }
+}
+
 /**
  * NostrProvider component
  */
@@ -116,13 +127,22 @@ export const NostrProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       // Update NDK ready state based on connection status
       setNdkReady(connected > 0);
 
-      // Debug log for relay status, centralize debugging here
-      console.log(`[NostrContext] Relay status: ${connected}/${relays.size} connected`);
+      // Debug log for relay status, only when connection status changes
+      if (relayCount !== connected || relayStatus.total !== relays.size) {
+        console.log(`[NostrContext] Relay status: ${connected}/${relays.size} connected`);
+      }
     };
     
     // Set up event listeners for relay connection events
     ndkInstance.pool.on('relay:connect', (relay: NDKRelay) => {
-      console.log(`[NostrContext] Connected to relay: ${relay.url}`);
+      // Only log once per minute per relay to avoid flooding
+      const now = Date.now();
+      const lastLog = relay.lastLogTime || 0;
+      if (now - lastLog > 60000) {
+        console.log(`[NostrContext] Connected to relay: ${relay.url}`);
+        // @ts-ignore - Add timestamp to the relay object
+        relay.lastLogTime = now;
+      }
       updateStatus();
     });
     
@@ -133,7 +153,16 @@ export const NostrProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     
     // @ts-ignore - NDK types don't include the 'relay:error' event
     ndkInstance.pool.on('relay:error', (relayObj: { url: string }, error: Error) => {
-      console.error(`[NostrContext] Relay error on ${relayObj.url}:`, error);
+      // Throttle error logs
+      const now = Date.now();
+      const errorKey = `${relayObj.url}-${error.message}`;
+      const lastErrorTime = errorLogThrottles.get(errorKey) || 0;
+      
+      if (now - lastErrorTime > 120000) { // Only log same error once per 2 minutes
+        console.error(`[NostrContext] Relay error on ${relayObj.url}:`, error.message);
+        errorLogThrottles.set(errorKey, now);
+      }
+      
       updateStatus();
     });
     
@@ -296,31 +325,44 @@ export const NostrProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     initNDK();
   }, [trackRelayStatus]);
   
-  // Login with npub
+  // Login function to login with a provided npub
   const login = async (npub: string): Promise<boolean> => {
-    if (!ndk) return false;
-    
     try {
-      const userObj = ndk.getUser({ npub });
-      setUser(userObj);
-      setIsLoggedIn(true);
-      localStorage.setItem('nostr-user-npub', npub);
+      if (!ndk) {
+        console.warn('[NostrContext] NDK not ready for login');
+        return false;
+      }
+
+      const { loginWithNostr } = await import('../services/NostrLoginService');
+      const ndkUser = await loginWithNostr(npub);
       
-      // Fetch user profile
-      await getUserProfile(userObj.pubkey);
+      if (!ndkUser) {
+        console.warn('[NostrContext] Failed to login with Nostr');
+        return false;
+      }
+      
+      // Set the user in our context
+      setUser(ndkUser);
+      setIsLoggedIn(true);
+      
+      // Fetch user's profile
+      await refetchUserProfile();
       
       return true;
     } catch (error) {
-      console.error('Login error:', error);
+      console.error('[NostrContext] Error in login:', error);
       return false;
     }
   };
   
-  // Logout
+  // Logout function
   const logout = () => {
+    const { logoutNostrUser } = require('../services/NostrLoginService');
+    logoutNostrUser();
+    
     setUser(null);
+    setUserProfile(null);
     setIsLoggedIn(false);
-    localStorage.removeItem('nostr-user-npub');
   };
   
   // Publish event

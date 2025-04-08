@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useRef, useEffect, useMemo } from 'react';
+import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import Image from 'next/image';
 import { NostrProfileImage } from '../profile/NostrProfileImage';
 import { CORE_NPUBS, POPULAR_HASHTAGS } from '../utils';
@@ -12,6 +12,9 @@ import { MCP_CONFIG } from '../../../../mcp/config';
 const NSFW_KEYWORDS = [
   'nsfw', 'nude', 'explicit', 'porn', 'xxx'
 ];
+
+// Use a static loading message for initial server/client render
+const INITIAL_LOADING_MESSAGE = "Loading community feed...";
 
 interface CommunityFeedProps {
   npub?: string;
@@ -46,29 +49,44 @@ export const CommunityFeed: React.FC<CommunityFeedProps> = ({
 }) => {
   // State for UI
   const [selectedHashtag, setSelectedHashtag] = useState<string | null>(null);
-  const [activeFilters, setActiveFilters] = useState<string[]>([]);
-  const [loadingMessage, setLoadingMessage] = useState(getRandomLoadingMessage());
+  const [loadingMessage, setLoadingMessage] = useState(INITIAL_LOADING_MESSAGE);
   const [errorShown, setErrorShown] = useState(false);
+  const [autoScrollIndex, setAutoScrollIndex] = useState(0);
+  const [isClientSide, setIsClientSide] = useState(false);
   const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   
-  // Determine which npubs to use
+  // Properly memoize arrays to prevent unnecessary rerenders
+  const hashtagsArray = useMemo(() => [...hashtags], [hashtags.join(',')]);
+  const npubsArray = useMemo(() => [...npubs], [npubs.join(',')]);
+  
+  // Determine which npubs to use - with proper memoization
   const effectiveNpubs = useMemo(() => {
     if (npub) return [npub]; // Single npub mode
-    if (useCorePubs) return [...CORE_NPUBS, ...npubs]; // Core npubs + additional npubs
-    return npubs; // Only specified npubs
-  }, [npub, npubs, useCorePubs]);
+    if (useCorePubs) return [...CORE_NPUBS, ...npubsArray]; // Core npubs + additional npubs
+    return npubsArray; // Only specified npubs
+  }, [npub, npubsArray, useCorePubs]);
   
-  // Special handling flag for Free Madeira NPUB
-  const isFreeMadeiraNpub = npub === 'npub1etgqcj9gc6yaxttuwu9eqgs3ynt2dzaudvwnrssrn2zdt2useaasfj8n6e'; // Only real Free Madeira NPUB
+  // Special handling flag for Free Madeira NPUB - moved outside of render
+  const isFreeMadeiraNpub = useMemo(() => 
+    npub === 'npub1etgqcj9gc6yaxttuwu9eqgs3ynt2dzaudvwnrssrn2zdt2useaasfj8n6e',
+  [npub]);
   
-  // Use the Nostr feed hook
-  const { notes: allNotes, loading, error, refresh } = useNostrFeed({
+  // Memoize hook parameters to prevent unnecessary fetches
+  const feedParams = useMemo(() => ({
     npubs: effectiveNpubs,
-    limit: isFreeMadeiraNpub ? 50 : limit, // Get more posts for Free Madeira
-    requiredHashtags: hashtags,
+    limit: isFreeMadeiraNpub ? 50 : limit,
+    requiredHashtags: hashtagsArray,
     nsfwKeywords: NSFW_KEYWORDS,
-    useWebOfTrust: MCP_CONFIG.defaults.useWebOfTrust && !npub // Only use web of trust for multi-user feeds
-  });
+    useWebOfTrust: MCP_CONFIG.defaults.useWebOfTrust && !npub
+  }), [effectiveNpubs, isFreeMadeiraNpub, limit, hashtagsArray, npub]);
+  
+  // Use the Nostr feed hook with memoized parameters
+  const { notes: allNotes, loading, error, refresh } = useNostrFeed(feedParams);
+
+  // Client-side detection effect - runs once after hydration
+  useEffect(() => {
+    setIsClientSide(true);
+  }, []);
   
   // Show error in console but not more than once
   useEffect(() => {
@@ -78,59 +96,68 @@ export const CommunityFeed: React.FC<CommunityFeedProps> = ({
     }
   }, [error, errorShown]);
   
-  // Filter notes by active hashtag if set
-  const filteredNotes = selectedHashtag 
-    ? allNotes.filter(note => 
-        note.hashtags.includes(selectedHashtag.toLowerCase()) || 
-        note.content.toLowerCase().includes(`#${selectedHashtag.toLowerCase()}`))
-    : allNotes;
+  // Filter notes by active hashtag if set - memoize to prevent recalculation
+  const filteredNotes = useMemo(() => {
+    if (!selectedHashtag) return allNotes;
+    
+    return allNotes.filter(note => 
+      note.hashtags.includes(selectedHashtag.toLowerCase()) || 
+      note.content.toLowerCase().includes(`#${selectedHashtag.toLowerCase()}`)
+    );
+  }, [allNotes, selectedHashtag]);
 
-  // Set random loading message
+  // Set random loading message - only after client-side rendering is confirmed
   useEffect(() => {
-    if (loading) {
+    if (!loading || !isClientSide) return;
+    
+    setLoadingMessage(getRandomLoadingMessage('FEED'));
+    const interval = setInterval(() => {
       setLoadingMessage(getRandomLoadingMessage('FEED'));
-      const interval = setInterval(() => {
-        setLoadingMessage(getRandomLoadingMessage('FEED'));
-      }, 3000);
-      return () => clearInterval(interval);
-    }
-  }, [loading]);
+    }, 3000);
+    
+    return () => clearInterval(interval);
+  }, [loading, isClientSide]);
 
-  // Auto-scrolling logic
+  // Fixed auto-scrolling logic with proper state management
   useEffect(() => {
-    if (autoScroll && filteredNotes.length > 0 && !loading) {
-      let currentIndex = 0;
-      
-      const scroll = () => {
-        if (scrollTimeoutRef.current) return;
-        
-        if (scrollTimeoutRef.current) {
-          clearTimeout(scrollTimeoutRef.current);
-        }
-        
-        scrollTimeoutRef.current = setTimeout(() => {
-          if (filteredNotes.length > 0) {
-            currentIndex = (currentIndex + 1) % filteredNotes.length;
-            const noteElement = document.querySelector(`.note-item:nth-child(${currentIndex + 1})`);
-            if (noteElement) {
-              noteElement.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-            }
-          }
-        }, scrollInterval);
-      };
-      
-      scroll();
-      
+    if (!autoScroll || filteredNotes.length === 0 || loading) {
       return () => {
         if (scrollTimeoutRef.current) {
           clearTimeout(scrollTimeoutRef.current);
+          scrollTimeoutRef.current = null;
         }
       };
     }
-  }, [autoScroll, filteredNotes, loading, scrollInterval]);
+    
+    // Clear any existing timeout
+    if (scrollTimeoutRef.current) {
+      clearTimeout(scrollTimeoutRef.current);
+      scrollTimeoutRef.current = null;
+    }
+    
+    // Set up the timeout
+    scrollTimeoutRef.current = setTimeout(() => {
+      setAutoScrollIndex(prev => {
+        const nextIndex = (prev + 1) % filteredNotes.length;
+        const noteElement = document.querySelector(`.note-item:nth-child(${nextIndex + 1})`);
+        if (noteElement) {
+          noteElement.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+        return nextIndex;
+      });
+    }, scrollInterval);
+    
+    // Cleanup
+    return () => {
+      if (scrollTimeoutRef.current) {
+        clearTimeout(scrollTimeoutRef.current);
+        scrollTimeoutRef.current = null;
+      }
+    };
+  }, [autoScroll, filteredNotes.length, loading, scrollInterval, autoScrollIndex]);
 
-  // Extract popular hashtags from notes
-  const popularHashtags = React.useMemo(() => {
+  // Extract popular hashtags from notes - memoized to prevent recalculation
+  const popularHashtags = useMemo(() => {
     const tagCounts: Record<string, number> = {};
     
     allNotes.forEach(note => {
@@ -146,12 +173,18 @@ export const CommunityFeed: React.FC<CommunityFeedProps> = ({
       .map(([tag, count]) => ({ tag, count }));
   }, [allNotes]);
 
-  // Open post in njump when clicked
-  const openInNjump = (note: Note) => {
+  // Open post in njump when clicked - memoized callback
+  const openInNjump = useCallback((note: Note) => {
     if (!note || !note.id) return;
     const njumpUrl = `https://njump.me/${note.id}`;
     window.open(njumpUrl, '_blank');
-  };
+  }, []);
+
+  // Memoized handler for refreshing feed
+  const handleRefresh = useCallback(() => {
+    setSelectedHashtag(null);
+    refresh();
+  }, [refresh]);
 
   return (
     <div className={`w-full ${className}`} style={maxHeight ? { maxHeight: `${maxHeight}px`, overflowY: 'auto' } : {}}>
@@ -161,7 +194,7 @@ export const CommunityFeed: React.FC<CommunityFeedProps> = ({
           <h2 className="text-lg font-semibold dark:text-white">Community</h2>
           <div className="flex space-x-2">
             <button 
-              onClick={() => refresh()}
+              onClick={handleRefresh}
               className="p-2 bg-orange-500 text-white rounded-full hover:bg-orange-600"
               aria-label="Refresh"
             >
@@ -174,7 +207,7 @@ export const CommunityFeed: React.FC<CommunityFeedProps> = ({
       )}
       
       {/* Hashtag filter */}
-      {showHashtagFilter && (
+      {showHashtagFilter && popularHashtags.length > 0 && (
         <div className="flex flex-wrap gap-2">
           {popularHashtags.map(({ tag, count }) => (
             <button
@@ -223,10 +256,7 @@ export const CommunityFeed: React.FC<CommunityFeedProps> = ({
               <div className="flex flex-col items-center justify-center h-40 rounded-lg bg-gray-50 dark:bg-gray-800">
                 <p className="text-gray-500 dark:text-gray-400 mb-2">No posts to display</p>
                 <button 
-                  onClick={() => {
-                    refresh();
-                    setSelectedHashtag(null);
-                  }}
+                  onClick={handleRefresh}
                   className="px-4 py-2 bg-orange-500 text-white rounded-lg hover:bg-orange-600"
                 >
                   Refresh
@@ -306,7 +336,7 @@ export const CommunityFeed: React.FC<CommunityFeedProps> = ({
           {error && !loading && (
             <div className="flex items-center justify-center mt-4">
               <button 
-                onClick={() => refresh()}
+                onClick={handleRefresh}
                 className="p-2 bg-orange-500 text-white rounded-full hover:bg-orange-600"
               >
                 Refresh

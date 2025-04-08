@@ -54,20 +54,25 @@ export default function MadeiraFeed({
   initialCount = 30,
   maxCached = 150
 }: MadeiraFeedProps) {
-  // Convert profilesMap to Map if it's a Record
-  const profilesAsMap = profilesMap instanceof Map 
-    ? profilesMap 
-    : new Map(Object.entries(profilesMap));
+  // Convert profilesMap to Map if it's a Record - use memoization to prevent unnecessary conversions
+  const profilesAsMap = useMemo(() => {
+    return profilesMap instanceof Map 
+      ? profilesMap 
+      : new Map(Object.entries(profilesMap));
+  }, [profilesMap]);
+
+  // Memoize MADEIRA_HASHTAGS to ensure stable reference
+  const hashtags = useMemo(() => MADEIRA_HASHTAGS, []);
 
   // Memoize hook parameters to prevent unnecessary refetches
   const hookParams = useMemo(() => ({
-    hashtags: MADEIRA_HASHTAGS,
+    hashtags,
     onlyWithImages: true,
     profilesMap: profilesAsMap,
     limit: initialCount,
     initialFetchCount: initialCount,
     maxCacheSize: maxCached
-  }), [profilesAsMap, initialCount, maxCached]);
+  }), [profilesAsMap, initialCount, maxCached, hashtags]);
 
   const { notes, loading, refresh, hasMore } = useImageFeed(hookParams);
   
@@ -93,6 +98,13 @@ export default function MadeiraFeed({
     return notes.slice(0, 8);
   }, [notes]);
   
+  // Reset current index when notes change to avoid out-of-bounds errors
+  useEffect(() => {
+    if (carouselNotes.length > 0 && currentIndex >= carouselNotes.length) {
+      setCurrentIndex(0);
+    }
+  }, [carouselNotes, currentIndex]);
+  
   // Start auto-scroll when component mounts and stops loading
   useEffect(() => {
     // Only set up auto-scroll if we have notes and we're not loading
@@ -110,14 +122,7 @@ export default function MadeiraFeed({
     return clearAutoScroll;
   }, [loading, carouselNotes, clearAutoScroll]);
   
-  // Reset current index when notes change to avoid out-of-bounds errors
-  useEffect(() => {
-    if (carouselNotes.length > 0 && currentIndex >= carouselNotes.length) {
-      setCurrentIndex(0);
-    }
-  }, [carouselNotes, currentIndex]);
-  
-  // Handle manual navigation
+  // Handle manual navigation - memoized callbacks
   const handlePrev = useCallback(() => {
     // Reset auto-scroll timer
     clearAutoScroll();
@@ -143,6 +148,20 @@ export default function MadeiraFeed({
     // Go to next image
     setCurrentIndex(prev => (prev + 1) % carouselNotes.length);
   }, [carouselNotes, clearAutoScroll]);
+
+  // Memoized handler for clicking individual indicators
+  const handleIndicatorClick = useCallback((index: number) => {
+    // Reset auto-scroll timer
+    clearAutoScroll();
+    
+    // Start new interval
+    autoScrollRef.current = setInterval(() => {
+      setCurrentIndex(prev => (prev + 1) % carouselNotes.length);
+    }, 5000);
+    
+    // Go to selected index
+    setCurrentIndex(index);
+  }, [carouselNotes.length, clearAutoScroll]);
   
   return (
     <div 
@@ -174,6 +193,7 @@ export default function MadeiraFeed({
                   index === currentIndex ? 'opacity-100 z-10' : 'opacity-0 z-0'
                 }`}
               >
+                {/* Use next/image properly with width and height */}
                 <img 
                   src={note.images[0]} 
                   alt={`Madeira image ${index + 1}`}
@@ -210,7 +230,7 @@ export default function MadeiraFeed({
                 className={`w-2 h-2 rounded-full ${
                   index === currentIndex ? 'bg-white' : 'bg-white/50'
                 }`}
-                onClick={() => setCurrentIndex(index)}
+                onClick={() => handleIndicatorClick(index)}
                 aria-label={`Go to slide ${index + 1}`}
               />
             ))}

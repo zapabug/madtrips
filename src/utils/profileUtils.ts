@@ -3,8 +3,10 @@ import { NostrProfile } from '../types/nostr';
 
 // Known profile pictures for specific npubs
 export const KNOWN_PROFILES: Record<string, string> = {
-  'npub1freemadeir39t3zlklv2yq2espvmhqnntwlvf34jp9xy2k79gqmqrg9g7w': 'https://freemadeira.com/wp-content/uploads/2023/03/freemadeira-logo-01.png',
-  'npub1etgqcj9gc6yaxttuwu9eqgs3ynt2dzaudvwnrssrn2zdt2useaasfj8n6e': 'https://m.primal.net/LveZ.png', // FREE Madeira
+  'npub1dxd02kcjhgpkyrx60qnkd6j42kmc72u5lum0rp2ud8x5zfhnk4zscjj6hh': '', // MADTRIPS
+  'npub1funchalx8v747rsee6ahsuyrcd2s3rnxlyrtumfex9lecpmgwars6hq8kc': '', // FUNCHAL  
+  'npub1etgqcj9gc6yaxttuwu9eqgs3ynt2dzaudvwnrssrn2zdt2useaasfj8n6e': '', // COMMUNITY
+  'npub1s0veng2gvfwr62acrxhnqexq76sj6ldg3a5t935jy8e6w3shr5vsnwrmq5': '',  // SEC
 };
 
 // Default profile image to use when none available

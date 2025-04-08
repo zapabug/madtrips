@@ -1,7 +1,6 @@
 'use client';
 
 import { Navigation } from "../components/layout/Navigation";
-import { NostrLoginButton } from "../components/NostrLoginButton";
 import { Providers } from "./providers";
 import { NostrLink } from "../components/NostrLink";
 import Link from "next/link";
@@ -151,7 +150,6 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
         {children}
       </main>
       <Footer />
-      <NostrLoginButton />
     </Providers>
   );
 } 

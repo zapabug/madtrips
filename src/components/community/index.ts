@@ -4,15 +4,22 @@ export * from './feed';
 // Export profile components
 export * from './profile';
 
-// Export graph components
-export * from './graph';
-
 // Export utility functions
 export * from './utils';
 
-// Re-export components from the community directory
-export { default as SocialGraphVisualization } from './graph/SocialGraphVisualization';
-export { default as SocialGraph } from './graph/SocialGraph';
-export { default as CommunityFeed } from './feed/CommunityFeed';
+// Re-export components from feed directory
+export { CommunityFeed } from './feed/CommunityFeed';
 export { default as MadeiraFeed } from './feed/MadeiraFeed';
-export { NostrProfileImage } from './profile/NostrProfileImage'; 
+
+// Re-export components from profile directory 
+export { NostrProfileImage } from './profile/NostrProfileImage';
+export { NostrProfileHeader } from './profile/NostrProfileHeader';
+
+// Import and re-export specific components from graph directory
+import SocialGraph from './graph/SocialGraph';
+import GraphControls from './graph/GraphControls';
+import GraphRenderer from './graph/GraphRenderer';
+import NodeTooltip from './graph/NodeTooltip';
+
+// Re-export the imported components
+export { SocialGraph, GraphControls, GraphRenderer, NodeTooltip };

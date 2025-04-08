@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useNostr } from '../lib/contexts/NostrContext';
 import useCache from './useCache';
 import { NDKEvent, NDKFilter, NDKSubscription } from '@nostr-dev-kit/ndk';
@@ -10,51 +10,96 @@ import RelayService from '../lib/services/RelayService';
 
 export interface Note {
   id: string;
-  created_at: number;
   content: string;
+  created_at: number;
   pubkey: string;
   npub: string;
+  sig: string;
+  kind: number;
+  tags: string[][];
+  hashtags: string[];
+  images: string[];
   author: {
     name?: string;
     displayName?: string;
     picture?: string;
     nip05?: string;
   };
-  images: string[];
-  hashtags: string[];
 }
 
-interface UseNostrFeedOptions {
+export interface UseNostrFeedOptions {
   npubs?: string[];
+  kinds?: number[];
   limit?: number;
-  filterKeywords?: string[];
+  since?: number;
+  until?: number;
   requiredHashtags?: string[];
-  useWebOfTrust?: boolean;
   nsfwKeywords?: string[];
+  useWebOfTrust?: boolean;
   onlyWithImages?: boolean;
 }
 
 export function useNostrFeed({
   npubs = [],
-  limit = 25,
-  filterKeywords = [],
+  kinds = [1], // Default to text notes
+  limit = 20,
+  since,
+  until,
   requiredHashtags = [],
-  useWebOfTrust = true,
-  nsfwKeywords = ['nsfw', 'xxx', 'porn', 'adult', 'sex', 'nude', 'naked', '18+', 'explicit'],
-  onlyWithImages = false,
+  nsfwKeywords = [],
+  useWebOfTrust = false,
+  onlyWithImages = false
 }: UseNostrFeedOptions) {
-  const { ndk, ndkReady, getUserProfile } = useNostr();
+  const { ndk, getEvents, getUserProfile, ndkReady } = useNostr();
   const cache = useCache();
   const [notes, setNotes] = useState<Note[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<Error | null>(null);
   const [socialGraphNpubs, setSocialGraphNpubs] = useState<string[]>([]);
   const [relayCount, setRelayCount] = useState(0);
 
   const fetchInProgress = useRef<boolean>(false);
   const subscriptionRef = useRef<NDKSubscription | null>(null);
   const isMounted = useRef<boolean>(true);
-
+  
+  // Cache for already processed events to avoid duplication
+  const processedEventsRef = useRef<Set<string>>(new Set());
+  
+  // Memoize the filter to prevent unnecessary rerenders
+  const filter = useMemo(() => {
+    const baseFilter: NDKFilter = {
+      kinds,
+      limit
+    };
+    
+    if (npubs && npubs.length > 0) {
+      baseFilter.authors = npubs;
+    }
+    
+    if (since) {
+      baseFilter.since = since;
+    }
+    
+    if (until) {
+      baseFilter.until = until;
+    }
+    
+    // Add hashtag filtering if required
+    if (requiredHashtags && requiredHashtags.length > 0) {
+      baseFilter['#t'] = requiredHashtags;
+    }
+    
+    return baseFilter;
+  }, [
+    // Properly list all dependencies to ensure filter is only recreated when needed
+    JSON.stringify(kinds),
+    limit,
+    JSON.stringify(npubs),
+    since,
+    until,
+    JSON.stringify(requiredHashtags)
+  ]);
+  
   useEffect(() => {
     isMounted.current = true;
     const updateRelayCount = () => setRelayCount(RelayService.getConnectedRelays().length);
@@ -108,114 +153,126 @@ export function useNostrFeed({
           return false;
         if (requiredHashtags.length && !requiredHashtags.some((tag) => note.hashtags.includes(tag.toLowerCase()) || content.includes(`#${tag.toLowerCase()}`)))
           return false;
-        if (filterKeywords.length && !filterKeywords.some((kw) => content.includes(kw.toLowerCase())))
-          return false;
         if (onlyWithImages && (!note.images || !note.images.length)) return false;
         return true;
       }),
-    [requiredHashtags, filterKeywords, nsfwKeywords, onlyWithImages],
+    [requiredHashtags, nsfwKeywords, onlyWithImages],
   );
 
-  const processEvent = useCallback(
-    async (event: NDKEvent): Promise<Note | null> => {
-      if (!isMounted.current) return null;
-      try {
-        const id = event.id;
-        const content = typeof event.content === 'string' ? event.content : '';
-        if (!content) return null;
-        const pubkey = event.pubkey;
-        const npub = nip19.npubEncode(pubkey);
-        const created_at = event.created_at || 0;
-        const images = extractImageUrls(content);
-        const hashtags = extractHashtags(content);
-
-        const note: Note = { id, created_at, content, pubkey, npub, author: {}, images, hashtags };
-        try {
-          const profile = await getUserProfile(npub);
-          if (profile && isMounted.current) {
-            note.author = {
-              name: profile.name || '',
-              displayName: profile.displayName || profile.name || '',
-              picture: profile.picture || '',
-              nip05: profile.nip05,
-            };
-          }
-        } catch (e) {
-          console.warn(`Error fetching profile for ${npub}:`, e);
-        }
-        return note;
-      } catch (e) {
-        console.warn('Error processing event:', e);
+  const processEvent = useCallback(async (event: NDKEvent): Promise<Note | null> => {
+    try {
+      // Skip if event has already been processed
+      if (processedEventsRef.current.has(event.id)) {
         return null;
       }
-    },
-    [getUserProfile],
-  );
-
-  const fetchNotes = useCallback(
-    async () => {
-      if (fetchInProgress.current || !ndkReady || !ndk) return;
-      fetchInProgress.current = true;
-      setLoading(true);
-      setError(null);
-
-      try {
-        const effectiveNpubs = useWebOfTrust && socialGraphNpubs.length ? [...new Set([...npubs, ...socialGraphNpubs.slice(0, 50)])] : npubs;
-        const key = getCacheKey();
-        const cachedEvents = cache.getCachedEvents(key) as NDKEvent[] | null;
-
-        let processedNotes: Note[] = [];
-        if (cachedEvents?.length) {
-          processedNotes = (await Promise.all(cachedEvents.map(processEvent))).filter((n): n is Note => n !== null);
-          const filteredNotes = filterNotes(processedNotes).slice(0, limit);
-          if (filteredNotes.length >= limit) {
-            setNotes(filteredNotes);
-            setLoading(false);
-            fetchInProgress.current = false;
-            return;
-          }
-        }
-
-        const pubkeys = effectiveNpubs.length
-          ? effectiveNpubs.map((n) => (n.startsWith('npub') ? nip19.decode(n).data : n) as string).filter(Boolean)
-          : undefined;
-        const filter: NDKFilter = { kinds: [1], authors: pubkeys, limit: Math.min(limit * 2, 100) };
-        if (requiredHashtags.length) filter['#t'] = requiredHashtags;
-
-        if (subscriptionRef.current) subscriptionRef.current.stop();
-        const subscription = ndk.subscribe(filter, { closeOnEose: false });
-        subscriptionRef.current = subscription;
-
-        subscription.on('event', async (event: NDKEvent) => {
-          if (!isMounted.current) return;
-          const note = await processEvent(event);
-          if (!note) return;
-          setNotes((prev) => {
-            if (prev.some((n) => n.id === note.id)) return prev;
-            const newNotes = [...prev, note].sort((a, b) => b.created_at - a.created_at);
-            return filterNotes(newNotes).slice(0, limit);
-          });
-        });
-
-        const events = await ndk.fetchEvents(filter, { closeOnEose: true });
-        const newEvents = Array.from(events);
-        cache.setCachedEvents(key, newEvents);
-
-        processedNotes = (await Promise.all(newEvents.map(processEvent))).filter((n): n is Note => n !== null);
-        const filteredNotes = filterNotes(processedNotes).slice(0, limit);
-        setNotes(filteredNotes);
-      } catch (e) {
-        handleNostrError(e, 'useNostrFeed.fetchNotes');
-        setError('Failed to fetch notes.');
-      } finally {
-        if (isMounted.current) {
-          setLoading(false);
-          fetchInProgress.current = false;
+      
+      // Mark as processed
+      processedEventsRef.current.add(event.id);
+      
+      // Basic properties
+      const content = event.content || '';
+      
+      // Filter out NSFW content if keywords are provided
+      if (nsfwKeywords && nsfwKeywords.length > 0) {
+        const lowerContent = content.toLowerCase();
+        if (nsfwKeywords.some(word => lowerContent.includes(word.toLowerCase()))) {
+          return null;
         }
       }
-    },
-    [ndk, ndkReady, npubs, limit, requiredHashtags, useWebOfTrust, socialGraphNpubs, cache, processEvent, filterNotes, getCacheKey],
-  );
+      
+      // Extract images and hashtags
+      const images = extractImageUrls(content);
+      const hashtags = extractHashtags(content);
+      
+      // If required hashtags are specified and none are found, skip this event
+      if (requiredHashtags && requiredHashtags.length > 0) {
+        const hasRequiredTag = requiredHashtags.some(tag => 
+          hashtags.includes(tag.toLowerCase()) || 
+          content.toLowerCase().includes(`#${tag.toLowerCase()}`)
+        );
+        
+        if (!hasRequiredTag) {
+          return null;
+        }
+      }
+      
+      // Get author profile
+      let authorProfile;
+      try {
+        authorProfile = await getUserProfile(event.pubkey);
+      } catch (err) {
+        // If profile fetch fails, continue with what we have
+        console.error('Error fetching profile:', err);
+        authorProfile = {};
+      }
+      
+      // Convert to Note format
+      return {
+        id: event.id,
+        content: content, // Use content as-is, no parser needed
+        created_at: event.created_at || Math.floor(Date.now() / 1000),
+        pubkey: event.pubkey,
+        npub: event.author?.npub || '',
+        sig: event.sig || '',
+        kind: event.kind || 1,
+        tags: event.tags || [],
+        hashtags,
+        images,
+        author: {
+          name: authorProfile?.name || '',
+          displayName: authorProfile?.displayName || authorProfile?.name || '',
+          picture: authorProfile?.picture || '',
+          nip05: authorProfile?.nip05 || ''
+        }
+      };
+    } catch (error) {
+      console.error('Error processing event:', error);
+      return null;
+    }
+  }, [getUserProfile, nsfwKeywords, requiredHashtags]);
+
+  const fetchNotes = useCallback(async () => {
+    if (!ndk || !ndkReady || fetchInProgress.current) return;
+    
+    fetchInProgress.current = true;
+    setLoading(true);
+    setError(null);
+    
+    try {
+      // Create a stable filter reference
+      const currentFilter = { ...filter };
+      
+      const events = await getEvents(currentFilter, { 
+        closeOnEose: true,
+        forceFresh: false // Use cache if available for better performance
+      });
+      
+      // Process events in parallel for better performance
+      const processPromises = events.map(event => processEvent(event));
+      const processed = await Promise.all(processPromises);
+      
+      // Filter out null values and sort by created_at (newest first)
+      const validNotes = processed
+        .filter((note): note is Note => note !== null)
+        .sort((a, b) => b.created_at - a.created_at);
+      
+      // Apply additional filtering
+      const filteredNotes = filterNotes(validNotes);
+      
+      if (isMounted.current) {
+        setNotes(filteredNotes);
+        setLoading(false);
+      }
+    } catch (err) {
+      console.error('Error fetching notes:', err);
+      if (isMounted.current) {
+        setError(err instanceof Error ? err : new Error(String(err)));
+        setLoading(false);
+      }
+    } finally {
+      fetchInProgress.current = false;
+    }
+  }, [ndk, ndkReady, filter, getEvents, processEvent, filterNotes]);
 
   useEffect(() => {
     if (ndkReady) fetchNotes();
