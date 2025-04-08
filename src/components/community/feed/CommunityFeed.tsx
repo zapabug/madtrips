@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { useRef, useEffect } from 'react';
 import Image from 'next/image';
 import { NostrProfileImage } from '../profile/NostrProfileImage';
 import { useImageFeed } from '../../../hooks/useImageFeed';
@@ -21,12 +21,20 @@ interface CommunityFeedProps {
   maxHeight?: number;
   profilesMap?: Map<string, ProfileData> | Record<string, ProfileData>;
   filterLinks?: boolean;
+  maxCacheSize?: number;
 }
 
+/**
+ * CommunityFeed Component
+ * 
+ * Displays a grid of image notes from Nostr, filtered by authors (npubs)
+ * and hashtags. Leverages the centralized cache system to efficiently
+ * display content from multiple users, optimized for Web of Trust networks.
+ */
 export const CommunityFeed: React.FC<CommunityFeedProps> = ({
   npub,
   npubs = [],
-  limit = 25,
+  limit = 30,
   hashtags = [],
   useCorePubs = true,
   className = '',
@@ -35,7 +43,8 @@ export const CommunityFeed: React.FC<CommunityFeedProps> = ({
   hideEmpty = false,
   maxHeight,
   profilesMap = new Map(),
-  filterLinks = true
+  filterLinks = true,
+  maxCacheSize = 1000 // Higher default for WoT networks
 }) => {
   // Determine effective npubs
   const effectiveNpubs = npub ? [npub] : npubs;
@@ -45,16 +54,46 @@ export const CommunityFeed: React.FC<CommunityFeedProps> = ({
     ? profilesMap 
     : new Map(Object.entries(profilesMap));
   
-  // Use the shared image feed hook
-  const { notes, loading, error, refresh } = useImageFeed({
+  // Use the shared image feed hook with centralized caching
+  const { notes, loading, error, refresh, loadMore, hasMore } = useImageFeed({
     npubs: effectiveNpubs,
     hashtags,
     useCorePubs,
     limit,
     onlyWithImages: true,
     profilesMap: profilesAsMap,
-    filterLinks
+    filterLinks,
+    initialFetchCount: limit,
+    maxCacheSize // Use the specified cache size for WoT networks
   });
+
+  // Load more when scrolling near the bottom
+  const observerTarget = useRef(null);
+  
+  useEffect(() => {
+    // Only set up intersection observer if we have more to load
+    if (!hasMore) return;
+    
+    const observer = new IntersectionObserver(
+      entries => {
+        if (entries[0].isIntersecting && !loading && hasMore) {
+          loadMore();
+        }
+      },
+      { threshold: 0.5 }
+    );
+    
+    const currentTarget = observerTarget.current;
+    if (currentTarget) {
+      observer.observe(currentTarget);
+    }
+    
+    return () => {
+      if (currentTarget) {
+        observer.unobserve(currentTarget);
+      }
+    };
+  }, [hasMore, loading, loadMore]);
 
   // Format date for display
   const formatDate = (timestamp: number) => {
@@ -93,53 +132,67 @@ export const CommunityFeed: React.FC<CommunityFeedProps> = ({
       )}
       
       {/* Notes Grid */}
-      {loading && showLoadingAnimation ? (
+      {loading && notes.length === 0 && showLoadingAnimation ? (
         <div className="flex justify-center items-center py-10">
           <LoadingAnimation category="FEED" size="large" showText={true} />
         </div>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-          {notes.map(note => (
-            <div key={note.id} className="bg-white dark:bg-gray-700 rounded-lg overflow-hidden shadow-md hover:shadow-lg transition-shadow">
-              {/* Image */}
-              <div className="relative h-48 w-full">
-                <Image
-                  src={note.images[0]}
-                  alt="Note image"
-                  fill
-                  className="object-cover"
-                  unoptimized
-                />
-              </div>
-              
-              {/* Note content */}
-              <div className="p-4">
-                {/* Note text */}
-                <p className="text-gray-700 dark:text-gray-200 mb-3">
-                  {formatContent(note.content)}
-                </p>
-                
-                {/* Author info */}
-                <div className="flex items-center mt-3 pt-3 border-t border-gray-200 dark:border-gray-600">
-                  <NostrProfileImage
-                    npub={note.npub}
-                    width={36}
-                    height={36}
-                    className="rounded-full"
+        <>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+            {notes.map(note => (
+              <div key={note.id} className="bg-white dark:bg-gray-700 rounded-lg overflow-hidden shadow-md hover:shadow-lg transition-shadow">
+                {/* Image */}
+                <div className="relative aspect-video w-full">
+                  <Image
+                    src={note.images[0]}
+                    alt="Note image"
+                    fill
+                    className="object-cover"
+                    unoptimized
                   />
-                  <div className="ml-2">
-                    <div className="font-medium text-sm dark:text-white">
-                      {note.author.displayName || note.author.name || 'Unknown'}
-                    </div>
-                    <div className="text-xs text-gray-500 dark:text-gray-400">
-                      {formatDate(note.created_at)}
+                </div>
+                
+                {/* Note content */}
+                <div className="p-4">
+                  {/* Note text */}
+                  <p className="text-gray-700 dark:text-gray-200 mb-3 line-clamp-3">
+                    {note.content}
+                  </p>
+                  
+                  {/* Author info */}
+                  <div className="flex items-center mt-3 pt-3 border-t border-gray-200 dark:border-gray-600">
+                    <NostrProfileImage
+                      npub={note.npub}
+                      width={36}
+                      height={36}
+                      className="rounded-full"
+                    />
+                    <div className="ml-2">
+                      <div className="font-medium text-sm dark:text-white">
+                        {note.author.displayName || note.author.name || 'Unknown'}
+                      </div>
+                      <div className="text-xs text-gray-500 dark:text-gray-400">
+                        {formatDate(note.created_at)}
+                      </div>
                     </div>
                   </div>
                 </div>
               </div>
+            ))}
+          </div>
+          
+          {/* Load more indicator */}
+          {hasMore && (
+            <div 
+              ref={observerTarget}
+              className="flex justify-center items-center py-8"
+            >
+              {loading && (
+                <LoadingAnimation category="FEED" size="small" showText={false} />
+              )}
             </div>
-          ))}
-        </div>
+          )}
+        </>
       )}
       
       {/* Empty state */}
@@ -158,11 +211,12 @@ export const CommunityFeed: React.FC<CommunityFeedProps> = ({
       {/* Error state */}
       {error && notes.length === 0 && !loading && (
         <div className="flex items-center justify-center h-40 bg-gray-100 dark:bg-gray-800 rounded-lg">
+          <p className="text-red-500 dark:text-red-400 mb-2">{error}</p>
           <button 
             onClick={() => refresh()}
-            className="p-2 bg-orange-500 text-white rounded-full hover:bg-orange-600"
+            className="ml-2 p-2 bg-orange-500 text-white rounded-full hover:bg-orange-600"
           >
-            Refresh
+            Retry
           </button>
         </div>
       )}

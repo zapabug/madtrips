@@ -48,6 +48,7 @@ export interface NostrContextType {
   subscribeToEvents: (filter: NDKFilter, onEvent: (event: NDKEvent) => void) => Promise<NDKSubscription | null>;
   relayCount: number;
   relayStatus: { connected: number; total: number };
+  getEvents: (filter: NDKFilter, options?: { closeOnEose?: boolean, forceFresh?: boolean }) => Promise<NDKEvent[]>;
 }
 
 // Default context value
@@ -69,7 +70,8 @@ const defaultContextValue: NostrContextType = {
   publishEvent: async () => null,
   subscribeToEvents: async () => null,
   relayCount: 0,
-  relayStatus: { connected: 0, total: 0 }
+  relayStatus: { connected: 0, total: 0 },
+  getEvents: async () => []
 };
 
 // Create the context
@@ -113,15 +115,25 @@ export const NostrProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       
       // Update NDK ready state based on connection status
       setNdkReady(connected > 0);
+
+      // Debug log for relay status, centralize debugging here
+      console.log(`[NostrContext] Relay status: ${connected}/${relays.size} connected`);
     };
     
     // Set up event listeners for relay connection events
-    ndkInstance.pool.on('relay:connect', updateStatus);
-    ndkInstance.pool.on('relay:disconnect', updateStatus);
+    ndkInstance.pool.on('relay:connect', (relay: NDKRelay) => {
+      console.log(`[NostrContext] Connected to relay: ${relay.url}`);
+      updateStatus();
+    });
+    
+    ndkInstance.pool.on('relay:disconnect', (relay: NDKRelay) => {
+      console.log(`[NostrContext] Disconnected from relay: ${relay.url}`);
+      updateStatus();
+    });
     
     // @ts-ignore - NDK types don't include the 'relay:error' event
     ndkInstance.pool.on('relay:error', (relayObj: { url: string }, error: Error) => {
-      console.error(`Relay error on ${relayObj.url}:`, error);
+      console.error(`[NostrContext] Relay error on ${relayObj.url}:`, error);
       updateStatus();
     });
     
@@ -134,6 +146,110 @@ export const NostrProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       ndkInstance.pool.removeListener('relay:disconnect', updateStatus);
     };
   }, []);
+
+  // Centralized event debugging
+  const debugEvent = useCallback((event: NDKEvent, source: string) => {
+    console.log(`[NostrContext] Event ${event.id?.slice(0, 8)} (kind ${event.kind}) from ${source}`);
+  }, []);
+
+  // Get events with caching
+  const getEvents = async (filter: NDKFilter, options: { closeOnEose?: boolean, forceFresh?: boolean } = {}): Promise<NDKEvent[]> => {
+    if (!ndk || !ndkReady) {
+      console.warn('[NostrContext] NDK not ready for getEvents');
+      return [];
+    }
+
+    // Generate a cache key based on the filter
+    const cacheKey = cache.createEventCacheKey(
+      filter.kinds as number[] || [],
+      filter.authors || [],
+      filter['#t'] as string[] || []
+    );
+
+    // Check cache first unless forceFresh is explicitly set to true
+    if (!options.forceFresh) {
+      const cachedEvents = cache.getCachedEvents(cacheKey);
+      const cacheAge = cache.getCacheAge(cacheKey);
+      
+      // Use cache if we have events and they're not too old (< 2 minutes by default)
+      // More aggressive for kinds that change less frequently (like profiles)
+      const isProfileQuery = filter.kinds && filter.kinds.includes(0);
+      const maxAge = isProfileQuery ? 5 * 60 * 1000 : 2 * 60 * 1000; // 5 minutes for profiles, 2 minutes for others
+      
+      if (cachedEvents && cachedEvents.length > 0) {
+        console.log(`[NostrContext] Found ${cachedEvents.length} cached events for ${cacheKey}, age: ${cacheAge ? Math.round(cacheAge/1000) : 'unknown'} seconds`);
+        
+        // If cache is fresh enough, return it immediately
+        if (cacheAge && cacheAge < maxAge) {
+          console.log(`[NostrContext] Using fresh cache for ${cacheKey}`);
+          return cachedEvents as NDKEvent[];
+        } else {
+          console.log(`[NostrContext] Cache for ${cacheKey} is stale (${cacheAge ? Math.round(cacheAge/1000) : 'unknown'} seconds old), fetching fresh data`);
+          // Return cached events but continue fetching in the background if older than 30 seconds
+          if (cacheAge && cacheAge < 10 * 60 * 1000) { // Still use cache if less than 10 minutes old
+            // Schedule a background fetch after returning to refresh cache
+            setTimeout(() => {
+              refreshEventsInBackground(filter, cacheKey);
+            }, 500);
+            
+            // Return cached events immediately while fresh events load in background
+            return cachedEvents as NDKEvent[];
+          }
+        }
+      }
+    }
+
+    try {
+      const events: NDKEvent[] = [];
+      console.log(`[NostrContext] Fetching events with filter:`, filter);
+      
+      const eventsIterator = await ndk.fetchEvents([filter], { closeOnEose: options.closeOnEose ?? true });
+      
+      eventsIterator.forEach(event => {
+        events.push(event);
+        debugEvent(event, 'fetch');
+      });
+      
+      if (events.length > 0) {
+        // Cache the events
+        cache.setCachedEvents(cacheKey, events);
+        console.log(`[NostrContext] Cached ${events.length} events for ${cacheKey}`);
+      }
+      
+      return events;
+    } catch (error) {
+      console.error('[NostrContext] Error fetching events:', error);
+      return [];
+    }
+  };
+
+  // Helper to refresh events in background without blocking the UI
+  const refreshEventsInBackground = async (filter: NDKFilter, cacheKey: string) => {
+    try {
+      // Skip if ndk is not available
+      if (!ndk) {
+        console.warn('[NostrContext] NDK not available for background refresh');
+        return;
+      }
+      
+      console.log(`[NostrContext] Background refresh for ${cacheKey}`);
+      const events: NDKEvent[] = [];
+      
+      const eventsIterator = await ndk.fetchEvents([filter], { closeOnEose: true });
+      
+      eventsIterator.forEach(event => {
+        events.push(event);
+      });
+      
+      if (events.length > 0) {
+        // Update the cache with fresh events
+        cache.setCachedEvents(cacheKey, events);
+        console.log(`[NostrContext] Background refresh completed, updated ${events.length} events for ${cacheKey}`);
+      }
+    } catch (error) {
+      console.error('[NostrContext] Error refreshing events in background:', error);
+    }
+  };
   
   // Initialize NDK using RelayService
   useEffect(() => {
@@ -421,9 +537,10 @@ export const NostrProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     getConnectedRelays,
     publishEvent,
     subscribeToEvents,
+    getEvents,
     relayCount,
     relayStatus
-  }), [ndk, user, isLoggedIn, login, logout, getUserProfile, shortenNpub, refetchUserProfile, npub, userName, userProfilePicture, ndkReady, reconnect, getConnectedRelays, publishEvent, subscribeToEvents, relayCount, relayStatus]);
+  }), [ndk, user, isLoggedIn, login, logout, getUserProfile, shortenNpub, refetchUserProfile, npub, userName, userProfilePicture, ndkReady, reconnect, getConnectedRelays, publishEvent, subscribeToEvents, getEvents, relayCount, relayStatus]);
 
   return (
     <NostrContext.Provider value={contextValue}>

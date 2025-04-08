@@ -138,6 +138,14 @@ The application uses a centralized caching system to improve performance and red
 - Implemented subscription health monitoring with automatic reconnection
 - Added additional error handling to prevent subscription crashes
 
+### Caching System Improvements
+- Increased cache pruning interval from 5 to 15 minutes to prevent disruption during active sessions
+- Added cache age checking mechanism to improve cache freshness evaluation 
+- Implemented background refresh for stale data to improve user experience
+- Removed development-only CacheUsageExample component while maintaining documentation
+- Removed redundant ClearGraphCache component that was not aligned with current cache API
+- Optimized cache invalidation logic to prevent unnecessary reloads
+
 ### General Improvements
 - Better handling of connected relays tracking
 - Improved error reporting in the UI

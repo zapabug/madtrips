@@ -18,7 +18,8 @@ export function useCache() {
     profiles: 0,
     posts: 0,
     graph: 0,
-    images: 0
+    images: 0,
+    events: 0
   });
 
   // Update cache stats periodically
@@ -28,7 +29,8 @@ export function useCache() {
         profiles: CacheService.profileCache.size(),
         posts: CacheService.postCache.size(),
         graph: CacheService.graphCache.size(),
-        images: CacheService.imageCache.size()
+        images: CacheService.imageCache.size(),
+        events: CacheService.eventCache.size()
       });
     };
 
@@ -49,7 +51,7 @@ export function useCache() {
     // Set up interval for pruning caches regularly
     const interval = setInterval(() => {
       CacheService.pruneAll();
-    }, 5 * 60 * 1000); // Every 5 minutes
+    }, 15 * 60 * 1000); // Every 15 minutes instead of 5 minutes
     
     return () => clearInterval(interval);
   }, []);
@@ -133,6 +135,41 @@ export function useCache() {
   };
   
   /**
+   * Get cached events from the centralized event cache
+   * @param key Cache key for the events
+   */
+  const getCachedEvents = (key: string): any[] | null => {
+    return CacheService.eventCache.get(key);
+  };
+  
+  /**
+   * Set events in the centralized event cache
+   * @param key Cache key
+   * @param events Events to cache
+   */
+  const setCachedEvents = (key: string, events: any[]): void => {
+    CacheService.eventCache.set(key, events);
+  };
+  
+  /**
+   * Get the age of a cached event in milliseconds
+   * @param key Cache key for the events
+   */
+  const getCacheAge = (key: string): number | null => {
+    return CacheService.getCacheAge(key);
+  };
+  
+  /**
+   * Create a cache key for event data
+   * @param kinds Event kinds to filter
+   * @param npubs NPubs to filter by
+   * @param hashtags Hashtags to filter by
+   */
+  const createEventCacheKey = (kinds: number[], npubs: string[] = [], hashtags: string[] = []): string => {
+    return CacheService.generateEventCacheKey(kinds, npubs, hashtags);
+  };
+  
+  /**
    * Clear all caches
    */
   const clearAllCaches = (): void => {
@@ -141,7 +178,8 @@ export function useCache() {
       profiles: 0,
       posts: 0,
       graph: 0,
-      images: 0
+      images: 0,
+      events: 0
     });
   };
   
@@ -149,7 +187,7 @@ export function useCache() {
    * Clear a specific cache
    * @param cacheName Name of cache to clear
    */
-  const clearCache = (cacheName: 'profiles' | 'posts' | 'graph' | 'images'): void => {
+  const clearCache = (cacheName: 'profiles' | 'posts' | 'graph' | 'images' | 'events'): void => {
     switch (cacheName) {
       case 'profiles':
         CacheService.profileCache.clear();
@@ -162,6 +200,9 @@ export function useCache() {
         break;
       case 'images':
         CacheService.imageCache.clear();
+        break;
+      case 'events':
+        CacheService.eventCache.clear();
         break;
     }
     
@@ -190,6 +231,11 @@ export function useCache() {
     preloadAndCacheImage,
     getCachedImage,
     
+    // Event cache operations
+    getCachedEvents,
+    setCachedEvents,
+    getCacheAge,
+    
     // Cache clearing utilities
     clearAllCaches,
     clearCache,
@@ -197,6 +243,7 @@ export function useCache() {
     // Key generation
     createGraphCacheKey,
     createFeedCacheKey,
+    createEventCacheKey,
     
     // Stats
     cacheStats

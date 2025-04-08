@@ -19,7 +19,6 @@ community/
 ├── SocialGraphVisualization.tsx # Wrapper for SocialGraph
 ├── NostrProfileImage.tsx      # Profile image component
 ├── NostrProfileHeader.tsx     # Profile header component
-├── ClearGraphCache.tsx        # Cache clearing utility
 ├── utils.ts                   # Shared utilities
 └── index.ts                   # Re-exports for easier imports
 ```
@@ -87,3 +86,9 @@ import {
 - Graph loading is optimized with timeouts and error handling
 - Image loading is done incrementally and cached
 - The cache system prevents unnecessary network requests and calculations 
+
+## Recent Changes
+
+### April 2025
+- Removed `CacheUsageExample` component as it was only intended for demonstration and development purposes. The example is still available in documentation form at `public/assets/docs/CacheUsageExample.md` for reference, but is no longer part of the production codebase.
+- Removed `ClearGraphCache` component as it was redundant and not aligned with the current cache API. 

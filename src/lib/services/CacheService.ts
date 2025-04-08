@@ -89,6 +89,14 @@ export class GenericCache<T> {
     }
   }
   
+  getAge(key: string): number | null {
+    const item = this.cache.get(key);
+    if (!item) return null;
+    
+    // Return age in milliseconds
+    return Date.now() - item.timestamp;
+  }
+  
   size(): number {
     return this.cache.size;
   }
@@ -128,12 +136,12 @@ export interface GraphData {
 // Create singleton instances of each cache type with appropriate TTLs
 const PROFILE_CACHE_OPTIONS: CacheOptions = {
   ttl: 15 * 60 * 1000, // 15 minutes
-  maxSize: 100
+  maxSize: 300 // Increased to accommodate larger social graphs
 };
 
 const POST_CACHE_OPTIONS: CacheOptions = {
   ttl: 5 * 60 * 1000, // 5 minutes
-  maxSize: 200
+  maxSize: 2000 // Significantly increased for global event cache
 };
 
 const GRAPH_CACHE_OPTIONS: CacheOptions = {
@@ -146,6 +154,12 @@ const IMAGE_CACHE_OPTIONS: CacheOptions = {
   maxSize: 150
 };
 
+// Add a new global event cache for raw NDK events
+const EVENT_CACHE_OPTIONS: CacheOptions = {
+  ttl: 10 * 60 * 1000, // 10 minutes
+  maxSize: 1500 // Large enough for WoT networks
+};
+
 // Singleton instance pattern
 export class CacheService {
   private static instance: CacheService;
@@ -154,12 +168,14 @@ export class CacheService {
   readonly postCache: GenericCache<NostrPost[]>;
   readonly graphCache: GenericCache<GraphData>;
   readonly imageCache: GenericCache<HTMLImageElement>;
+  readonly eventCache: GenericCache<any[]>; // For raw NDK events
   
   private constructor() {
     this.profileCache = new GenericCache<UserProfile>(PROFILE_CACHE_OPTIONS);
     this.postCache = new GenericCache<NostrPost[]>(POST_CACHE_OPTIONS);
     this.graphCache = new GenericCache<GraphData>(GRAPH_CACHE_OPTIONS);
     this.imageCache = new GenericCache<HTMLImageElement>(IMAGE_CACHE_OPTIONS);
+    this.eventCache = new GenericCache<any[]>(EVENT_CACHE_OPTIONS);
   }
   
   public static getInstance(): CacheService {
@@ -220,6 +236,7 @@ export class CacheService {
     this.postCache.clear();
     this.graphCache.clear();
     this.imageCache.clear();
+    this.eventCache.clear(); // Clear event cache too
     console.log('All caches cleared');
   }
   
@@ -229,6 +246,7 @@ export class CacheService {
     this.postCache.prune();
     this.graphCache.prune();
     this.imageCache.prune();
+    this.eventCache.prune(); // Prune event cache
   }
   
   // Generate a cache key for post queries
@@ -242,6 +260,30 @@ export class CacheService {
   generateGraphCacheKey(npubs: string[], showExtended: boolean): string {
     const npubsKey = npubs.sort().join('-').substring(0, 30);
     return `graph-${npubsKey}-${showExtended ? 'extended' : 'basic'}`;
+  }
+
+  // Add event cache methods
+  getCachedEvents(key: string): any[] | null {
+    return this.eventCache.get(key);
+  }
+
+  setCachedEvents(key: string, events: any[]): void {
+    this.eventCache.set(key, events);
+  }
+
+  // Get the age of a cached events entry in milliseconds
+  getCacheAge(key: string): number | null {
+    return this.eventCache.getAge(key);
+  }
+  
+  /**
+   * Create a cache key for event data
+   * @param kinds Event kinds to filter
+   * @param npubs NPubs to filter by
+   * @param hashtags Hashtags to filter by
+   */
+  generateEventCacheKey(kinds: number[], npubs: string[] = [], hashtags: string[] = []): string {
+    return `events:kinds=${kinds.join(',')}:npubs=${npubs.sort().join(',')}:tags=${hashtags.sort().join(',')}`;
   }
 }
 

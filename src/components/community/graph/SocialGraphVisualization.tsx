@@ -23,14 +23,7 @@ interface SocialGraphVisualizationProps {
   compact?: boolean
 }
 
-/**
- * SocialGraphVisualization Component
- * 
- * A simplified wrapper around the SocialGraph component for displaying
- * the community social graph. This visualization shows connections between
- * Bitcoin Madeira community members using Nostr social data.
- */
-const SocialGraphVisualization: React.FC<SocialGraphVisualizationProps> = ({
+export default function SocialGraphVisualization({
   className = '',
   graphData = null,
   profiles = new Map(),
@@ -38,63 +31,22 @@ const SocialGraphVisualization: React.FC<SocialGraphVisualizationProps> = ({
   error = null,
   onRefresh,
   compact = false
-}) => {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [containerHeight, setContainerHeight] = useState<number | undefined>(undefined);
-
-  // Measure the container height on mount and whenever the component updates
-  useEffect(() => {
-    if (containerRef.current) {
-      setContainerHeight(containerRef.current.clientHeight);
-    }
-    
-    // Set up a resize observer to update the height when the container resizes
-    const resizeObserver = new ResizeObserver((entries) => {
-      for (const entry of entries) {
-        setContainerHeight(entry.contentRect.height);
-      }
-    });
-    
-    if (containerRef.current) {
-      resizeObserver.observe(containerRef.current);
-    }
-    
-    return () => {
-      resizeObserver.disconnect();
-    };
-  }, []);
+}: SocialGraphVisualizationProps) {
+  // Convert profiles map to record for SocialGraph
+  const profilesRecord = Object.fromEntries(profiles || new Map())
 
   return (
-    <div 
-      ref={containerRef}
-      className={`relative h-full ${className}`} 
-      role="figure" 
-      aria-label="Community network graph"
-    >
-      {/* Use the updated SocialGraph component with the shared data */}
-      <SocialGraph 
-        graphData={graphData}
-        profilesMap={profiles instanceof Map ? Object.fromEntries(profiles.entries()) : {}}
-        isLoading={loading}
-        error={error}
-        compact={compact}
-        height={containerHeight}
-      />
-      
-      {/* Refresh button - only show if not in compact mode */}
-      {onRefresh && !compact && (
-        <div className="absolute bottom-2 right-2">
-          <button 
-            onClick={onRefresh}
-            className="text-xs bg-orange-500 text-white px-2 py-1 rounded hover:bg-orange-600 focus:outline-none"
-            aria-label="Refresh graph data"
-          >
-            Refresh
-          </button>
-        </div>
-      )}
+    <div className={`w-full h-full flex items-center justify-center ${className}`}>
+      <div className="w-full h-full">
+        <SocialGraph
+          graphData={graphData}
+          profilesMap={profilesRecord}
+          isLoading={loading}
+          error={error}
+          compact={compact}
+          height={compact ? 400 : undefined}
+        />
+      </div>
     </div>
   )
-}
-
-export default SocialGraphVisualization 
+} 

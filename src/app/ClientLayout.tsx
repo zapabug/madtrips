@@ -129,7 +129,7 @@ const Footer = memo(() => {
         
         {/* Copyright and links */}
         <div className="text-center border-t border-sand/20 pt-4">
-          <p className="text-sm">© {new Date().getFullYear()} MadTrips. All rights reserved.</p>
+          <p className="text-sm">© {2100} MadTrips. Building comunity since 2025.</p>
           <div className="flex justify-center mt-2 space-x-4 text-xs">
             <Link href="/privacy" className="text-sand hover:text-bitcoin transition-colors">Privacy Policy</Link>
             <Link href="/terms" className="text-sand hover:text-bitcoin transition-colors">Terms of Service</Link>

@@ -59,7 +59,11 @@ export default function CommunityPage() {
           <div className="bg-gray-100 dark:bg-gray-800 rounded-lg p-4">
             <div className="h-[400px] flex items-center justify-center">
               <div className="w-full max-w-2xl h-full">
-                <MadeiraFeed profilesMap={profiles} />
+                <MadeiraFeed 
+                  profilesMap={profiles} 
+                  initialCount={30}
+                  maxCached={150}
+                />
               </div>
             </div>
           </div>
@@ -100,32 +104,21 @@ export default function CommunityPage() {
                 {/* Main content */}
                 <div className="flex flex-col space-y-6">
                   {/* Graph visualization - retaining the original component */}
-                  <div className="h-[500px] bg-white dark:bg-gray-700 rounded-lg shadow-sm overflow-hidden">
+                  <div className="h-[600px] bg-white dark:bg-gray-700 rounded-lg shadow-sm overflow-hidden">
                     <div className="px-3 py-2 bg-gray-50 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center">
                       <h3 className="text-sm font-semibold text-gray-600 dark:text-gray-300">Interactive Network</h3>
                       <span className="text-xs text-gray-500">Experimental Feature</span>
                     </div>
-                    <div className="h-full w-full relative">
-                      {/* This empty div is for the graph canvas */}
-                      <div id="graph-container" className="absolute inset-0"></div>
-                      
+                    <div className="h-full w-full relative flex items-center justify-center">
+                      {/* This ensures the graph is properly centered */}
                       <SocialGraphVisualization 
                         graphData={graphData}
                         profiles={profiles}
-                        loading={false} // Already handled by our conditional rendering
+                        loading={false}
                         error={null}
                         onRefresh={refreshGraph}
+                        className="w-full h-full"
                       />
-                      
-                      {/* Debug overlay only shown if the graph visualization fails to render */}
-                      <div className="absolute bottom-2 right-2">
-                        <button 
-                          onClick={refreshGraph}
-                          className="bg-orange-500 text-white px-2 py-1 text-xs rounded hover:bg-orange-600"
-                        >
-                          Refresh Graph
-                        </button>
-                      </div>
                       
                       {/* Message explaining how to use the graph */}
                       <div className="absolute top-2 left-2 bg-black/50 text-white text-xs p-2 rounded max-w-xs">
@@ -197,6 +190,7 @@ export default function CommunityPage() {
             profilesMap={profiles}
             filterLinks={true}
             hashtags={[]}
+            maxCacheSize={1000}
           />
         </Section>
       </div>

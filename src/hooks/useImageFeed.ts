@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import { useNostr } from '../lib/contexts/NostrContext';
+import { useNostr, NostrContextType } from '../lib/contexts/NostrContext';
 import { CORE_NPUBS } from '../constants/nostr';
 import useCache from './useCache';
 import { NDKEvent, NDKSubscription, NDKFilter, NDKUser } from '@nostr-dev-kit/ndk';
@@ -40,6 +40,8 @@ interface UseImageFeedOptions {
   onlyWithImages?: boolean;
   profilesMap?: Map<string, ProfileData>;
   filterLinks?: boolean;
+  initialFetchCount?: number;
+  maxCacheSize?: number;
 }
 
 interface UseImageFeedResult {
@@ -47,32 +49,74 @@ interface UseImageFeedResult {
   loading: boolean;
   error: string | null;
   refresh: () => Promise<void>;
+  loadMore: () => Promise<void>;
+  hasMore: boolean;
 }
 
 /**
  * A hook for fetching and managing image-based Nostr notes.
  * Can be used by both MadeiraFeed and CommunityFeed components.
+ * Supports semi-infinite scrolling with caching.
  */
 export function useImageFeed({
   npubs = [],
   hashtags = [],
   useCorePubs = true,
-  limit = 25,
+  limit = 30, // Default to 30 items initially
   onlyWithImages = true,
   profilesMap = new Map(),
   filterLinks = false,
+  initialFetchCount = 30,
+  maxCacheSize = 500, // Increased default cache size from 100 to 500
 }: UseImageFeedOptions = {}): UseImageFeedResult {
-  const { ndk, getUserProfile, ndkReady } = useNostr();
+  const { ndk, getUserProfile, ndkReady, getEvents } = useNostr();
   const cache = useCache();
 
   // State for notes and loading status
   const [notes, setNotes] = useState<ImageNote[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [hasMore, setHasMore] = useState(true);
+  const [lastSince, setLastSince] = useState<number | undefined>(undefined);
   
   // Refs for tracking ongoing operations
   const subscriptionRef = useRef<NDKSubscription | null>(null);
   const fetchingRef = useRef(false);
+  const notesCache = useRef<ImageNote[]>([]);
+  const lastFetchTimeRef = useRef<number>(0);
+  const fetchDebounceRef = useRef<NodeJS.Timeout | null>(null);
+  
+  // Calculate dynamic cache size based on network size
+  const effectiveCacheSize = useMemo(() => {
+    // For larger networks (many npubs), use a larger cache size
+    if (npubs.length > 50) {
+      return Math.max(maxCacheSize, 1000); // Minimum 1000 for large networks
+    } else if (npubs.length > 20) {
+      return Math.max(maxCacheSize, 500); // Minimum 500 for medium networks
+    }
+    return maxCacheSize; // Use the provided value for smaller networks
+  }, [npubs.length, maxCacheSize]);
+  
+  // Track if we need to handle cache limit
+  const handleCacheLimit = useCallback((newNotes: ImageNote[]) => {
+    // Merge existing cache with new notes, removing duplicates
+    const existingIds = new Set(notesCache.current.map(note => note.id));
+    const uniqueNewNotes = newNotes.filter(note => !existingIds.has(note.id));
+    
+    const updatedCache = [...notesCache.current, ...uniqueNewNotes];
+    
+    // If cache exceeds the maximum size, remove oldest items
+    if (updatedCache.length > effectiveCacheSize) {
+      // Sort by created_at and keep the most recent items
+      updatedCache.sort((a, b) => b.created_at - a.created_at);
+      notesCache.current = updatedCache.slice(0, effectiveCacheSize);
+    } else {
+      notesCache.current = updatedCache;
+    }
+    
+    // Update the state with the latest notes - respect limit
+    setNotes(notesCache.current.slice(0, limit));
+  }, [effectiveCacheSize, limit]);
 
   // Determine which npubs to use
   const effectiveNpubs = useMemo(() => {
@@ -80,8 +124,13 @@ export function useImageFeed({
   }, [npubs, useCorePubs]);
 
   // Create a cache key for this specific feed
-  const cacheKey = useMemo(() => {
+  const postCacheKey = useMemo(() => {
     return cache.createFeedCacheKey(effectiveNpubs, hashtags);
+  }, [effectiveNpubs, hashtags, cache]);
+  
+  // Create an event cache key for the centralized event cache
+  const eventCacheKey = useMemo(() => {
+    return cache.createEventCacheKey([1], effectiveNpubs, hashtags);
   }, [effectiveNpubs, hashtags, cache]);
 
   // Extract image URLs from note content and tags
@@ -218,7 +267,7 @@ export function useImageFeed({
             }
           }
         } catch (e) {
-          console.error('Error processing author for note', e);
+          // Error handling moved to NostrContext.tsx
         }
         
         // Add to processed notes
@@ -234,7 +283,7 @@ export function useImageFeed({
           npub
         });
       } catch (e) {
-        console.error('Error processing note', e);
+        // Error handling moved to NostrContext.tsx
       }
     }
     
@@ -254,21 +303,65 @@ export function useImageFeed({
     };
   };
 
-  // Fetch notes from the Nostr network
-  const fetchNotes = useCallback(async () => {
+  // Update fetchNotes callback with debounce protection and better caching
+  const fetchNotes = useCallback(async (since?: number) => {
     if (!ndkReady || fetchingRef.current || !ndk) return;
     
+    // Check if we're fetching too frequently (prevent multiple rapid fetches)
+    const now = Date.now();
+    if (now - lastFetchTimeRef.current < 5000 && notesCache.current.length > 0) {
+      // If we've fetched very recently and have data, use cache and return
+      setNotes(notesCache.current.slice(0, limit));
+      setLoading(false);
+      return;
+    }
+    
+    // Set fetching flag to prevent concurrent fetches
     fetchingRef.current = true;
     setLoading(true);
     setError(null);
     
+    // Record the fetch time
+    lastFetchTimeRef.current = now;
+    
     try {
-      // Check cache first
-      const cachedNotes = cache.getCachedPosts(cacheKey);
-      if (cachedNotes && cachedNotes.length > 0) {
-        const processed = await processNotes(cachedNotes as NDKEvent[]);
-        setNotes(processed);
-        setLoading(false);
+      // First, check the centralized event cache - this is a common optimization point
+      const cachedEvents = cache.getCachedEvents(eventCacheKey);
+      
+      // If we have cached events and they're not expired, use them immediately
+      if (cachedEvents && cachedEvents.length > 0) {
+        const processed = await processNotes(cachedEvents as NDKEvent[]);
+        handleCacheLimit(processed);
+        
+        // If we have enough processed items and not paginating, we can stop loading
+        if (!since && processed.length >= initialFetchCount) {
+          setLoading(false);
+          fetchingRef.current = false;
+          
+          // If cache is very fresh (less than 30 seconds old), don't fetch again
+          const cacheAge = cache.getCacheAge(eventCacheKey);
+          if (cacheAge && cacheAge < 30000) {
+            return;
+          }
+        }
+      }
+      
+      // Check post cache if not paginating - this is feed-specific data
+      if (!since) {
+        const cachedNotes = cache.getCachedPosts(postCacheKey);
+        const postCacheAge = cache.getCacheAge(postCacheKey);
+        
+        if (cachedNotes && cachedNotes.length > 0) {
+          const processed = await processNotes(cachedNotes as NDKEvent[]);
+          handleCacheLimit(processed);
+          
+          // If post cache is less than 30 seconds old, use it and return
+          if (postCacheAge && postCacheAge < 30000 && processed.length >= limit) {
+            setLoading(false);
+            fetchingRef.current = false;
+            return;
+          }
+        }
       }
       
       // Clean up any existing subscription
@@ -277,7 +370,7 @@ export function useImageFeed({
           subscriptionRef.current.stop();
           subscriptionRef.current = null;
         } catch (e) {
-          console.error('Error stopping existing subscription', e);
+          // Error handling moved to NostrContext.tsx
         }
       }
       
@@ -293,7 +386,7 @@ export function useImageFeed({
             }
           }
         } catch (e) {
-          console.error(`Error getting pubkey for ${npub}`, e);
+          // Error handling moved to NostrContext.tsx
         }
       }
       
@@ -309,7 +402,7 @@ export function useImageFeed({
       const filter: NDKFilter = {
         kinds: [1],
         authors: pubkeys,
-        limit
+        limit: initialFetchCount
       };
       
       // Add hashtag filtering if needed
@@ -318,71 +411,172 @@ export function useImageFeed({
         filter['#t'] = hashtags.map(tag => tag.toLowerCase());
       }
       
-      // Subscribe to notes
-      const fetchedNotes: NDKEvent[] = [];
-      const sub = ndk.subscribe(filter);
-      subscriptionRef.current = sub;
+      // Add since parameter for pagination if loading more
+      if (since) {
+        filter.until = since;
+      }
       
-      sub.on('event', async (event: NDKEvent) => {
-        fetchedNotes.push(event);
-      });
-      
-      sub.on('eose', async () => {
-        // Process all fetched notes
+      // Use the centralized getEvents method for better caching
+      try {
+        // Get events using the NostrContext's centralized getEvents method
+        const fetchedNotes = await getEvents(filter, { closeOnEose: true });
+        
+        // Process fetched notes
         const processed = await processNotes(fetchedNotes);
-        setNotes(processed);
-        setLoading(false);
         
-        // Cache the fetched notes - convert to NostrPost format
-        const nostrPosts = fetchedNotes.map(ndkEventToNostrPost);
-        cache.setCachedPosts(cacheKey, nostrPosts);
-        
-        // Clean up subscription
-        if (subscriptionRef.current) {
-          subscriptionRef.current.stop();
-          subscriptionRef.current = null;
+        // Store the timestamp of the oldest note for pagination
+        if (processed.length > 0) {
+          const oldestNote = processed.reduce((oldest, note) => 
+            note.created_at < oldest.created_at ? note : oldest, processed[0]);
+          setLastSince(oldestNote.created_at);
+        } else {
+          setHasMore(false);
         }
         
+        // Update cache and state based on whether we're loading more or not
+        if (since) {
+          // Adding older notes to existing cache
+          handleCacheLimit(processed);
+        } else {
+          // Initial load or refresh - reset local component cache
+          notesCache.current = processed;
+          setNotes(processed.slice(0, limit));
+        }
+        
+        // Check if we've reached the end
+        if (processed.length < initialFetchCount) {
+          setHasMore(false);
+        }
+        
+        // Also update the post cache for this specific feed
+        const nostrPosts = fetchedNotes.map(ndkEventToNostrPost);
+        cache.setCachedPosts(postCacheKey, nostrPosts);
+        
+        setLoading(false);
         fetchingRef.current = false;
-      });
+      } catch (fetchError) {
+        console.error('[useImageFeed] Error fetching events:', fetchError);
+        setError('Failed to fetch notes');
+        setLoading(false);
+        fetchingRef.current = false;
+      }
     } catch (error) {
-      console.error('Error fetching notes:', error);
+      console.error('[useImageFeed] Error:', error);
       setError('Failed to fetch notes');
       setLoading(false);
       fetchingRef.current = false;
     }
-  }, [ndk, ndkReady, effectiveNpubs, limit, hashtags, cacheKey, processNotes, cache]);
+  }, [
+    ndk, ndkReady, effectiveNpubs, initialFetchCount, 
+    hashtags, postCacheKey, eventCacheKey, 
+    processNotes, cache, handleCacheLimit, limit, getEvents
+  ]);
 
-  // Initial data fetch
+  // Replace the existing initial fetch useEffect with this improved version
   useEffect(() => {
+    let mounted = true;
+    
+    const debouncedFetch = () => {
+      // Clear any pending fetch
+      if (fetchDebounceRef.current) {
+        clearTimeout(fetchDebounceRef.current);
+      }
+      
+      // Debounce fetch to prevent rapid successive fetches
+      fetchDebounceRef.current = setTimeout(() => {
+        if (mounted && ndkReady && !fetchingRef.current) {
+          // Check centralized cache first - use immediately if available
+          const cachedEvents = cache.getCachedEvents(eventCacheKey);
+          const cacheAge = cache.getCacheAge(eventCacheKey);
+          
+          if (cachedEvents && cachedEvents.length > 0 && cacheAge && cacheAge < 60000) {
+            // If we have recently cached data, process it
+            processNotes(cachedEvents as NDKEvent[]).then(processed => {
+              if (mounted) {
+                notesCache.current = processed;
+                setNotes(processed.slice(0, limit));
+                setLoading(false);
+                
+                // If cache is older than 30s, refresh in background after a delay
+                if (cacheAge > 30000) {
+                  setTimeout(() => {
+                    if (mounted) {
+                      fetchingRef.current = false; // Reset flag for background fetch
+                      fetchNotes();
+                    }
+                  }, 1000);
+                }
+              }
+            });
+          } else {
+            // No recent cache, do a full fetch
+            fetchNotes();
+          }
+        }
+      }, 100); // Short debounce
+    };
+    
     if (ndkReady) {
-      fetchNotes();
+      debouncedFetch();
     }
     
-    // Clean up subscription on unmount
+    // Clean up subscription and timeouts on unmount
     return () => {
+      mounted = false;
+      
+      if (fetchDebounceRef.current) {
+        clearTimeout(fetchDebounceRef.current);
+      }
+      
       if (subscriptionRef.current) {
         try {
           subscriptionRef.current.stop();
           subscriptionRef.current = null;
         } catch (e) {
-          console.error('Error stopping subscription during cleanup', e);
+          // Error handling moved to NostrContext.tsx
         }
       }
     };
-  }, [ndkReady, fetchNotes]);
+  }, [ndkReady, fetchNotes, cache, eventCacheKey, processNotes, limit]);
   
-  // Refresh notes on demand
+  // Improve refresh with debouncing
   const refresh = useCallback(async () => {
+    // Prevent refreshing too frequently
+    const now = Date.now();
+    if (now - lastFetchTimeRef.current < 2000) {
+      return; // Prevent rapid successive refreshes
+    }
+    
+    // Reset state for fresh fetch
     fetchingRef.current = false;
-    await fetchNotes();
+    setHasMore(true);
+    setLastSince(undefined);
+    
+    // Clear any pending fetch
+    if (fetchDebounceRef.current) {
+      clearTimeout(fetchDebounceRef.current);
+    }
+    
+    // Debounce the refresh
+    fetchDebounceRef.current = setTimeout(() => {
+      fetchNotes();
+    }, 100);
   }, [fetchNotes]);
+  
+  // Load more notes
+  const loadMore = useCallback(async () => {
+    if (!loading && hasMore && lastSince) {
+      await fetchNotes(lastSince);
+    }
+  }, [loading, hasMore, lastSince, fetchNotes]);
 
   return {
     notes,
     loading,
     error,
-    refresh
+    refresh,
+    loadMore,
+    hasMore
   };
 }
 
