@@ -1,13 +1,15 @@
 'use client';
 
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import Image from 'next/image';
 import { NostrProfileImage } from '../profile/NostrProfileImage';
 import { CORE_NPUBS } from '../utils';
 import { useNostrFeed, Note } from '../../../hooks/useNostrFeed';
 import { MCP_CONFIG } from '../../../../mcp/config';
+import useCache from '../../../hooks/useCache';
+import RelayService from '../../../lib/services/RelayService';
 
-// Madeira-related hashtags to filter by
+// Madeira-related hashtags to filter by - prioritized
 const MADEIRA_HASHTAGS = [
   'madeira', 
   'travelmadeira', 
@@ -17,6 +19,14 @@ const MADEIRA_HASHTAGS = [
   'espetada', 
   'freemadeira', 
   'madstr'
+];
+
+// High priority hashtags - these will be shown first
+const PRIORITY_HASHTAGS = [
+  'madeira',
+  'travelmadeira',
+  'funchal',
+  'freemadeira'
 ];
 
 // NSFW-related keywords to filter out
@@ -30,17 +40,24 @@ interface MadeiraFeedProps {
   limit?: number;
   useCorePubs?: boolean;
   className?: string;
+  autoRefreshInterval?: number; // Auto refresh interval in ms
 }
 
 export const MadeiraFeed: React.FC<MadeiraFeedProps> = ({ 
   npubs = [],
   limit = 25,
   useCorePubs = true,
-  className = ''
+  className = '',
+  autoRefreshInterval = 60000 // Default to 1 minute
 }) => {
   const [currentNoteIndex, setCurrentNoteIndex] = useState(0);
   const carouselIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const refreshIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const [errorShown, setErrorShown] = useState(false);
+  const [relayCount, setRelayCount] = useState(0);
+  const [preloadedImages, setPreloadedImages] = useState<Map<string, boolean>>(new Map());
+  const [sortedNotes, setSortedNotes] = useState<Note[]>([]);
+  const cache = useCache();
   
   // Use the shared hook with Madeira-specific settings
   const { notes, loading, error, refresh } = useNostrFeed({
@@ -52,6 +69,41 @@ export const MadeiraFeed: React.FC<MadeiraFeedProps> = ({
     useWebOfTrust: MCP_CONFIG.defaults.useWebOfTrust // Use the Web of Trust from social graph
   });
 
+  // Update relay count when relays change
+  useEffect(() => {
+    const updateRelayCount = () => {
+      const relays = RelayService.getConnectedRelays();
+      setRelayCount(relays.length);
+    };
+    
+    updateRelayCount();
+    const unsubscribe = RelayService.onStatusUpdate(relays => {
+      setRelayCount(relays.length);
+      
+      // If we get new relay connections and are not currently loading, refresh data
+      if (relays.length > 0 && !loading) {
+        refresh();
+      }
+    });
+    
+    return () => unsubscribe();
+  }, [loading, refresh]);
+
+  // Auto-refresh data based on interval
+  useEffect(() => {
+    if (autoRefreshInterval > 0) {
+      refreshIntervalRef.current = setInterval(() => {
+        refresh();
+      }, autoRefreshInterval);
+    }
+    
+    return () => {
+      if (refreshIntervalRef.current) {
+        clearInterval(refreshIntervalRef.current);
+      }
+    };
+  }, [autoRefreshInterval, refresh]);
+
   // Show error in console but not more than once
   useEffect(() => {
     if (error && !errorShown) {
@@ -60,11 +112,60 @@ export const MadeiraFeed: React.FC<MadeiraFeedProps> = ({
     }
   }, [error, errorShown]);
 
-  // Auto-rotate carousel
-  React.useEffect(() => {
+  // Sort notes by priority hashtags and preload images when notes update
+  useEffect(() => {
     if (!loading && notes.length > 0) {
+      // Sort notes by hashtag priority
+      const sorted = [...notes].sort((a, b) => {
+        // First, check for priority hashtags
+        const aPriorityTags = a.hashtags.filter(tag => PRIORITY_HASHTAGS.includes(tag));
+        const bPriorityTags = b.hashtags.filter(tag => PRIORITY_HASHTAGS.includes(tag));
+        
+        if (aPriorityTags.length !== bPriorityTags.length) {
+          return bPriorityTags.length - aPriorityTags.length;
+        }
+        
+        // Then sort by recency
+        return b.created_at - a.created_at;
+      });
+      
+      setSortedNotes(sorted);
+      
+      // Preload next few images for carousel
+      const preloadNext = async (startIndex: number, count: number) => {
+        const newPreloaded = new Map(preloadedImages);
+        
+        for (let i = 0; i < count; i++) {
+          const idx = (startIndex + i) % sorted.length;
+          const note = sorted[idx];
+          
+          if (note && note.images && note.images.length > 0) {
+            const imageUrl = note.images[0];
+            
+            if (!newPreloaded.has(imageUrl)) {
+              try {
+                await cache.preloadAndCacheImage(imageUrl);
+                newPreloaded.set(imageUrl, true);
+              } catch (err) {
+                console.error('Error preloading image:', err);
+              }
+            }
+          }
+        }
+        
+        setPreloadedImages(newPreloaded);
+      };
+      
+      // Preload next 3 images
+      preloadNext(currentNoteIndex, 3);
+    }
+  }, [notes, loading, currentNoteIndex, cache, preloadedImages]);
+
+  // Auto-rotate carousel
+  useEffect(() => {
+    if (!loading && sortedNotes.length > 0) {
       carouselIntervalRef.current = setInterval(() => {
-        setCurrentNoteIndex(prevIndex => (prevIndex + 1) % notes.length);
+        setCurrentNoteIndex(prevIndex => (prevIndex + 1) % sortedNotes.length);
       }, 5000);
     }
     
@@ -73,18 +174,18 @@ export const MadeiraFeed: React.FC<MadeiraFeedProps> = ({
         clearInterval(carouselIntervalRef.current);
       }
     };
-  }, [loading, notes]);
+  }, [loading, sortedNotes]);
 
   // Manual navigation
   const goToNext = () => {
-    if (notes.length === 0) return;
-    setCurrentNoteIndex(prevIndex => (prevIndex + 1) % notes.length);
+    if (sortedNotes.length === 0) return;
+    setCurrentNoteIndex(prevIndex => (prevIndex + 1) % sortedNotes.length);
     resetCarouselTimer();
   };
 
   const goToPrevious = () => {
-    if (notes.length === 0) return;
-    setCurrentNoteIndex(prevIndex => (prevIndex - 1 + notes.length) % notes.length);
+    if (sortedNotes.length === 0) return;
+    setCurrentNoteIndex(prevIndex => (prevIndex - 1 + sortedNotes.length) % sortedNotes.length);
     resetCarouselTimer();
   };
 
@@ -92,7 +193,7 @@ export const MadeiraFeed: React.FC<MadeiraFeedProps> = ({
     if (carouselIntervalRef.current) {
       clearInterval(carouselIntervalRef.current);
       carouselIntervalRef.current = setInterval(() => {
-        setCurrentNoteIndex(prevIndex => (prevIndex + 1) % notes.length);
+        setCurrentNoteIndex(prevIndex => (prevIndex + 1) % sortedNotes.length);
       }, 5000);
     }
   };
@@ -106,7 +207,7 @@ export const MadeiraFeed: React.FC<MadeiraFeedProps> = ({
 
   // Render the current note
   const renderCurrentNote = () => {
-    if (loading || notes.length === 0) {
+    if (loading || sortedNotes.length === 0) {
       return (
         <div className="flex flex-col items-center justify-center h-64 w-full bg-gray-100 dark:bg-gray-800 rounded-lg p-4">
           <div className="animate-pulse">
@@ -118,8 +219,14 @@ export const MadeiraFeed: React.FC<MadeiraFeedProps> = ({
       );
     }
 
-    const note = notes[currentNoteIndex];
+    const note = sortedNotes[currentNoteIndex];
     if (!note) return null;
+
+    // Highlight priority hashtags
+    const highlightedHashtags = note.hashtags.map(tag => ({
+      tag,
+      isPriority: PRIORITY_HASHTAGS.includes(tag)
+    }));
 
     return (
       <div 
@@ -154,30 +261,38 @@ export const MadeiraFeed: React.FC<MadeiraFeedProps> = ({
           ))}
         </div>
         
-        {/* Image */}
+        {/* Image - now uses preloaded images when available */}
         {note.images && note.images.length > 0 && (
           <div className="w-full h-48 relative rounded-md overflow-hidden">
             <Image
               src={note.images[0]}
               alt="Post image"
               fill
+              priority={true}
               className="object-cover"
               unoptimized
             />
           </div>
         )}
         
-        {/* Hashtags */}
-        {note.hashtags && note.hashtags.length > 0 && (
+        {/* Hashtags - now prioritizes important ones */}
+        {highlightedHashtags.length > 0 && (
           <div className="flex flex-wrap gap-1">
-            {note.hashtags.slice(0, 3).map(tag => (
-              <span key={tag} className="text-xs px-2 py-1 bg-gray-200 dark:bg-gray-700 dark:text-gray-300 rounded">
+            {highlightedHashtags.slice(0, 4).map(({ tag, isPriority }) => (
+              <span 
+                key={tag} 
+                className={`text-xs px-2 py-1 rounded ${
+                  isPriority 
+                    ? 'bg-orange-500 text-white' 
+                    : 'bg-gray-200 dark:bg-gray-700 dark:text-gray-300'
+                }`}
+              >
                 #{tag}
               </span>
             ))}
-            {note.hashtags.length > 3 && (
+            {highlightedHashtags.length > 4 && (
               <span className="text-xs px-2 py-1 bg-gray-200 dark:bg-gray-700 dark:text-gray-300 rounded">
-                +{note.hashtags.length - 3} more
+                +{highlightedHashtags.length - 4} more
               </span>
             )}
           </div>
@@ -190,7 +305,15 @@ export const MadeiraFeed: React.FC<MadeiraFeedProps> = ({
     <div className={`w-full ${className}`}>
       <div className="flex justify-between items-center mb-4">
         <h2 className="text-lg font-semibold dark:text-white">Madeira Updates</h2>
-        <div className="flex space-x-2">
+        <div className="flex items-center space-x-2">
+          {/* Status indicator */}
+          <div className="flex items-center">
+            <span className="text-xs text-gray-500 dark:text-gray-400 mr-1">
+              {relayCount} {relayCount === 1 ? 'relay' : 'relays'}
+            </span>
+            <div className={`w-2 h-2 rounded-full ${relayCount > 0 ? 'bg-green-500' : 'bg-red-500'}`}></div>
+          </div>
+          
           <button 
             onClick={() => refresh()}
             className="p-2 bg-orange-500 text-white rounded-full hover:bg-orange-600"
@@ -209,7 +332,7 @@ export const MadeiraFeed: React.FC<MadeiraFeedProps> = ({
         {renderCurrentNote()}
         
         {/* Navigation */}
-        {notes.length > 1 && (
+        {sortedNotes.length > 1 && (
           <>
             <button
               className="absolute left-0 top-1/2 transform -translate-y-1/2 bg-black bg-opacity-30 hover:bg-opacity-50 text-white p-2 rounded-full -ml-4"
@@ -230,9 +353,9 @@ export const MadeiraFeed: React.FC<MadeiraFeedProps> = ({
               </svg>
             </button>
             
-            {/* Dots */}
+            {/* Dots - now reflect the sorted notes */}
             <div className="flex justify-center mt-4 space-x-2">
-              {notes.slice(0, 5).map((_, index) => (
+              {sortedNotes.slice(0, 5).map((_, index) => (
                 <button
                   key={index}
                   className={`w-2 h-2 rounded-full ${currentNoteIndex === index ? 'bg-orange-500' : 'bg-gray-300 dark:bg-gray-600'}`}
@@ -243,15 +366,15 @@ export const MadeiraFeed: React.FC<MadeiraFeedProps> = ({
                   aria-label={`Go to slide ${index + 1}`}
                 />
               ))}
-              {notes.length > 5 && (
-                <span className="text-xs text-gray-500 dark:text-gray-400">+{notes.length - 5}</span>
+              {sortedNotes.length > 5 && (
+                <span className="text-xs text-gray-500 dark:text-gray-400">+{sortedNotes.length - 5}</span>
               )}
             </div>
           </>
         )}
         
         {/* Show very minimal error */}
-        {error && notes.length === 0 && !loading && (
+        {error && sortedNotes.length === 0 && !loading && (
           <div className="flex items-center justify-center h-40 bg-gray-100 dark:bg-gray-800 rounded-lg">
             <button 
               onClick={() => refresh()}

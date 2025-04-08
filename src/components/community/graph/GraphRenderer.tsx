@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useRef, useCallback, useEffect, memo } from 'react';
+import React, { useRef, useCallback, useEffect, memo, useState } from 'react';
 import dynamic from 'next/dynamic';
 import { GraphNode, GraphLink, GraphData } from '../../../types/graph-types';
 import { useNostr } from '../../../lib/contexts/NostrContext';
@@ -58,9 +58,29 @@ const GraphRenderer = memo(({
 }: GraphRendererProps) => {
   const { ndk } = useNostr();
   const graphRef = useRef<any>(null);
+  const [nodeImages] = useState<Map<string, HTMLImageElement>>(new Map());
 
   // Format data for rendering
   const graphData = prepareGraphData(graph);
+
+  // Preload profile images for nodes that have pictures
+  useEffect(() => {
+    if (!graphData?.nodes) return;
+
+    graphData.nodes.forEach((node: any) => {
+      if (node.picture && !nodeImages.has(node.id)) {
+        const img = new Image();
+        img.onload = () => {
+          nodeImages.set(node.id, img);
+        };
+        img.onerror = () => {
+          // If image fails to load, we don't add it to the map
+          // so the fallback circle will be shown
+        };
+        img.src = node.picture;
+      }
+    });
+  }, [graphData?.nodes, nodeImages]);
 
   // Focus on a node (e.g., when selected)
   const focusNode = useCallback((node: GraphNode | null) => {
@@ -89,44 +109,67 @@ const GraphRenderer = memo(({
     }
   }, [centerNodeId, graph.nodes, focusNode]);
 
-  // Handle node rendering customization
-  const paintNode = useCallback((node: any, ctx: CanvasRenderingContext2D, globalScale: number) => {
-    // Node circle
+  // Customize node rendering
+  const nodeCanvasObject = (node: any, ctx: CanvasRenderingContext2D, globalScale: number) => {
+    const { x, y, id, name, picture, color } = node;
+    const size = Math.max(4, (node.val || 1) * 4);
+    const fontSize = 12 / globalScale;
+    const nodeSize = size;
+    
+    // Draw node circle
     ctx.beginPath();
-    ctx.arc(node.x, node.y, node.val, 0, 2 * Math.PI, false);
-    ctx.fillStyle = node.color;
+    ctx.arc(x, y, nodeSize, 0, 2 * Math.PI);
+    ctx.fillStyle = color || BRAND_COLORS.deepBlue;
     ctx.fill();
     
-    // Add border for selected node
-    if (selectedNode && node.id === selectedNode.id) {
-      ctx.strokeStyle = 'white';
+    // Draw border for selected node
+    if (selectedNode && id === selectedNode.id) {
+      ctx.beginPath();
+      ctx.arc(x, y, nodeSize + 2, 0, 2 * Math.PI);
+      ctx.strokeStyle = BRAND_COLORS.bitcoinOrange;
       ctx.lineWidth = 2;
       ctx.stroke();
     }
     
-    // Only show labels for core nodes or when zoomed in
-    if (node.isCoreNode || globalScale > 0.9) {
-      const fontSize = node.isCoreNode ? 14 : 12;
-      ctx.font = `${fontSize}px Sans-Serif`;
-      ctx.fillStyle = 'white';
+    // Draw profile picture if available
+    if (picture) {
+      const img = nodeImages.get(id);
+      if (img) {
+        ctx.save();
+        // Create circular clip for the image
+        ctx.beginPath();
+        ctx.arc(x, y, nodeSize - 1, 0, 2 * Math.PI);
+        ctx.clip();
+        
+        // Draw the image
+        const imgSize = nodeSize * 2;
+        ctx.drawImage(img, x - nodeSize, y - nodeSize, imgSize, imgSize);
+        ctx.restore();
+      }
+    }
+    
+    // Draw label for the node
+    if (name && globalScale > 0.5) {
+      ctx.font = `${fontSize}px Arial`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
+      ctx.fillStyle = 'black';
       
-      // Draw label with shadow for better visibility
-      ctx.shadowColor = 'rgba(0, 0, 0, 0.7)';
-      ctx.shadowBlur = 2;
-      ctx.shadowOffsetX = 1;
-      ctx.shadowOffsetY = 1;
+      // Draw background for text
+      const textWidth = ctx.measureText(name).width;
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+      ctx.fillRect(
+        x - textWidth / 2 - 2,
+        y + nodeSize + 2,
+        textWidth + 4,
+        fontSize + 4
+      );
       
-      ctx.fillText(node.name || (node.npub ? node.npub.slice(0, 6) + '...' : 'Unknown'), node.x, node.y);
-      
-      // Reset shadow
-      ctx.shadowColor = 'transparent';
-      ctx.shadowBlur = 0;
-      ctx.shadowOffsetX = 0;
-      ctx.shadowOffsetY = 0;
+      // Draw text
+      ctx.fillStyle = 'black';
+      ctx.fillText(name, x, y + nodeSize + fontSize / 2 + 4);
     }
-  }, [selectedNode]);
+  };
 
   // Show loading message when no data is available
   if (!graphData || !graphData.nodes || graphData.nodes.length === 0) {
@@ -150,7 +193,7 @@ const GraphRenderer = memo(({
       <ForceGraph2D
         ref={graphRef}
         graphData={graphData}
-        nodeCanvasObject={paintNode}
+        nodeCanvasObject={nodeCanvasObject}
         nodeLabel={(node: any) => node.name || 'Unknown'}
         linkColor={(link: any) => link.color || BRAND_COLORS.lightSand + '99'}
         linkWidth={(link: any) => link.value}

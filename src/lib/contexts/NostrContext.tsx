@@ -44,6 +44,8 @@ export interface NostrContextType {
   reconnect: () => Promise<boolean>;
   getConnectedRelays: () => string[];
   loginMethod: string | null;
+  payInvoice?: (invoice: string) => Promise<{ preimage: string }>;
+  canMakePayments?: boolean;
 }
 
 // Default context value
@@ -63,6 +65,7 @@ const defaultContextValue: NostrContextType = {
   reconnect: async () => false,
   getConnectedRelays: () => [],
   loginMethod: null,
+  canMakePayments: false,
 };
 
 // Create the context
@@ -367,6 +370,57 @@ export const NostrProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     }
   }, [user, getUserProfile]);
 
+  // Implement the Lightning payment method
+  const payInvoice = useCallback(async (invoice: string): Promise<{ preimage: string }> => {
+    if (!user || !ndk || !ndk.signer) {
+      throw new Error('User not logged in or signer not available');
+    }
+    
+    try {
+      // Check if the signer supports NIP-47 webln
+      if ('webln' in window) {
+        try {
+          await (window as any).webln.enable();
+          const result = await (window as any).webln.sendPayment(invoice);
+          return { preimage: result.preimage || 'unknown-preimage' };
+        } catch (weblnError) {
+          console.error('WebLN payment failed:', weblnError);
+          throw new Error(`Lightning payment failed: ${weblnError instanceof Error ? weblnError.message : 'Unknown error'}`);
+        }
+      }
+      
+      // Check if we can use NIP-07 extension's Lightning capabilities
+      if ((window as any).nostr && 'lightning' in (window as any).nostr) {
+        try {
+          const result = await (window as any).nostr.lightning.pay(invoice);
+          return { preimage: result.preimage || 'unknown-preimage' };
+        } catch (nostrError) {
+          console.error('Nostr Lightning payment failed:', nostrError);
+          throw new Error(`Lightning payment failed: ${nostrError instanceof Error ? nostrError.message : 'Unknown error'}`);
+        }
+      }
+      
+      throw new Error('No Lightning payment method available');
+    } catch (error) {
+      console.error('Payment error:', error);
+      throw error;
+    }
+  }, [user, ndk]);
+
+  // Check if Lightning payments are supported
+  const canMakePayments = useCallback((): boolean => {
+    // Check if the browser has WebLN support
+    const hasWebLN = typeof window !== 'undefined' && 'webln' in window;
+    
+    // Check if the Nostr extension has Lightning support
+    const hasNostrLightning = 
+      typeof window !== 'undefined' && 
+      (window as any).nostr && 
+      'lightning' in (window as any).nostr;
+    
+    return hasWebLN || hasNostrLightning;
+  }, []);
+
   // Derived values
   const npub = user ? nip19.npubEncode(user.pubkey) : null;
   const userName = userProfile?.displayName || userProfile?.name || null;
@@ -388,6 +442,8 @@ export const NostrProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     reconnect,
     getConnectedRelays,
     loginMethod,
+    payInvoice,
+    canMakePayments: canMakePayments()
   };
 
   return (

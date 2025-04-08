@@ -5,7 +5,6 @@ import dynamic from 'next/dynamic';
 import { useNostr } from '../../../lib/contexts/NostrContext';
 import { GraphNode, GraphLink, GraphData } from '../../../types/graph-types';
 import { BRAND_COLORS } from '../../../constants/brandColors';
-import { DEFAULT_PROFILE_IMAGE } from '../../../utils/profileUtils';
 import { nip19 } from 'nostr-tools';
 import { CORE_NPUBS } from '../../../constants/nostr';
 import { getRandomLoadingMessage } from '../../../constants/loadingMessages';
@@ -38,6 +37,8 @@ interface SocialGraphProps {
   showSecondDegree?: boolean;
   // Enable continuous loading from relays
   continuousLoading?: boolean;
+  // Default number of second-degree connections per node
+  defaultMaxSecondDegreeConnections?: number;
 }
 
 /**
@@ -52,6 +53,7 @@ const SocialGraph = React.memo<SocialGraphProps>(({
   className = '',
   showSecondDegree: initialShowSecondDegree = false,
   continuousLoading = false,
+  defaultMaxSecondDegreeConnections = 10,
 }) => {
   // Get context values
   const { ndk, getUserProfile, ndkReady, getConnectedRelays, isLoggedIn, user } = useNostr();
@@ -59,6 +61,7 @@ const SocialGraph = React.memo<SocialGraphProps>(({
   
   // State
   const [showSecondDegree, setShowSecondDegree] = useState(initialShowSecondDegree);
+  const [maxSecondDegreeConnections, setMaxSecondDegreeConnections] = useState(defaultMaxSecondDegreeConnections);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [loadingMessage, setLoadingMessage] = useState<string>('');
   const [isFollowingLoading, setIsFollowingLoading] = useState(false);
@@ -84,7 +87,7 @@ const SocialGraph = React.memo<SocialGraphProps>(({
     graph, 
     loading, 
     error, 
-    refreshGraph, 
+    refresh, 
     followUser,
     unfollowUser,
     isUserFollowing 
@@ -93,7 +96,8 @@ const SocialGraph = React.memo<SocialGraphProps>(({
     centerNpub,
     maxConnections,
     showSecondDegree,
-    continuousLoading
+    continuousLoading,
+    maxSecondDegreeNodes: maxSecondDegreeConnections
   });
   
   // Update loading message during loading
@@ -151,13 +155,13 @@ const SocialGraph = React.memo<SocialGraphProps>(({
     
     setIsRefreshing(true);
     try {
-      await refreshGraph();
+      await refresh();
     } catch (error) {
       console.error('Error refreshing graph:', error);
     } finally {
       setIsRefreshing(false);
     }
-  }, [loading, refreshGraph]);
+  }, [loading, refresh]);
   
   // Handle follow/unfollow actions
   const handleFollowToggle = useCallback(async () => {
@@ -183,6 +187,25 @@ const SocialGraph = React.memo<SocialGraphProps>(({
   const handleToggleSecondDegree = useCallback(() => {
     setShowSecondDegree(prev => !prev);
   }, []);
+
+  // Handle changes to the max connections slider
+  const handleMaxConnectionsChange = useCallback((value: number) => {
+    setMaxSecondDegreeConnections(value);
+  }, []);
+  
+  // Add useEffect to refresh the graph when maxSecondDegreeConnections changes
+  useEffect(() => {
+    if (graph && showSecondDegree) {
+      // Only refresh if we already have a graph and second degree connections are enabled
+      forceRefresh();
+    }
+  }, [maxSecondDegreeConnections, showSecondDegree]);
+  
+  // Add additional debug information to help track performance
+  useEffect(() => {
+    console.log(`Graph rendering with ${graph?.nodes.length || 0} nodes and ${graph?.links.length || 0} links`);
+    console.log(`Max second degree connections: ${maxSecondDegreeConnections}`);
+  }, [graph, maxSecondDegreeConnections]);
   
   // Display loading message or error if necessary
   if (loading && !graph) {
@@ -227,6 +250,12 @@ const SocialGraph = React.memo<SocialGraphProps>(({
         isFollowingLoading={isFollowingLoading}
         isLoggedIn={isLoggedIn}
         relayCount={relayCount}
+        maxSecondDegreeConnections={maxSecondDegreeConnections}
+        onMaxConnectionsChange={handleMaxConnectionsChange}
+        onClearCache={() => {
+          cache.clearCache('graph');
+          forceRefresh();
+        }}
       />
       
       {/* Graph Visualization */}

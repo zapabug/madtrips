@@ -1,3 +1,5 @@
+"use client";
+
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useNostr } from '../lib/contexts/NostrContext';
 import { GraphNode, GraphLink, GraphData } from '../types/graph-types';
@@ -282,13 +284,13 @@ export const useSocialGraph = ({
     return result.filter(Boolean);
   }, [getUserProfile, shortenNpub, cache, ndkReady]);
 
-  // New function to fetch contacts for a single node
-  const fetchNodeContacts = useCallback(async (pubkey: string, maxContacts = 50): Promise<string[]> => {
+  // Update the fetchNodeContacts function to use the maxSecondDegreeNodes parameter
+  const fetchNodeContacts = useCallback(async (pubkey: string, maxContacts = maxSecondDegreeNodes): Promise<string[]> => {
     const ndk = RelayService.getNDK();
     if (!ndk) return [];
     
     try {
-      console.log(`Fetching contacts for ${pubkey.substring(0, 8)}...`);
+      console.log(`Fetching contacts for ${pubkey.substring(0, 8)}... (max: ${maxContacts})`);
       
       // Fetch the most recent contact list (kind 3)
       const filter = {
@@ -309,17 +311,51 @@ export const useSocialGraph = ({
       
       // Extract p tags (contacts)
       const contactTags = event.tags.filter(tag => tag[0] === 'p');
-      const contacts = contactTags.map(tag => tag[1]);
+      
+      // Get mutual follows for prioritization (if available)
+      let mutualFollows: string[] = [];
+      try {
+        // Get users who follow this user
+        const reverseFilter = {
+          kinds: [3],
+          '#p': [pubkey],
+          limit: 50
+        };
+        
+        const reverseEvents = await ndk.fetchEvents([reverseFilter], { closeOnEose: true });
+        if (reverseEvents.size > 0) {
+          // Extract pubkeys of users who follow this user
+          const followers = Array.from(reverseEvents).map(evt => evt.pubkey);
+          
+          // Find mutual follows (contacts that also follow the user)
+          mutualFollows = contactTags
+            .map(tag => tag[1])
+            .filter(contact => followers.includes(contact));
+            
+          console.log(`Found ${mutualFollows.length} mutual follows for ${pubkey.substring(0, 8)}`);
+        }
+      } catch (error) {
+        console.warn(`Error fetching mutual follows for ${pubkey.substring(0, 8)}:`, error);
+      }
+      
+      // Prioritize mutual follows and limit to maxContacts
+      const allContacts = contactTags.map(tag => tag[1]);
+      
+      // Sort the contacts: mutual follows first
+      const sortedContacts = [
+        ...mutualFollows, 
+        ...allContacts.filter(contact => !mutualFollows.includes(contact))
+      ];
       
       // Limit to maxContacts
-      const limitedContacts = contacts.slice(0, maxContacts);
+      const limitedContacts = sortedContacts.slice(0, maxContacts);
       
       return limitedContacts;
     } catch (error) {
       console.error(`Error fetching contacts for ${pubkey.substring(0, 8)}:`, error);
       return [];
     }
-  }, []);
+  }, [maxSecondDegreeNodes]);
 
   // Expand a single node to show its connections
   const expandNode = useCallback(async (nodeId: string): Promise<void> => {
@@ -437,13 +473,244 @@ export const useSocialGraph = ({
     }
   }, []);
 
+  // Function to clean up any active subscriptions
+  const cleanupSubscriptions = useCallback(() => {
+    // Clear any active intervals or subscriptions
+    if (continuousUpdateActive.current) {
+      continuousUpdateActive.current = false;
+    }
+  }, []);
+
+  // Check if a user follows another user
+  const isUserFollowing = useCallback(async (fromPubkey: string, toPubkey: string): Promise<boolean> => {
+    const ndkInstance = RelayService.getNDK();
+    if (!ndkInstance) {
+      throw new Error('NDK not initialized');
+    }
+    
+    try {
+      const filter: NDKFilter = {
+        kinds: [3], // Contact list event
+        authors: [fromPubkey],
+        limit: 1
+      };
+      
+      const events = await ndkInstance.fetchEvents([filter], { closeOnEose: true });
+      const event = Array.from(events)[0];
+      
+      if (!event) return false;
+      
+      // Check if toPubkey is in the p tags
+      return event.tags.some(tag => tag[0] === 'p' && tag[1] === toPubkey);
+    } catch (error) {
+      console.error('Error checking following status:', error);
+      return false;
+    }
+  }, []);
+
+  // Function to fetch graph data
+  const fetchGraphData = useCallback(async (): Promise<GraphData | null> => {
+    if (!ndkReady) return null;
+    
+    // Check if a cached version exists
+    const cacheKey = cache.createGraphCacheKey(effectiveNpubs, showSecondDegree);
+    const cachedGraph = cache.getCachedGraph(cacheKey);
+    
+    if (cachedGraph) {
+      console.log('Using cached graph data');
+      return cachedGraph;
+    }
+    
+    // Mark that we're fetching data
+    fetchInProgress.current = true;
+    setIsLoading(true);
+    
+    try {
+      // Create core nodes from provided npubs
+      const coreNodes: GraphNode[] = [];
+      const links: GraphLink[] = [];
+      
+      // Process core nodes first
+      for (const npub of effectiveNpubs) {
+        try {
+          const { type, data: pubkey } = nip19.decode(npub);
+          if (type !== 'npub') continue;
+          
+          // Create node
+          coreNodes.push({
+            id: `node-${npub}`,
+            pubkey,
+            npub,
+            name: shortenNpub(npub),
+            picture: DEFAULT_PROFILE_IMAGE,
+            isCoreNode: true,
+            val: 5, // Larger nodes for core
+          });
+        } catch (e) {
+          console.error(`Invalid npub: ${npub}`, e);
+        }
+      }
+      
+      // Fetch profiles for core nodes
+      const nodesWithProfiles = await fetchProfiles(coreNodes);
+      
+      // Map for quick pubkey lookup
+      const pubkeyMap = new Map<string, GraphNode>();
+      for (const node of nodesWithProfiles) {
+        pubkeyMap.set(node.pubkey, node);
+      }
+      
+      // Process connections between core nodes
+      for (const node of nodesWithProfiles) {
+        if (!node.pubkey) continue;
+        
+        const contacts = await fetchNodeContacts(node.pubkey);
+        
+        // Find connections within core nodes first
+        for (const contactPubkey of contacts) {
+          if (pubkeyMap.has(contactPubkey)) {
+            const targetNode = pubkeyMap.get(contactPubkey)!;
+            
+            // Check if this link already exists
+            const linkExists = links.some(link => 
+              (link.source === node.id && link.target === targetNode.id) ||
+              (link.source === targetNode.id && link.target === node.id)
+            );
+            
+            if (!linkExists) {
+              // Check if mutual connection
+              const isFollowingBack = await isUserFollowing(contactPubkey, node.pubkey);
+              
+              links.push({
+                source: node.id,
+                target: targetNode.id,
+                value: isFollowingBack ? 2 : 1,
+                color: isFollowingBack ? BRAND_COLORS.bitcoinOrange : BRAND_COLORS.lightSand + '99',
+                type: isFollowingBack ? 'mutual' : 'follows'
+              });
+            }
+          }
+        }
+      }
+      
+      // Process second-degree connections if requested
+      let secondDegreeNodes: GraphNode[] = [];
+      if (showSecondDegree) {
+        const secondDegreeNpubsSet = new Set<string>();
+        
+        // For each core node, fetch their contacts
+        for (const node of nodesWithProfiles) {
+          if (!node.pubkey) continue;
+          
+          const contacts = await fetchNodeContacts(node.pubkey, maxSecondDegreeNodes);
+          
+          for (const contactPubkey of contacts) {
+            // Skip if already in core nodes
+            if (pubkeyMap.has(contactPubkey)) continue;
+            
+            // Create npub from pubkey
+            const contactNpub = nip19.npubEncode(contactPubkey);
+            secondDegreeNpubsSet.add(contactNpub);
+          }
+        }
+        
+        // Update the second degree npubs state
+        const secondDegreeNpubArray = Array.from(secondDegreeNpubsSet);
+        setSecondDegreeNpubs(secondDegreeNpubArray);
+        
+        // Create nodes for second-degree connections
+        for (const npub of secondDegreeNpubArray) {
+          try {
+            const { type, data: pubkey } = nip19.decode(npub);
+            if (type !== 'npub') continue;
+            
+            secondDegreeNodes.push({
+              id: `node-${npub}`,
+              pubkey,
+              npub,
+              name: shortenNpub(npub),
+              picture: DEFAULT_PROFILE_IMAGE,
+              isCoreNode: false,
+              isSecondDegree: true,
+              val: 3, // Smaller nodes for second-degree
+            });
+          } catch (e) {
+            console.error(`Invalid second-degree npub: ${npub}`, e);
+          }
+        }
+        
+        // Fetch profiles for second-degree nodes
+        secondDegreeNodes = await fetchProfiles(secondDegreeNodes);
+        
+        // Add second-degree nodes to the map
+        for (const node of secondDegreeNodes) {
+          pubkeyMap.set(node.pubkey, node);
+        }
+        
+        // Create links for second-degree nodes
+        for (const coreNode of nodesWithProfiles) {
+          if (!coreNode.pubkey) continue;
+          
+          const contacts = await fetchNodeContacts(coreNode.pubkey, maxSecondDegreeNodes);
+          
+          for (const contactPubkey of contacts) {
+            if (pubkeyMap.has(contactPubkey)) {
+              const targetNode = pubkeyMap.get(contactPubkey)!;
+              
+              // Skip if this is a core-to-core connection (already handled)
+              if (targetNode.isCoreNode) continue;
+              
+              // Check if this link already exists
+              const linkExists = links.some(link => 
+                (link.source === coreNode.id && link.target === targetNode.id) ||
+                (link.source === targetNode.id && link.target === coreNode.id)
+              );
+              
+              if (!linkExists) {
+                links.push({
+                  source: coreNode.id,
+                  target: targetNode.id,
+                  value: 1,
+                  color: BRAND_COLORS.lightSand + '99',
+                  type: 'follows'
+                });
+              }
+            }
+          }
+        }
+      }
+      
+      // Combine all nodes
+      const allNodes = [...nodesWithProfiles, ...secondDegreeNodes];
+      
+      const graphData: GraphData = {
+        nodes: allNodes,
+        links,
+        lastUpdated: Date.now()
+      };
+      
+      // Cache the result
+      cache.setCachedGraph(cacheKey, graphData);
+      
+      setHasRealData(true);
+      return graphData;
+    } catch (error) {
+      console.error('Error fetching graph data:', error);
+      setError('Failed to fetch graph data');
+      return null;
+    } finally {
+      setIsLoading(false);
+      fetchInProgress.current = false;
+    }
+  }, [ndkReady, effectiveNpubs, showSecondDegree, maxSecondDegreeNodes, shortenNpub, fetchProfiles, fetchNodeContacts, isUserFollowing, cache]);
+
   // Refresh the graph
   const refreshGraph = useCallback(async (): Promise<void> => {
     cleanupSubscriptions();
     
     // Clear cache for this graph
     const cacheKey = cache.createGraphCacheKey(effectiveNpubs, showSecondDegree);
-    cache.setCachedGraph(cacheKey, null);
+    cache.setCachedGraph(cacheKey, null as unknown as GraphData);
     
     // Fetch fresh data
     const graphData = await fetchGraphData();
@@ -454,7 +721,7 @@ export const useSocialGraph = ({
     }
   }, [cleanupSubscriptions, cache, effectiveNpubs, showSecondDegree, fetchGraphData]);
 
-  // Function to start continuous graph updates
+  // Start continuous graph updates
   const startContinuousUpdates = useCallback(() => {
     if (continuousUpdateActive.current || !graphDataRef.current) return;
     
@@ -504,7 +771,8 @@ export const useSocialGraph = ({
           graphDataRef.current = {...updatedGraph};
           
           // Update cache
-          cache.setCachedGraph(effectiveNpubs, showSecondDegree, updatedGraph);
+          const cacheKey = cache.createGraphCacheKey(effectiveNpubs, showSecondDegree);
+          cache.setCachedGraph(cacheKey, updatedGraph);
         }
       } catch (error) {
         console.error('Error during continuous update:', error);
@@ -527,33 +795,6 @@ export const useSocialGraph = ({
       refreshGraph();
     }
   }, [isClient, graph, refreshGraph]);
-
-  // Check if a user follows another user
-  const isUserFollowing = useCallback(async (fromPubkey: string, toPubkey: string): Promise<boolean> => {
-    const ndkInstance = RelayService.getNDK();
-    if (!ndkInstance) {
-      throw new Error('NDK not initialized');
-    }
-    
-    try {
-      const filter: NDKFilter = {
-        kinds: [3], // Contact list event
-        authors: [fromPubkey],
-        limit: 1
-      };
-      
-      const events = await ndkInstance.fetchEvents([filter], { closeOnEose: true });
-      const event = Array.from(events)[0];
-      
-      if (!event) return false;
-      
-      // Check if toPubkey is in the p tags
-      return event.tags.some(tag => tag[0] === 'p' && tag[1] === toPubkey);
-    } catch (error) {
-      console.error('Error checking following status:', error);
-      return false;
-    }
-  }, []);
 
   // Follow a user
   const followUser = useCallback(async (fromPubkey: string, toPubkey: string): Promise<boolean> => {
@@ -631,6 +872,92 @@ export const useSocialGraph = ({
       return false;
     }
   }, []);
+
+  // Add this function to prioritize and limit second-degree connections
+  const prioritizeConnections = (
+    connections: GraphNode[],
+    mutualConnections: Set<string>,
+    maxConnections: number
+  ): GraphNode[] => {
+    if (!connections || !Array.isArray(connections)) return [];
+    
+    // Safety check
+    if (maxConnections <= 0) return [];
+    if (connections.length <= maxConnections) return connections;
+    
+    // Sort connections: mutual follows first, then by name for consistency
+    const sortedConnections = [...connections].sort((a, b) => {
+      // Mutual follows first
+      const aIsMutual = mutualConnections.has(a.id);
+      const bIsMutual = mutualConnections.has(b.id);
+      
+      if (aIsMutual && !bIsMutual) return -1;
+      if (!aIsMutual && bIsMutual) return 1;
+      
+      // Then sort by name for consistency
+      return (a.name || '').localeCompare(b.name || '');
+    });
+    
+    // Return the limited number of connections
+    return sortedConnections.slice(0, maxConnections);
+  };
+
+  // Look for the function that builds the graph data, such as a function named buildGraphData or similar
+  // and update it to use the prioritizeConnections function when adding second-degree connections
+
+  // Example of a buildGraphData function (adjust based on actual implementation):
+  const buildGraphData = useCallback((
+    firstDegreeNodes: GraphNode[],
+    secondDegreeConnections: Map<string, GraphNode[]>,
+    mutualFollows: Map<string, Set<string>>
+  ): GraphData => {
+    // Clone the first degree nodes to avoid mutation
+    const nodes: GraphNode[] = [...firstDegreeNodes];
+    const links: GraphLink[] = [];
+    const nodeMap = new Map<string, GraphNode>();
+    
+    // Add first degree nodes to map
+    firstDegreeNodes.forEach(node => {
+      nodeMap.set(node.id, node);
+    });
+    
+    // Process connections and create links
+    firstDegreeNodes.forEach(sourceNode => {
+      const sourceId = sourceNode.id;
+      const connections = secondDegreeConnections.get(sourceId) || [];
+      const mutualSet = mutualFollows.get(sourceId) || new Set<string>();
+      
+      // Prioritize and limit second-degree connections
+      const prioritizedConnections = prioritizeConnections(
+        connections, 
+        mutualSet, 
+        maxSecondDegreeNodes
+      );
+      
+      // Add the prioritized connections to nodes and create links
+      prioritizedConnections.forEach(targetNode => {
+        const targetId = targetNode.id;
+        
+        // Only add the node if it's not already in the node map
+        if (!nodeMap.has(targetId)) {
+          nodes.push(targetNode);
+          nodeMap.set(targetId, targetNode);
+        }
+        
+        // Create link with appropriate type (mutual or regular)
+        const isMutual = mutualSet.has(targetId);
+        links.push({
+          source: sourceId,
+          target: targetId,
+          value: isMutual ? 2 : 1, // Stronger line for mutual follows
+          type: isMutual ? 'mutual' : 'follows',
+          color: isMutual ? BRAND_COLORS.bitcoinOrange : BRAND_COLORS.lightSand + '99'
+        });
+      });
+    });
+    
+    return { nodes, links };
+  }, [maxSecondDegreeNodes]);
 
   // Return the graph and utility functions
   return {

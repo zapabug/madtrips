@@ -3,6 +3,15 @@
  */
 
 import { SocialGraphVisualization, CommunityFeed, MadeiraFeed } from '../../components/community';
+import { CORE_NPUBS } from '../../components/community/utils';
+
+// Priority hashtags for the Madeira image feed
+const PRIORITY_HASHTAGS = [
+  'madeira',
+  'funchal',
+  'freemadeira',
+  'bitcoin'
+];
 
 export const metadata = {
   title: 'MadTrips - Bitcoin Madeira Community',
@@ -21,7 +30,7 @@ export default function CommunityPage() {
             <h2 className="text-2xl font-bold mb-4">Community Connections</h2>
             <p className="mb-6 text-gray-600 dark:text-gray-300">
               Explore the Bitcoin Madeira web of trust - visualizing connections between community members 
-              and their extended networks. The graph now shows friends-of-friends for a richer 
+              and their extended networks. The graph shows mutual connections for a richer 
               social network visualization.
             </p>
           </div>
@@ -31,6 +40,7 @@ export default function CommunityPage() {
               height={600} 
               width="100%" 
               showSecondDegree={true}
+              npubs={CORE_NPUBS}
             />
           </div>
         </section>
@@ -41,13 +51,16 @@ export default function CommunityPage() {
             <h2 className="text-2xl font-bold mb-4">Madeira Moments</h2>
             <p className="mb-6 text-gray-600 dark:text-gray-300">
               Photos shared by the Madeira Bitcoin community and their connections. 
-              This feed shows images with #madeira related hashtags from your network.
+              This feed prioritizes images with #madeira related hashtags from your network.
             </p>
           </div>
           
           <div className="px-6 pb-6">
             <div className="h-[400px]">
-              <MadeiraFeed useCorePubs={true} />
+              <MadeiraFeed 
+                useCorePubs={true} 
+                autoRefreshInterval={120000} // Refresh every 2 minutes
+              />
             </div>
           </div>
         </section>

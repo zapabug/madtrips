@@ -1,3 +1,5 @@
+"use client";
+
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNostr } from '../lib/contexts/NostrContext';
 import { NDKEvent, NDKFilter, NDKSubscription } from '@nostr-dev-kit/ndk';

@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { normalizeNostrPubkey } from '@/lib/nostr';
+import { normalizeNostrPubkey } from '../lib/nostr';
 
 // This component demonstrates how to move Nostr signing to the client-side
 // Instead of making server API calls for Nostr operations

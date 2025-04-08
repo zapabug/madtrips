@@ -2,7 +2,6 @@
 
 import React, { useEffect, useState, memo } from 'react';
 import { GraphNode } from '../../../types/graph-types';
-import { DEFAULT_PROFILE_IMAGE } from '../../../utils/profileUtils';
 import { useNostr } from '../../../lib/contexts/NostrContext';
 import Image from 'next/image';
 import { BRAND_COLORS } from '../../../constants/brandColors';
@@ -68,20 +67,38 @@ const NodeTooltip = memo(({
   if (!node) return null;
 
   const displayName = fullProfile?.displayName || fullProfile?.name || node.name || shortenNpub(node.npub || '');
-  const imageUrl = fullProfile?.picture || node.picture || DEFAULT_PROFILE_IMAGE;
+  const hasImage = !!(fullProfile?.picture || node.picture);
+  const imageUrl = fullProfile?.picture || node.picture;
   const profileUrl = `https://njump.me/${node.npub}`;
+
+  // Handle generating initials for avatar fallback
+  const getInitials = () => {
+    if (!displayName) return '?';
+    return displayName
+      .split(' ')
+      .map((word: string) => word.charAt(0))
+      .join('')
+      .toUpperCase()
+      .substring(0, 2);
+  };
 
   return (
     <div className="node-tooltip">
       <div className="tooltip-header">
         <div className="profile-image">
-          <img 
-            src={imageUrl} 
-            alt={displayName}
-            onError={(e) => {
-              (e.target as HTMLImageElement).src = DEFAULT_PROFILE_IMAGE;
-            }}
-          />
+          {hasImage ? (
+            <img 
+              src={imageUrl} 
+              alt={displayName}
+              onLoad={() => setImageLoaded(true)}
+              onError={() => setImageLoaded(false)}
+              style={{ display: imageLoaded ? 'block' : 'none' }}
+            />
+          ) : (
+            <div className="initials-avatar">
+              {getInitials()}
+            </div>
+          )}
         </div>
         
         <div className="profile-info">
@@ -143,12 +160,28 @@ const NodeTooltip = memo(({
           overflow: hidden;
           margin-right: 10px;
           border: 2px solid ${BRAND_COLORS.bitcoinOrange};
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          background-color: #f0f0f0;
         }
         
         .profile-image img {
           width: 100%;
           height: 100%;
           object-fit: cover;
+        }
+        
+        .initials-avatar {
+          width: 100%;
+          height: 100%;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          background-color: ${BRAND_COLORS.bitcoinOrange}33;
+          color: ${BRAND_COLORS.bitcoinOrange};
+          font-weight: bold;
+          font-size: 20px;
         }
         
         .profile-info {

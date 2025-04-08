@@ -19,6 +19,8 @@ interface GraphControlsProps {
   relayCount?: number;
   onFollowToggle: () => Promise<void>;
   isLoggedIn: boolean;
+  maxSecondDegreeConnections?: number;
+  onMaxConnectionsChange?: (value: number) => void;
 }
 
 // Memoize to prevent unnecessary re-renders
@@ -35,7 +37,9 @@ const GraphControls = memo(({
   selectedNode,
   relayCount: externalRelayCount,
   onFollowToggle,
-  isLoggedIn
+  isLoggedIn,
+  maxSecondDegreeConnections = 10,
+  onMaxConnectionsChange
 }: GraphControlsProps) => {
   const [relayCount, setRelayCount] = useState(externalRelayCount || 0);
   const [isConnecting, setIsConnecting] = useState(false);
@@ -114,6 +118,23 @@ const GraphControls = memo(({
         >
           {showSecondDegree ? 'Simplified View' : 'Extended View'}
         </button>
+        
+        {showSecondDegree && onMaxConnectionsChange && (
+          <div className="connections-slider">
+            <label htmlFor="connectionsSlider" className="connections-label">
+              Max Connections: {maxSecondDegreeConnections}
+            </label>
+            <input
+              id="connectionsSlider"
+              type="range"
+              min="1"
+              max="50"
+              value={maxSecondDegreeConnections}
+              onChange={(e) => onMaxConnectionsChange(parseInt(e.target.value))}
+              className="connections-range"
+            />
+          </div>
+        )}
         
         <button
           onClick={onClearCache}
@@ -292,6 +313,48 @@ const GraphControls = memo(({
             flex-direction: column;
             align-items: center;
           }
+        }
+        
+        .connections-slider {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          min-width: 200px;
+        }
+        
+        .connections-label {
+          font-size: 14px;
+          color: ${BRAND_COLORS.deepBlue};
+          white-space: nowrap;
+        }
+        
+        .connections-range {
+          flex: 1;
+          height: 6px;
+          -webkit-appearance: none;
+          appearance: none;
+          background: #e2e8f0;
+          border-radius: 4px;
+          outline: none;
+        }
+        
+        .connections-range::-webkit-slider-thumb {
+          -webkit-appearance: none;
+          appearance: none;
+          width: 16px;
+          height: 16px;
+          border-radius: 50%;
+          background: ${BRAND_COLORS.bitcoinOrange};
+          cursor: pointer;
+        }
+        
+        .connections-range::-moz-range-thumb {
+          width: 16px;
+          height: 16px;
+          border-radius: 50%;
+          background: ${BRAND_COLORS.bitcoinOrange};
+          cursor: pointer;
+          border: none;
         }
       `}</style>
     </div>
