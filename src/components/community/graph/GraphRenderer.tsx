@@ -44,8 +44,8 @@ const prepareGraphData = (graphData: GraphData) => {
   return {
     nodes: graphData.nodes.map((node) => ({
       ...node,
-      val: node.val || (node.isCoreNode ? 25 : 3),
-      color: node.color || (node.isCoreNode ? BRAND_COLORS.bitcoinOrange : BRAND_COLORS.lightSand),
+      val: node.val || (node.isCoreNode ? 50 : 6),
+      color: node.color || (node.isCoreNode ? BRAND_COLORS.bitcoinOrange : undefined),
       fx: node.fx === null ? undefined : node.fx,
       fy: node.fy === null ? undefined : node.fy,
       isMutual: mutualFollows.has(node.id),
@@ -55,7 +55,7 @@ const prepareGraphData = (graphData: GraphData) => {
       source: typeof link.source === 'string' ? link.source : link.source?.id || '',
       target: typeof link.target === 'string' ? link.target : link.target?.id || '',
       value: link.value || 1,
-      color: link.color || (link.type === 'mutual' ? BRAND_COLORS.bitcoinOrange : BRAND_COLORS.lightSand + '99'),
+      color: link.color || (link.type === 'mutual' ? BRAND_COLORS.bitcoinOrange : undefined),
     })),
   };
 };
@@ -105,7 +105,7 @@ const GraphRenderer = memo(
       // Draw base circle
       ctx.beginPath();
       ctx.arc(node.x, node.y, nodeRadius, 0, 2 * Math.PI, false);
-      ctx.fillStyle = node.color;
+      ctx.fillStyle = node.color || 'rgba(0,0,0,0.1)';
       ctx.fill();
 
       // Draw Bitcoin-colored circle for mutual follows or multiple core followers
@@ -137,15 +137,8 @@ const GraphRenderer = memo(
         }
       }
 
-      // Highlight selected node (white border takes precedence)
-      if (selectedNode?.id === node.id) {
-        ctx.beginPath();
-        ctx.arc(node.x, node.y, nodeRadius + (node.isMutual || node.followsMultipleCores ? 4 : 2), 0, 2 * Math.PI, false);
-        ctx.strokeStyle = 'white';
-        ctx.lineWidth = 2;
-        ctx.stroke();
-      }
-    }, [selectedNode]);
+      // Remove white border highlight for selected nodes
+    }, []);
 
     // Cleanup image cache on unmount
     useEffect(() => {
@@ -190,17 +183,14 @@ const GraphRenderer = memo(
           graphData={graphData}
           nodeCanvasObject={paintNode}
           nodeLabel={(node: any) => node.name || node.npub?.slice(0, 6) + '...' || 'Unknown'} // Name on hover
-          linkColor={(link: any) => link.color || BRAND_COLORS.lightSand + '99'}
+          linkColor={(link: any) => link.color || 'rgba(0,0,0,0.05)'}
           linkWidth={(link: any) => link.value}
-          linkDirectionalArrowLength={3}
-          linkDirectionalArrowRelPos={1}
+          linkDirectionalArrowLength={0}
           linkCurvature={0.2}
-          linkDirectionalParticles={1}
-          linkDirectionalParticleWidth={(link: any) => link.value}
-          linkDirectionalParticleSpeed={0.005}
+          linkDirectionalParticles={0}
           onNodeClick={(node: any) => onNodeClick?.(node)}
           onNodeHover={(node: any, previousNode: any) => onNodeHover?.(node)}
-          nodeRelSize={6}
+          nodeRelSize={12}
           warmupTicks={20}
           cooldownTicks={100}
           d3AlphaDecay={0.02}

@@ -1,122 +1,164 @@
 'use client';
 
-import React, { useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import Image from 'next/image';
 import { NostrProfileImage } from '../profile/NostrProfileImage';
-import { useImageFeed } from '../../../hooks/useImageFeed';
-import { formatDistanceToNow } from 'date-fns';
-import { ProfileData } from '../../../hooks/useCachedProfiles';
-import LoadingAnimation from '../../ui/LoadingAnimation';
+import { CORE_NPUBS, POPULAR_HASHTAGS } from '../utils';
+import { useNostrFeed, Note } from '../../../hooks/useNostrFeed';
+import { getRandomLoadingMessage } from '../../../constants/loadingMessages';
+import { MCP_CONFIG } from '../../../../mcp/config';
+
+// Define NSFW keywords for content filtering
+const NSFW_KEYWORDS = [
+  'nsfw', 'nude', 'explicit', 'porn', 'xxx'
+];
 
 interface CommunityFeedProps {
   npub?: string;
   npubs?: string[];
   limit?: number;
   hashtags?: string[];
+  autoScroll?: boolean;
+  scrollInterval?: number;
   useCorePubs?: boolean;
   className?: string;
   showLoadingAnimation?: boolean;
   showHeader?: boolean;
+  showHashtagFilter?: boolean;
   hideEmpty?: boolean;
   maxHeight?: number;
-  profilesMap?: Map<string, ProfileData> | Record<string, ProfileData>;
-  filterLinks?: boolean;
-  maxCacheSize?: number;
 }
 
-/**
- * CommunityFeed Component
- * 
- * Displays a grid of image notes from Nostr, filtered by authors (npubs)
- * and hashtags. Leverages the centralized cache system to efficiently
- * display content from multiple users, optimized for Web of Trust networks.
- */
 export const CommunityFeed: React.FC<CommunityFeedProps> = ({
   npub,
   npubs = [],
-  limit = 30,
+  limit = 25,
   hashtags = [],
+  autoScroll = false,
+  scrollInterval = 10000,
   useCorePubs = true,
   className = '',
   showLoadingAnimation = true,
   showHeader = true,
+  showHashtagFilter = true,
   hideEmpty = false,
   maxHeight,
-  profilesMap = new Map(),
-  filterLinks = true,
-  maxCacheSize = 1000 // Higher default for WoT networks
 }) => {
-  // Determine effective npubs
-  const effectiveNpubs = npub ? [npub] : npubs;
+  // State for UI
+  const [selectedHashtag, setSelectedHashtag] = useState<string | null>(null);
+  const [activeFilters, setActiveFilters] = useState<string[]>([]);
+  const [loadingMessage, setLoadingMessage] = useState(getRandomLoadingMessage());
+  const [errorShown, setErrorShown] = useState(false);
+  const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   
-  // Convert profilesMap to Map if it's a Record
-  const profilesAsMap = profilesMap instanceof Map 
-    ? profilesMap 
-    : new Map(Object.entries(profilesMap));
+  // Determine which npubs to use
+  const effectiveNpubs = useMemo(() => {
+    if (npub) return [npub]; // Single npub mode
+    if (useCorePubs) return [...CORE_NPUBS, ...npubs]; // Core npubs + additional npubs
+    return npubs; // Only specified npubs
+  }, [npub, npubs, useCorePubs]);
   
-  // Use the shared image feed hook with centralized caching
-  const { notes, loading, error, refresh, loadMore, hasMore } = useImageFeed({
+  // Special handling flag for Free Madeira NPUB
+  const isFreeMadeiraNpub = npub === 'npub1etgqcj9gc6yaxttuwu9eqgs3ynt2dzaudvwnrssrn2zdt2useaasfj8n6e'; // Only real Free Madeira NPUB
+  
+  // Use the Nostr feed hook
+  const { notes: allNotes, loading, error, refresh } = useNostrFeed({
     npubs: effectiveNpubs,
-    hashtags,
-    useCorePubs,
-    limit,
-    onlyWithImages: true,
-    profilesMap: profilesAsMap,
-    filterLinks,
-    initialFetchCount: limit,
-    maxCacheSize // Use the specified cache size for WoT networks
+    limit: isFreeMadeiraNpub ? 50 : limit, // Get more posts for Free Madeira
+    requiredHashtags: hashtags,
+    nsfwKeywords: NSFW_KEYWORDS,
+    useWebOfTrust: MCP_CONFIG.defaults.useWebOfTrust && !npub // Only use web of trust for multi-user feeds
   });
-
-  // Load more when scrolling near the bottom
-  const observerTarget = useRef(null);
   
+  // Show error in console but not more than once
   useEffect(() => {
-    // Only set up intersection observer if we have more to load
-    if (!hasMore) return;
-    
-    const observer = new IntersectionObserver(
-      entries => {
-        if (entries[0].isIntersecting && !loading && hasMore) {
-          loadMore();
-        }
-      },
-      { threshold: 0.5 }
-    );
-    
-    const currentTarget = observerTarget.current;
-    if (currentTarget) {
-      observer.observe(currentTarget);
+    if (error && !errorShown) {
+      console.error('CommunityFeed error:', error);
+      setErrorShown(true);
     }
-    
-    return () => {
-      if (currentTarget) {
-        observer.unobserve(currentTarget);
-      }
-    };
-  }, [hasMore, loading, loadMore]);
+  }, [error, errorShown]);
+  
+  // Filter notes by active hashtag if set
+  const filteredNotes = selectedHashtag 
+    ? allNotes.filter(note => 
+        note.hashtags.includes(selectedHashtag.toLowerCase()) || 
+        note.content.toLowerCase().includes(`#${selectedHashtag.toLowerCase()}`))
+    : allNotes;
 
-  // Format date for display
-  const formatDate = (timestamp: number) => {
-    return formatDistanceToNow(new Date(timestamp * 1000), { addSuffix: true });
-  };
+  // Set random loading message
+  useEffect(() => {
+    if (loading) {
+      setLoadingMessage(getRandomLoadingMessage('FEED'));
+      const interval = setInterval(() => {
+        setLoadingMessage(getRandomLoadingMessage('FEED'));
+      }, 3000);
+      return () => clearInterval(interval);
+    }
+  }, [loading]);
 
-  // Format content to show only the first few lines
-  const formatContent = (content: string, maxLength: number = 100) => {
-    if (!content) return '';
-    if (content.length <= maxLength) return content;
+  // Auto-scrolling logic
+  useEffect(() => {
+    if (autoScroll && filteredNotes.length > 0 && !loading) {
+      let currentIndex = 0;
+      
+      const scroll = () => {
+        if (scrollTimeoutRef.current) return;
+        
+        if (scrollTimeoutRef.current) {
+          clearTimeout(scrollTimeoutRef.current);
+        }
+        
+        scrollTimeoutRef.current = setTimeout(() => {
+          if (filteredNotes.length > 0) {
+            currentIndex = (currentIndex + 1) % filteredNotes.length;
+            const noteElement = document.querySelector(`.note-item:nth-child(${currentIndex + 1})`);
+            if (noteElement) {
+              noteElement.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            }
+          }
+        }, scrollInterval);
+      };
+      
+      scroll();
+      
+      return () => {
+        if (scrollTimeoutRef.current) {
+          clearTimeout(scrollTimeoutRef.current);
+        }
+      };
+    }
+  }, [autoScroll, filteredNotes, loading, scrollInterval]);
+
+  // Extract popular hashtags from notes
+  const popularHashtags = React.useMemo(() => {
+    const tagCounts: Record<string, number> = {};
     
-    return content.substring(0, maxLength) + '...';
+    allNotes.forEach(note => {
+      note.hashtags.forEach(tag => {
+        tagCounts[tag] = (tagCounts[tag] || 0) + 1;
+      });
+    });
+    
+    return Object.entries(tagCounts)
+      .filter(([tag]) => POPULAR_HASHTAGS.includes(tag))
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 7)
+      .map(([tag, count]) => ({ tag, count }));
+  }, [allNotes]);
+
+  // Open post in njump when clicked
+  const openInNjump = (note: Note) => {
+    if (!note || !note.id) return;
+    const njumpUrl = `https://njump.me/${note.id}`;
+    window.open(njumpUrl, '_blank');
   };
 
   return (
-    <div 
-      className={`w-full ${className}`} 
-      style={maxHeight ? { maxHeight: `${maxHeight}px`, overflowY: 'auto' } : {}}
-    >
+    <div className={`w-full ${className}`} style={maxHeight ? { maxHeight: `${maxHeight}px`, overflowY: 'auto' } : {}}>
       {/* Header and controls */}
       {showHeader && (
         <div className="flex justify-between items-center mb-4">
-          <h2 className="text-lg font-semibold dark:text-white">Community Feed</h2>
+          <h2 className="text-lg font-semibold dark:text-white">Community</h2>
           <div className="flex space-x-2">
             <button 
               onClick={() => refresh()}
@@ -131,94 +173,147 @@ export const CommunityFeed: React.FC<CommunityFeedProps> = ({
         </div>
       )}
       
-      {/* Notes Grid */}
-      {loading && notes.length === 0 && showLoadingAnimation ? (
-        <div className="flex justify-center items-center py-10">
-          <LoadingAnimation category="FEED" size="large" showText={true} />
+      {/* Hashtag filter */}
+      {showHashtagFilter && (
+        <div className="flex flex-wrap gap-2">
+          {popularHashtags.map(({ tag, count }) => (
+            <button
+              key={tag}
+              onClick={() => setSelectedHashtag(tag)}
+              className={`text-xs px-2 py-1 rounded-full ${
+                selectedHashtag === tag 
+                  ? 'bg-orange-500 text-white' 
+                  : 'bg-gray-200 dark:bg-gray-700 dark:text-gray-300'
+              }`}
+            >
+              #{tag} ({count})
+            </button>
+          ))}
+          {selectedHashtag && (
+            <button
+              onClick={() => setSelectedHashtag(null)}
+              className="text-xs px-2 py-1 bg-gray-200 dark:bg-gray-700 dark:text-gray-300 rounded-full ml-2"
+            >
+              Clear filter
+            </button>
+          )}
+        </div>
+      )}
+      
+      {/* Notes */}
+      {loading && showLoadingAnimation ? (
+        <div className="flex flex-col items-center justify-center h-64 w-full bg-gray-100 dark:bg-gray-800 rounded-lg p-4">
+          <div className="animate-pulse space-y-4 w-full">
+            <div className="h-4 bg-gray-300 dark:bg-gray-600 rounded w-3/4"></div>
+            <div className="space-y-2">
+              <div className="h-4 bg-gray-300 dark:bg-gray-600 rounded"></div>
+              <div className="h-4 bg-gray-300 dark:bg-gray-600 rounded w-5/6"></div>
+            </div>
+            <div className="h-40 bg-gray-300 dark:bg-gray-600 rounded"></div>
+          </div>
+          <div className="mt-4 text-sm text-gray-500 dark:text-gray-400">
+            {loadingMessage}
+          </div>
         </div>
       ) : (
         <>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-            {notes.map(note => (
-              <div key={note.id} className="bg-white dark:bg-gray-700 rounded-lg overflow-hidden shadow-md hover:shadow-lg transition-shadow">
-                {/* Image */}
-                <div className="relative aspect-video w-full">
-                  <Image
-                    src={note.images[0]}
-                    alt="Note image"
-                    fill
-                    className="object-cover"
-                    unoptimized
-                  />
-                </div>
-                
-                {/* Note content */}
-                <div className="p-4">
-                  {/* Note text */}
-                  <p className="text-gray-700 dark:text-gray-200 mb-3 line-clamp-3">
-                    {note.content}
-                  </p>
-                  
+          {filteredNotes.length === 0 ? (
+            // Empty state
+            !hideEmpty && (
+              <div className="flex flex-col items-center justify-center h-40 rounded-lg bg-gray-50 dark:bg-gray-800">
+                <p className="text-gray-500 dark:text-gray-400 mb-2">No posts to display</p>
+                <button 
+                  onClick={() => {
+                    refresh();
+                    setSelectedHashtag(null);
+                  }}
+                  className="px-4 py-2 bg-orange-500 text-white rounded-lg hover:bg-orange-600"
+                >
+                  Refresh
+                </button>
+              </div>
+            )
+          ) : (
+            // Notes list
+            <div className="space-y-4 overflow-y-auto max-h-[600px] pr-2">
+              {filteredNotes.map(note => (
+                <div 
+                  key={note.id} 
+                  className="note-item bg-white dark:bg-gray-800 p-4 rounded-lg shadow-md hover:shadow-lg transition-shadow cursor-pointer"
+                  onClick={() => openInNjump(note)}
+                >
                   {/* Author info */}
-                  <div className="flex items-center mt-3 pt-3 border-t border-gray-200 dark:border-gray-600">
+                  <div className="flex items-center space-x-2 mb-3">
                     <NostrProfileImage
                       npub={note.npub}
-                      width={36}
-                      height={36}
+                      width={40}
+                      height={40}
                       className="rounded-full"
                     />
-                    <div className="ml-2">
-                      <div className="font-medium text-sm dark:text-white">
+                    <div>
+                      <div className="font-semibold text-sm dark:text-white">
                         {note.author.displayName || note.author.name || 'Unknown'}
                       </div>
                       <div className="text-xs text-gray-500 dark:text-gray-400">
-                        {formatDate(note.created_at)}
+                        {new Date(note.created_at * 1000).toLocaleDateString()}
                       </div>
                     </div>
                   </div>
+                  
+                  {/* Note content */}
+                  <div className="text-sm dark:text-gray-200 mb-3">
+                    {note.content.split('\n').map((line, i) => (
+                      <React.Fragment key={i}>
+                        {line}
+                        {i < note.content.split('\n').length - 1 && <br />}
+                      </React.Fragment>
+                    ))}
+                  </div>
+                  
+                  {/* Image(s) */}
+                  {note.images && note.images.length > 0 && (
+                    <div className="my-3 rounded-md overflow-hidden">
+                      <Image
+                        src={note.images[0]}
+                        alt="Post image"
+                        width={500}
+                        height={300}
+                        className="object-cover w-full max-h-[300px]"
+                        unoptimized
+                      />
+                    </div>
+                  )}
+                  
+                  {/* Hashtags */}
+                  {note.hashtags && note.hashtags.length > 0 && (
+                    <div className="flex flex-wrap gap-1 mt-2">
+                      {note.hashtags.map(tag => (
+                        <span 
+                          key={tag} 
+                          className="text-xs px-2 py-1 bg-gray-200 dark:bg-gray-700 dark:text-gray-300 rounded"
+                        >
+                          #{tag}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
           
-          {/* Load more indicator */}
-          {hasMore && (
-            <div 
-              ref={observerTarget}
-              className="flex justify-center items-center py-8"
-            >
-              {loading && (
-                <LoadingAnimation category="FEED" size="small" showText={false} />
-              )}
+          {/* Error message */}
+          {error && !loading && (
+            <div className="flex items-center justify-center mt-4">
+              <button 
+                onClick={() => refresh()}
+                className="p-2 bg-orange-500 text-white rounded-full hover:bg-orange-600"
+              >
+                Refresh
+              </button>
             </div>
           )}
         </>
-      )}
-      
-      {/* Empty state */}
-      {!loading && notes.length === 0 && !hideEmpty && (
-        <div className="flex flex-col items-center justify-center h-40 bg-gray-100 dark:bg-gray-800 rounded-lg">
-          <p className="text-gray-500 dark:text-gray-400 mb-2">No posts to display</p>
-          <button 
-            onClick={() => refresh()}
-            className="px-3 py-1 bg-orange-500 text-white rounded-md hover:bg-orange-600"
-          >
-            Refresh
-          </button>
-        </div>
-      )}
-      
-      {/* Error state */}
-      {error && notes.length === 0 && !loading && (
-        <div className="flex items-center justify-center h-40 bg-gray-100 dark:bg-gray-800 rounded-lg">
-          <p className="text-red-500 dark:text-red-400 mb-2">{error}</p>
-          <button 
-            onClick={() => refresh()}
-            className="ml-2 p-2 bg-orange-500 text-white rounded-full hover:bg-orange-600"
-          >
-            Retry
-          </button>
-        </div>
       )}
     </div>
   );
