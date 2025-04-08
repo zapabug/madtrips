@@ -1,28 +1,37 @@
+/**
+ * SocialGraph - Community graph controller component
+ * 
+ * This component handles all social graph loading, data processing, 
+ * and passes visualization duties to GraphRenderer.
+ */
+
 'use client'
 
-import React, { useState } from 'react';
-import Image from 'next/image';
-import { GraphData, GraphNode } from '../../../types/graph-types';
-import { ProfileData } from '../../../hooks/useCachedProfiles';
-import LoadingAnimation from '../../ui/LoadingAnimation';
-import GraphRenderer from './GraphRenderer';
+import React, { useState } from 'react'
+import { GraphData, GraphNode } from '../../../types/graph-types'
+import { ProfileData } from '../../../hooks/useCachedProfiles'
+import LoadingAnimation from '../../ui/LoadingAnimation'
+import GraphRenderer from './GraphRenderer'
 
+// Component props
 interface SocialGraphProps {
-  graphData: GraphData | null;
-  profilesMap: Record<string, ProfileData>;
-  isLoading: boolean;
-  error: string | null;
-  compact?: boolean;
-  height?: number;
+  className?: string
+  graphData?: GraphData | null
+  profiles?: Map<string, ProfileData>
+  loading?: boolean
+  error?: string | null
+  onRefresh?: () => Promise<void>
+  compact?: boolean
 }
 
-export default function SocialGraph({ 
-  graphData,
-  profilesMap,
-  isLoading, 
-  error,
-  compact = false,
-  height
+export default function SocialGraph({
+  className = '',
+  graphData = null,
+  profiles = new Map(),
+  loading = false,
+  error = null,
+  onRefresh,
+  compact = false
 }: SocialGraphProps) {
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
 
@@ -31,42 +40,65 @@ export default function SocialGraph({
     setSelectedNode(node === selectedNode ? null : node);
   };
 
-  if (isLoading) {
+  // Loading state
+  if (loading) {
     return (
-      <div className="w-full h-full flex justify-center items-center p-4">
+      <div className={`w-full h-full flex justify-center items-center p-4 ${className}`}>
         <LoadingAnimation category="GRAPH" size={compact ? "medium" : "large"} showText={!compact} />
       </div>
     );
   }
 
+  // Error state
   if (error) {
     return (
-      <div className="w-full h-full flex justify-center items-center p-4">
+      <div className={`w-full h-full flex justify-center items-center p-4 ${className}`}>
         <div className="text-red-500 text-sm">{error}</div>
       </div>
     );
   }
 
+  // Empty state
   if (!graphData || !graphData.nodes || graphData.nodes.length === 0) {
     return (
-      <div className="w-full h-full flex justify-center items-center p-4">
+      <div className={`w-full h-full flex justify-center items-center p-4 ${className}`}>
         <div className="text-gray-500 text-sm">No graph data available</div>
       </div>
     );
   }
 
-  // Calculate height to use - use prop value, or derive from compact mode
-  const graphHeight = height || (compact ? 300 : 500);
+  // Calculate height to use based on compact mode
+  const graphHeight = compact ? 400 : 600;
 
-  // Use GraphRenderer for interactive visualization
+  // If profiles are provided, update node information
+  const processedGraphData = {...graphData};
+  if (profiles.size > 0 && processedGraphData.nodes) {
+    processedGraphData.nodes = processedGraphData.nodes.map(node => {
+      if (node.npub) {
+        const profile = profiles.get(node.npub);
+        if (profile) {
+          return {
+            ...node,
+            name: node.name || profile.displayName || profile.name,
+            picture: node.picture || profile.picture
+          };
+        }
+      }
+      return node;
+    });
+  }
+
+  // Render the graph visualization
   return (
-    <div className="w-full h-full">
-      <GraphRenderer 
-        graph={graphData}
-        height={graphHeight}
-        onNodeClick={handleNodeClick}
-        selectedNode={selectedNode}
-      />
+    <div className={`w-full h-full flex items-center justify-center ${className}`}>
+      <div className="w-full h-full">
+        <GraphRenderer 
+          graph={processedGraphData}
+          height={graphHeight}
+          onNodeClick={handleNodeClick}
+          selectedNode={selectedNode}
+        />
+      </div>
     </div>
   );
-}
+} 

@@ -136,8 +136,6 @@ const GraphRenderer = memo(
           ctx.restore();
         }
       }
-
-      // Remove white border highlight for selected nodes
     }, []);
 
     // Cleanup image cache on unmount

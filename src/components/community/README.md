@@ -9,14 +9,13 @@ The community components have been refactored to follow a more modular and maint
 ```
 community/
 ├── graph/                     # Social graph components
-│   ├── SocialGraph.tsx        # Main container component
-│   ├── GraphRenderer.tsx      # Visualization rendering
+│   ├── SocialGraph.tsx        # Main graph controller component
+│   ├── GraphRenderer.tsx      # Core visualization rendering
 │   ├── GraphControls.tsx      # UI controls for the graph
 │   ├── NodeTooltip.tsx        # Node tooltip component
 │   └── index.ts               # Re-exports for easier imports
 ├── CommunityFeed.tsx          # Nostr feed component
 ├── MadeiraFeed.tsx            # Madeira-specific feed
-├── SocialGraphVisualization.tsx # Wrapper for SocialGraph
 ├── NostrProfileImage.tsx      # Profile image component
 ├── NostrProfileHeader.tsx     # Profile header component
 ├── utils.ts                   # Shared utilities
@@ -48,7 +47,7 @@ import { SocialGraph, GraphRenderer } from '@/components/community/graph';
 
 // Import from the community directory
 import { 
-  SocialGraphVisualization, 
+  SocialGraph, 
   CommunityFeed, 
   MadeiraFeed, 
   NostrProfileImage 
@@ -61,12 +60,12 @@ import {
 
 ```tsx
 <SocialGraph
-  npubs={CORE_NPUBS}
-  maxConnections={15}
-  showSecondDegree={false}
-  continuousLoading={true}
-  height={600}
-  width="100%"
+  graphData={graphData}
+  profiles={profiles}
+  loading={graphLoading}
+  error={graphError}
+  onRefresh={refreshGraph}
+  className="w-full h-full"
 />
 ```
 
@@ -82,7 +81,7 @@ import {
 
 ## Performance Considerations
 
-- The `SocialGraph` component now uses a failsafe mechanism to ensure it always renders, even with connection issues
+- The graph visualization now uses a failsafe mechanism to ensure it always renders, even with connection issues
 - Graph loading is optimized with timeouts and error handling
 - Image loading is done incrementally and cached
 - The cache system prevents unnecessary network requests and calculations 
@@ -91,4 +90,5 @@ import {
 
 ### April 2025
 - Removed `CacheUsageExample` component as it was only intended for demonstration and development purposes. The example is still available in documentation form at `public/assets/docs/CacheUsageExample.md` for reference, but is no longer part of the production codebase.
-- Removed `ClearGraphCache` component as it was redundant and not aligned with the current cache API. 
+- Removed `ClearGraphCache` component as it was redundant and not aligned with the current cache API.
+- Renamed SocialGraphVisualization to SocialGraph and clarified component responsibilities. 
