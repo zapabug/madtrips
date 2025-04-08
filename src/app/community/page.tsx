@@ -35,7 +35,10 @@ export default function CommunityPage() {
   // Fetch profiles for all users in the graph
   const {
     profiles
-  } = useCachedProfiles(npubsInGraph);
+  } = useCachedProfiles(npubsInGraph, {
+    minimalProfile: true,  // Only fetch minimal profile data for graph
+    batchSize: 20          // Increase batch size for faster fetching
+  });
 
   // Debug log for graph data
   useEffect(() => {

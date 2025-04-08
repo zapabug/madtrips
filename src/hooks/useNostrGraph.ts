@@ -98,11 +98,27 @@ export function useNostrGraph({
 
   // Function to fetch profile data for a node
   const fetchNodeProfile = useCallback(async (node: GraphNode): Promise<GraphNode> => {
-    if (!node.pubkey) return node;
+    if (!node.pubkey || !node.npub) return node;
     
     try {
+      // Check cache first
+      const cachedProfile = cache.getCachedProfile(node.npub);
+      if (cachedProfile) {
+        return {
+          ...node,
+          name: cachedProfile.displayName || cachedProfile.name || node.name,
+          picture: cachedProfile.picture || ''
+        };
+      }
+      
+      // Only fetch from network if not in cache
       const profile = await getUserProfile(node.pubkey);
       if (profile) {
+        // Cache the profile for future use
+        if (node.npub) {
+          cache.setCachedProfile(node.npub, profile);
+        }
+        
         return {
           ...node,
           name: profile.displayName || profile.name || node.name,
@@ -114,7 +130,26 @@ export function useNostrGraph({
     }
     
     return node;
-  }, [getUserProfile]);
+  }, [getUserProfile, cache]);
+
+  // Debounce function to prevent excessive graph updates
+  const debounce = (func: Function, wait: number) => {
+    let timeout: NodeJS.Timeout;
+    return (...args: any[]) => {
+      clearTimeout(timeout);
+      timeout = setTimeout(() => func(...args), wait);
+    };
+  };
+
+  // Debounced version of set graph data to prevent excessive rendering
+  const debouncedSetGraphData = useCallback(
+    debounce((data: GraphData) => {
+      setGraphData(data);
+      setNpubsInGraph(data.nodes.filter(n => n.npub).map(n => n.npub!));
+      setLoading(false);
+    }, 300),
+    []
+  );
 
   // Function to fetch follows and followers for all core npubs
   const fetchGraphData = useCallback(async (): Promise<void> => {
@@ -125,12 +160,11 @@ export function useNostrGraph({
     setError(null);
     
     try {
-      // Check cache first
+      // Check cache first - use a more reliable mechanism
       const cachedGraph = cache.getCachedGraph(cacheKey);
-      if (cachedGraph) {
-        setGraphData(cachedGraph);
-        setNpubsInGraph(cachedGraph.nodes.filter(n => n.npub).map(n => n.npub!));
-        setLoading(false);
+      if (cachedGraph && cachedGraph.nodes.length > 0) {
+        console.log('Using cached graph data:', cachedGraph.nodes.length, 'nodes');
+        debouncedSetGraphData(cachedGraph);
         fetchInProgress.current = false;
         return;
       }
@@ -143,70 +177,101 @@ export function useNostrGraph({
       const mutualSet = new Set<string>();
       
       // Fetch profile data for core npubs and create nodes
-      for (const npub of coreNpubs) {
-        if (!npub) continue;
-        
-        try {
-          let pubkey = '';
-          
-          // Get user from NDK
-          if (ndk) {
-            const user = ndk.getUser({ npub });
-            pubkey = user.pubkey;
-          }
-          
-          if (!pubkey) continue;
-          
-          const nodeId = `node-${npub}`;
-          pubkeyToNodeId.set(pubkey, nodeId);
-          
-          // Create node with minimal info
-          const node: GraphNode = {
-            id: nodeId,
-            pubkey,
-            npub,
-            name: '',
-            val: 5,
-            isCoreNode: true
-          };
-          
-          // Fetch profile data
-          const nodeWithProfile = await fetchNodeProfile(node);
-          nodes.push(nodeWithProfile);
-        } catch (error) {
-          console.error(`Error processing core npub ${npub}:`, error);
-        }
-      }
+      console.log('Fetching profiles for', coreNpubs.length, 'core npubs');
       
-      // For each core npub, fetch follows and followers
-      for (const coreNpub of coreNpubs) {
-        if (!coreNpub) continue;
-        
-        try {
-          const coreUser = ndk?.getUser({ npub: coreNpub });
-          if (!coreUser) continue;
+      // Process core npubs in batches for better performance
+      const BATCH_SIZE = 5;
+      for (let i = 0; i < coreNpubs.length; i += BATCH_SIZE) {
+        const batch = coreNpubs.slice(i, i + BATCH_SIZE);
+        const batchPromises = batch.map(async (npub) => {
+          if (!npub) return null;
           
-          // Fetch followers (users who follow this core npub)
-          const followersFilter = { kinds: [3], "#p": [coreUser.pubkey] };
-          const followersEvents = await ndk.fetchEvents(followersFilter);
-          const followers: NDKUser[] = [];
-          
-          // Limit to specified number
-          let count = 0;
-          for (const event of followersEvents) {
-            if (count >= followersLimit) break;
-            if (event.pubkey) {
-              followers.push(ndk.getUser({ pubkey: event.pubkey }));
-              count++;
+          try {
+            let pubkey = '';
+            
+            // Get user from NDK
+            if (ndk) {
+              const user = ndk.getUser({ npub });
+              pubkey = user.pubkey;
             }
+            
+            if (!pubkey) return null;
+            
+            const nodeId = `node-${npub}`;
+            pubkeyToNodeId.set(pubkey, nodeId);
+            
+            // Create node with minimal info
+            const node: GraphNode = {
+              id: nodeId,
+              pubkey,
+              npub,
+              name: '',
+              val: 5,
+              isCoreNode: true
+            };
+            
+            // Fetch profile data
+            return await fetchNodeProfile(node);
+          } catch (error) {
+            console.error(`Error processing core npub ${npub}:`, error);
+            return null;
           }
+        });
+        
+        const batchResults = await Promise.all(batchPromises);
+        batchResults.forEach(node => {
+          if (node) {
+            nodes.push(node);
+          }
+        });
+      }
+
+      // For each core npub, fetch follows and followers in batches
+      console.log('Fetching follows and followers for core npubs');
+      for (let i = 0; i < coreNpubs.length; i += BATCH_SIZE) {
+        const batch = coreNpubs.slice(i, i + BATCH_SIZE);
+        const batchPromises = batch.map(async (coreNpub) => {
+          if (!coreNpub) return null;
           
-          // Fetch follows (users this core npub follows)
-          const follows = await coreUser.follows();
-          const followsArray = Array.from(follows).slice(0, followsLimit);
-          
-          const coreNodeId = pubkeyToNodeId.get(coreUser.pubkey);
-          if (!coreNodeId) continue;
+          try {
+            const coreUser = ndk?.getUser({ npub: coreNpub });
+            if (!coreUser) return null;
+            
+            // Fetch followers (users who follow this core npub)
+            const followersFilter = { kinds: [3], "#p": [coreUser.pubkey] };
+            const followersEvents = await ndk.fetchEvents(followersFilter);
+            const followers: NDKUser[] = [];
+            
+            // Limit to specified number
+            let count = 0;
+            for (const event of followersEvents) {
+              if (count >= followersLimit) break;
+              if (event.pubkey) {
+                followers.push(ndk.getUser({ pubkey: event.pubkey }));
+                count++;
+              }
+            }
+            
+            // Fetch follows (users this core npub follows)
+            const follows = await coreUser.follows();
+            const followsArray = Array.from(follows).slice(0, followsLimit);
+            
+            const coreNodeId = pubkeyToNodeId.get(coreUser.pubkey);
+            if (!coreNodeId) return null;
+            
+            return { coreNodeId, coreUser, followers, followsArray };
+          } catch (error) {
+            console.error(`Error fetching connections for ${coreNpub}:`, error);
+            return null;
+          }
+        });
+        
+        const batchResults = await Promise.all(batchPromises);
+        
+        // Process batch results
+        for (const result of batchResults) {
+          if (!result) continue;
+          const { coreNodeId, coreUser, followers, followsArray } = result;
           
           // Process follows
           for (const followUser of followsArray) {
@@ -258,11 +323,11 @@ export function useNostrGraph({
           
           // Process followers
           for (const followerUser of followers) {
-            const followerNpub = followerUser.npub;
             const followerPubkey = followerUser.pubkey;
+            const followerNpub = followerUser.npub;
             
-            // Check for mutual follow
-            const isMutual = Array.from(follows).some(f => f.pubkey === followerPubkey);
+            // Check for mutual follow - if the core user follows this follower
+            const isMutual = followsArray.some(follow => follow.pubkey === followerPubkey);
             if (isMutual) {
               mutualSet.add(followerPubkey);
             }
@@ -311,8 +376,6 @@ export function useNostrGraph({
               value: 1
             });
           }
-        } catch (error) {
-          console.error(`Error processing connections for ${coreNpub}:`, error);
         }
       }
       
@@ -342,8 +405,7 @@ export function useNostrGraph({
       };
       
       // Update state
-      setGraphData(graphData);
-      setNpubsInGraph(Array.from(npubSet));
+      debouncedSetGraphData(graphData);
       
       // Cache the graph data
       cache.setCachedGraph(cacheKey, graphData);

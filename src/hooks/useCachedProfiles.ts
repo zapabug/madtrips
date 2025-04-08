@@ -90,7 +90,7 @@ export function useCachedProfiles(
     }
     
     try {
-      const fetchedProfiles = new Map<string, ProfileData>();
+      const fetchedProfiles = new Map<string, ProfileData>(profiles);
       let completedCount = 0;
       
       // Process npubs in batches for better performance
@@ -171,21 +171,10 @@ export function useCachedProfiles(
           }
         });
         
-        // Update profiles map incrementally for better UX
-        if (isMounted.current) {
-          setProfiles(prev => {
-            const newMap = new Map(prev);
-            batchResults.forEach(profile => {
-              if (profile && profile.npub) {
-                newMap.set(profile.npub, profile);
-              }
-            });
-            return newMap;
-          });
-        }
+        // NOTE: Remove the incremental profile updates to prevent re-renders during batch processing
       }
       
-      // Final update
+      // Final update - only set profiles once at the end
       if (isMounted.current) {
         setProfiles(fetchedProfiles);
         setProgress(100);
@@ -201,12 +190,30 @@ export function useCachedProfiles(
       }
       fetchInProgress.current = false;
     }
-  }, [uniqueNpubs, getUserProfile, ndkReady, skipCache, minimalProfile, batchSize, cache]);
+  }, [uniqueNpubs, getUserProfile, ndkReady, skipCache, minimalProfile, batchSize, cache, profiles]);
   
   // Fetch profiles when npubs change and NDK is ready
+  // Use useEffect with a more stable dependency array
   useEffect(() => {
-    if (ndkReady && uniqueNpubs.length > 0) {
-      fetchProfiles();
+    // Only fetch when ndkReady is true and we have npubs to fetch for
+    if (ndkReady && uniqueNpubs.length > 0 && !fetchInProgress.current) {
+      // Check if we need to fetch any new profiles
+      const needsFetch = uniqueNpubs.some(npub => {
+        // Check if we already have this profile in state
+        if (profiles.has(npub)) return false;
+        
+        // Check if it's in cache
+        if (!skipCache) {
+          const cachedProfile = cache.getCachedProfile(npub);
+          if (cachedProfile && 'pubkey' in cachedProfile) return false;
+        }
+        
+        return true;
+      });
+      
+      if (needsFetch) {
+        fetchProfiles();
+      }
     }
   }, [ndkReady, uniqueNpubs, fetchProfiles]);
   
