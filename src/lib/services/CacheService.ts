@@ -145,7 +145,7 @@ const POST_CACHE_OPTIONS: CacheOptions = {
 };
 
 const GRAPH_CACHE_OPTIONS: CacheOptions = {
-  ttl: 10 * 60 * 1000, // 10 minutes
+  ttl: 30 * 60 * 1000, // 30 minutes
   maxSize: 10
 };
 

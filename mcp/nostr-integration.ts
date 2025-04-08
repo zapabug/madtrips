@@ -26,11 +26,9 @@ export interface MCPNostrOptions {
 export const STATIC_RELAYS = {
   PRIMARY: [
     "wss://relay.damus.io",
-    "wss://nos.lol",
     "wss://relay.nostr.band",
     "wss://nostr.wine",
-    "wss://relay.nostr.info",
-    "wss://relay.primal.net"
+    "wss://relay.nostr.info"
   ],
   COMMUNITY: [
     "wss://purplepag.es",
@@ -42,17 +40,12 @@ export const STATIC_RELAYS = {
   ],
   FAST: [
     "wss://relay.primal.net",
-    "wss://relay.damus.io",
     "wss://nostr.zebedee.cloud",
-    "wss://relay.nostr.band",
     "wss://relay.nos.social"
   ],
   MADEIRA: [
     "wss://relay.current.fyi",
-    "wss://purplepag.es",
-    "wss://nos.lol",
-    "wss://relay.damus.io",
-    "wss://relay.nostr.band"
+    "wss://nos.lol"
   ]
 };
 

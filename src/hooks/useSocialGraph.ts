@@ -129,81 +129,6 @@ export const useSocialGraph = ({
     [npubs, centerNpub]
   );
 
-  // Function to fetch profiles for nodes
-  const fetchProfiles = useCallback(async (nodes: GraphNode[]): Promise<GraphNode[]> => {
-    if (!ndkReady) return nodes;
-    
-    const updatedNodes = [...nodes];
-    
-    for (const node of updatedNodes) {
-      if (!node.pubkey) continue;
-      
-      try {
-        const profile = await getUserProfile(node.pubkey);
-        if (profile) {
-          node.name = profile.displayName || profile.name || node.name;
-          node.picture = profile.picture || '';
-        }
-      } catch (error) {
-        // Error handling moved to NostrContext.tsx
-      }
-    }
-    
-    return updatedNodes;
-  }, [getUserProfile, ndkReady]);
-
-  // Function to fetch graph data
-  const fetchGraphData = useCallback(async (): Promise<GraphData | null> => {
-    if (fetchInProgress.current) return null;
-    
-    fetchInProgress.current = true;
-    setIsLoading(true);
-    setError(null);
-    
-    try {
-      // Check if we have cached data first
-      const cacheKey = cache.createGraphCacheKey(effectiveNpubs, showSecondDegree);
-      const cachedGraph = cache.getCachedGraph(cacheKey);
-      
-      if (cachedGraph) {
-        return cachedGraph;
-      }
-
-      // Fetch real-time data from relays
-      const expandedNpubs = [...effectiveNpubs];
-      
-      // Create a basic graph with just the core npubs
-      const nodes: GraphNode[] = expandedNpubs.map(npub => ({
-        id: `node-${npub}`,
-        name: shortenNpub(npub),
-        npub,
-        pubkey: '',
-        val: 5,
-        isCoreNode: true
-      }));
-      
-      // Fetch profiles for all nodes
-      const nodesWithProfiles = await fetchProfiles(nodes);
-      
-      const result: GraphData = {
-        nodes: nodesWithProfiles,
-        links: [],
-        lastUpdated: Date.now()
-      };
-      
-      // Cache the result
-      cache.setCachedGraph(cacheKey, result);
-      
-      return result;
-    } catch (error) {
-      setError('Failed to load social graph');
-      return null;
-    } finally {
-      fetchInProgress.current = false;
-      setIsLoading(false);
-    }
-  }, [cache, effectiveNpubs, showSecondDegree, shortenNpub, fetchProfiles]);
-
   // New function to fetch contacts for a single node
   const fetchNodeContacts = useCallback(async (pubkey: string, maxContacts = 50): Promise<string[]> => {
     if (!ndk) return [];
@@ -237,83 +162,111 @@ export const useSocialGraph = ({
       return [];
     }
   }, [ndk]);
+  
+  // Function to fetch profile data for nodes
+  const fetchProfiles = useCallback(async (nodes: GraphNode[]): Promise<GraphNode[]> => {
+    if (!ndk || nodes.length === 0) return nodes;
+    
+    const updatedNodes = [...nodes];
+    
+    // Process in smaller batches for better performance
+    const batchSize = 20;
+    for (let i = 0; i < updatedNodes.length; i += batchSize) {
+      const batch = updatedNodes.slice(i, i + batchSize);
+      
+      // Process each node in the batch
+      await Promise.all(batch.map(async (node) => {
+        try {
+          // Only fetch if we have an npub
+          if (!node.npub) return;
+          
+          // Get profile data
+          const profile = await getUserProfile(node.npub);
+          
+          if (profile) {
+            // Update node with profile data
+            node.name = profile.displayName || profile.name || shortenNpub(node.npub);
+            node.picture = profile.picture || '';
+            // Store extra metadata on the node object if needed
+            (node as any).metadata = {
+              about: profile.about,
+              displayName: profile.displayName,
+              name: profile.name
+            };
+          }
+        } catch (error) {
+          // Silently fail for individual profile fetches
+        }
+      }));
+    }
+    
+    return updatedNodes;
+  }, [ndk, getUserProfile, shortenNpub]);
 
-  // Refresh the graph
-  const refreshGraph = useCallback(async (): Promise<void> => {
-    // Clean up any active subscriptions
-    if (activeSubscriptionRef.current) {
-      try {
-        activeSubscriptionRef.current.stop();
-        activeSubscriptionRef.current = null;
-      } catch (e) {
-        // Error handling moved to NostrContext.tsx
-      }
-    }
+  // Function to fetch graph data
+  const fetchGraphData = useCallback(async (): Promise<GraphData | null> => {
+    if (fetchInProgress.current) return null;
     
-    activeSubscriptionRef.current = null;
-    
-    if (!ndkReady || !ndk) {
-      setError('NDK not ready');
-      return;
-    }
-    
-    // Generate loading messages
-    const messages = getLoadingMessageSequence();
-    setLoadingMessage(messages[0] || 'Loading graph...');
-    
-    let messageIndex = 1;
-    const loadingInterval = setInterval(() => {
-      if (messageIndex < messages.length) {
-        setLoadingMessage(messages[messageIndex]);
-        messageIndex++;
-      } else {
-        clearInterval(loadingInterval);
-      }
-    }, 3000);
+    fetchInProgress.current = true;
+    setIsLoading(true);
+    setError(null);
     
     try {
-      // First, try to fetch initial graph data (nodes, links)
-      const initialGraphData = await fetchGraphData();
-      if (!initialGraphData) {
-        clearInterval(loadingInterval);
-        return;
+      // Check if we have cached data first - use more aggressively
+      const cacheKey = cache.createGraphCacheKey(effectiveNpubs, showSecondDegree);
+      const cachedGraph = cache.getCachedGraph(cacheKey);
+      
+      if (cachedGraph) {
+        console.log('Using cached graph data:', cachedGraph.nodes.length, 'nodes');
+        // Use cached data immediately to prevent waiting
+        setIsLoading(false);
+        return cachedGraph;
       }
-      
-      // Set initial data and update ref
-      setGraph(initialGraphData);
-      graphDataRef.current = initialGraphData;
-      
-      // Fetch pubkeys for all nodes
-      const nodePubkeys = new Map<string, string>();
-      
-      // Start a batch of profile lookups by npub
-      for (const node of initialGraphData.nodes) {
-        if (!node.npub) continue;
-        
+
+      // Clean up any existing subscriptions before creating new ones
+      if (activeSubscriptionRef.current) {
         try {
-          // Convert npub to pubkey if needed
-          const pubkey = ndk.getUser({ npub: node.npub }).pubkey;
-          node.pubkey = pubkey;
-          nodePubkeys.set(node.npub, pubkey);
+          activeSubscriptionRef.current.stop();
+          activeSubscriptionRef.current = null;
         } catch (e) {
-          // Skip this node
+          // Ignore errors during cleanup
         }
       }
+
+      // Fetch real-time data from relays
+      const expandedNpubs = [...effectiveNpubs];
       
-      // Update the graph with pubkeys
-      setGraph({...initialGraphData});
+      // Create a basic graph with just the core npubs
+      const nodes: GraphNode[] = expandedNpubs.map(npub => ({
+        id: `node-${npub}`,
+        name: shortenNpub(npub),
+        npub,
+        pubkey: '',
+        val: 5,
+        isCoreNode: true
+      }));
       
-      // If we should load second-degree connections (follows of follows)
-      if (showSecondDegree && initialGraphData.nodes.length > 0) {
-        await loadSecondDegreeConnections(initialGraphData, nodePubkeys);
-      }
+      // Fetch profiles for all nodes
+      const nodesWithProfiles = await fetchProfiles(nodes);
+      
+      const result: GraphData = {
+        nodes: nodesWithProfiles,
+        links: [],
+        lastUpdated: Date.now()
+      };
+      
+      // Cache the result with a longer TTL
+      cache.setCachedGraph(cacheKey, result);
+      
+      return result;
     } catch (error) {
-      setError('Failed to load graph data');
+      setError('Failed to load social graph');
+      return null;
     } finally {
-      clearInterval(loadingInterval);
+      fetchInProgress.current = false;
       setIsLoading(false);
     }
-  }, [ndkReady, ndk, fetchGraphData, showSecondDegree]);
+  }, [cache, effectiveNpubs, showSecondDegree, shortenNpub, fetchProfiles]);
 
   // Load second-degree connections
   const loadSecondDegreeConnections = useCallback(async (
@@ -446,6 +399,90 @@ export const useSocialGraph = ({
       }, 2000);
     }
   }, [fetchNodeContacts, maxConnections, maxSecondDegreeNodes, ndk, shortenNpub, fetchProfiles]);
+
+  // Refresh the graph
+  const refreshGraph = useCallback(async (): Promise<void> => {
+    // Clean up any active subscriptions
+    if (activeSubscriptionRef.current) {
+      try {
+        activeSubscriptionRef.current.stop();
+        activeSubscriptionRef.current = null;
+      } catch (e) {
+        // Silent error during cleanup
+      }
+    }
+    
+    // Skip if NDK not ready
+    if (!ndkReady) {
+      setError('Nostr connection not ready');
+      return;
+    }
+    
+    // Skip if no NDK
+    if (!ndk) {
+      setError('NDK not initialized');
+      return;
+    }
+    
+    // Show loading state
+    setIsLoading(true);
+    
+    // Show loading message updates
+    const loadingInterval = setInterval(() => {
+      setLoadingMessage(getRandomLoadingMessage('GRAPH'));
+    }, 3000);
+    
+    try {
+      // First, try to fetch initial graph data (nodes, links) with timeout
+      const fetchPromise = fetchGraphData();
+      const initialGraphData = await Promise.race([
+        fetchPromise,
+        new Promise<null>((_, reject) => {
+          setTimeout(() => reject(new Error('Graph data fetch timeout')), 15000);
+        })
+      ]);
+      
+      if (!initialGraphData) {
+        clearInterval(loadingInterval);
+        return;
+      }
+      
+      // Set initial data and update ref
+      setGraph(initialGraphData);
+      graphDataRef.current = initialGraphData;
+      
+      // Only fetch pubkeys for nodes that don't already have them
+      const nodePubkeys = new Map<string, string>();
+      const nodesToProcess = initialGraphData.nodes.filter(node => !node.pubkey);
+      
+      // Start a batch of profile lookups by npub
+      for (const node of nodesToProcess) {
+        if (!node.npub) continue;
+        
+        try {
+          // Convert npub to pubkey if needed
+          const pubkey = ndk.getUser({ npub: node.npub }).pubkey;
+          node.pubkey = pubkey;
+          nodePubkeys.set(node.npub, pubkey);
+        } catch (e) {
+          // Skip this node
+        }
+      }
+      
+      // Update the graph with pubkeys
+      setGraph({...initialGraphData});
+      
+      // If we should load second-degree connections (follows of follows)
+      if (showSecondDegree && initialGraphData.nodes.length > 0) {
+        await loadSecondDegreeConnections(initialGraphData, nodePubkeys);
+      }
+    } catch (error) {
+      setError('Failed to load graph data');
+    } finally {
+      clearInterval(loadingInterval);
+      setIsLoading(false);
+    }
+  }, [ndkReady, ndk, fetchGraphData, showSecondDegree, loadSecondDegreeConnections]);
 
   // Expand a single node to show its connections
   const expandNode = useCallback(async (nodeId: string): Promise<void> => {
