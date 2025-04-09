@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useNostr } from '../lib/contexts/NostrContext';
 import { useCache } from './useCache';
 
-interface WOTEntry {
+export interface WOTEntry {
   follows: string[];
   relevanceScore: number; // Higher score = more relevant (e.g., mutual follows)
 }

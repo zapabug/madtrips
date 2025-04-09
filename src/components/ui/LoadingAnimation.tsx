@@ -27,9 +27,18 @@ const LoadingAnimation: React.FC<LoadingAnimationProps> = ({
   const [message, setMessage] = useState<string>(initialMessage);
   const [isClientSide, setIsClientSide] = useState(false);
   
-  // Only start changing messages after hydration is complete
+  // Effect to mark client-side render (runs only once)
   useEffect(() => {
     setIsClientSide(true);
+  }, []); // Empty dependency array ensures this runs only once on mount
+  
+  // Effect to set and update the loading message (depends on category)
+  useEffect(() => {
+    // Only run the message logic if we are on the client side
+    if (!isClientSide) return;
+
+    console.log('LoadingAnimation effect running. Category:', category);
+
     setMessage(getRandomLoadingMessage(category));
     
     const interval = setInterval(() => {
@@ -37,7 +46,7 @@ const LoadingAnimation: React.FC<LoadingAnimationProps> = ({
     }, 3000);
     
     return () => clearInterval(interval);
-  }, [category]);
+  }, [category, isClientSide]); // Now depends on category and isClientSide
   
   // Determine size classes
   const sizeClasses = {

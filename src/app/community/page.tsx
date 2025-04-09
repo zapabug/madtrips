@@ -5,7 +5,7 @@
  * Uses shared hooks for efficient data fetching and caching.
  */
 
-import { useNostrGraph } from '../../hooks/useNostrGraph';
+import { useSimpleWOTGraph } from '../../hooks/useSimpleWOTGraph';
 import { useLiteProfiles } from '../../hooks/useLiteProfiles';
 import { CommunityFeed, MadeiraFeed } from '../../components/community';
 import { CORE_NPUBS } from '../../constants/nostr';
@@ -13,32 +13,28 @@ import SocialGraph from '../../components/community/graph/SocialGraph';
 import { GridGraph } from '../../components/community/graph';
 import LoadingAnimation from '../../components/ui/LoadingAnimation';
 import Section from '../../components/ui/Section';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 
 export default function CommunityPage() {
   // Debug state for graph visualization
   const [graphDebugInfo, setGraphDebugInfo] = useState<string | null>(null);
   
-  // Use the shared graph hook to fetch social connections
+  // Use the simpler graph hook, passing only the core npubs
   const { 
     graphData,
-    npubsInGraph, 
     loading: graphLoading, 
-    error: graphError,
-    refresh: refreshGraph 
-  } = useNostrGraph({
-    coreNpubs: CORE_NPUBS,
-    followsLimit: 10,
-    followersLimit: 10,
-    showMutuals: true
-  });
-  
-  // Fetch profiles for all users in the graph using useLiteProfiles
-  const {
-    profiles,
-    loading: profilesLoading,
-    error: profilesError
-  } = useLiteProfiles({
+    error: graphError
+  } = useSimpleWOTGraph(CORE_NPUBS);
+
+  // Extract npubs from the graph data itself
+  const npubsInGraph = useMemo(() => 
+    graphData?.nodes.map(node => node.id) || [], 
+    [graphData]
+  );
+
+  // Fetch profiles separately if needed for other components (like CommunityFeed)
+  // Note: The SocialGraph component now receives profiles directly from useSimpleWOTGraph's internal fetch
+  const { profiles } = useLiteProfiles({
     npubs: npubsInGraph,
     batchSize: 20
   });
@@ -65,17 +61,11 @@ export default function CommunityPage() {
           <div className="bg-gray-100 dark:bg-gray-800 rounded-lg p-4">
             <div className="h-[400px] flex items-center justify-center">
               <div className="w-full max-w-2xl h-full">
-                {(profilesLoading || graphLoading) ? (
-                  <LoadingAnimation category="FEED" size="medium" showText={true} />
-                ) : profilesError ? (
-                  <p className="text-red-500">Error loading profiles.</p>
-                ) : (
-                  <MadeiraFeed 
-                    profilesMap={profiles} 
-                    initialCount={30}
-                    maxCached={150}
-                  />
-                )}
+                <MadeiraFeed 
+                  profilesMap={profiles} 
+                  initialCount={30}
+                  maxCached={150}
+                />
               </div>
             </div>
           </div>
@@ -112,7 +102,6 @@ export default function CommunityPage() {
                       profiles={profiles}
                       loading={graphLoading}
                       error={graphError}
-                      onRefresh={refreshGraph}
                       className="w-full h-full"
                     />
                     
@@ -124,17 +113,11 @@ export default function CommunityPage() {
                 </div>
                 
                 {/* Profile grid - now using the GridGraph component */}
-                {(profilesLoading || graphLoading) ? (
-                   <LoadingAnimation category="GRAPH" size="medium" showText={true} />
-                ) : profilesError ? (
-                  <p className="text-red-500">Error loading profiles grid.</p>
-                ) : (
-                  <GridGraph
-                    graphData={graphData}
-                    profiles={profiles}
-                    maxNodes={50}
-                  />
-                )}
+                <GridGraph
+                  graphData={graphData}
+                  profiles={profiles}
+                  maxNodes={50}
+                />
               </div>
             </div>
           </div>
@@ -146,7 +129,7 @@ export default function CommunityPage() {
           description="Notes with images from Bitcoin Madeira community members. A visual representation of community conversations and shared moments."
         >
           <CommunityFeed 
-            npubs={npubsInGraph} 
+            npubs={npubsInGraph}
             limit={30}
           />
         </Section>
