@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useNostr } from '../lib/contexts/NostrContext';
 import { LiteProfile } from '../types/lite-nostr';
 
@@ -36,7 +36,7 @@ export function useLiteProfiles({
   const fetchInProgress = useRef(false);
   
   // Create a set of unique NPUBs
-  const uniqueNpubs = [...new Set(npubs.filter(Boolean))];
+  const uniqueNpubs = useMemo(() => [...new Set(npubs.filter(Boolean))], [npubs]);
   
   // Clean up when unmounting
   useEffect(() => {

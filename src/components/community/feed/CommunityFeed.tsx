@@ -56,8 +56,8 @@ export const CommunityFeed: React.FC<CommunityFeedProps> = ({
   const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   
   // Properly memoize arrays to prevent unnecessary rerenders
-  const hashtagsArray = useMemo(() => [...hashtags], [hashtags.join(',')]);
-  const npubsArray = useMemo(() => [...npubs], [npubs.join(',')]);
+  const hashtagsArray = useMemo(() => [...hashtags], [hashtags]);
+  const npubsArray = useMemo(() => [...npubs], [npubs]);
   
   // Determine which npubs to use - with proper memoization
   const effectiveNpubs = useMemo(() => {

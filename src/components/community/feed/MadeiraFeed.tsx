@@ -29,12 +29,6 @@ interface MadeiraFeedProps {
   className?: string;
   
   /**
-   * Initial number of items to fetch and display
-   * @default 30
-   */
-  initialCount?: number;
-  
-  /**
    * Maximum number of items to cache for this component
    * Recommended to keep lower (100-200) for focused feeds like MadeiraFeed
    * @default 150
@@ -48,10 +42,9 @@ interface MadeiraFeedProps {
  * Displaysimages tagged with Madeira-related hashtags.
  * Uses the centralized caching system to efficiently fetch and display content.
  */
-export default function MadeiraFeed({ 
+export default function MadeiraFeed({
   profilesMap,
   className = '',
-  initialCount = 30,
   maxCached = 150
 }: MadeiraFeedProps) {
   // Convert profilesMap to Map if it's a Record - use memoization to prevent unnecessary conversions
@@ -138,19 +131,23 @@ export default function MadeiraFeed({
                 }`}
               >
                 {/* Display the main image */}
-                <img 
-                  src={note.images[0]} 
+                <Image
+                  src={note.images[0]}
                   alt={`Madeira image ${index + 1}`}
-                  className="object-contain w-full h-full"
+                  layout="fill"
+                  objectFit="contain"
+                  priority={index === currentIndex}
                 />
                 
                 {/* Profile image overlay */}
                 <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/70 to-transparent p-4 text-white">
                   {note.author.picture && (
-                    <img 
-                      src={note.author.picture} 
-                      alt={note.author.displayName || note.author.name || 'Author'} 
-                      className="w-6 h-6 rounded-full mr-2"
+                    <Image
+                      src={note.author.picture}
+                      alt={note.author.displayName || note.author.name || 'Author'}
+                      width={24}
+                      height={24}
+                      className="rounded-full mr-2"
                     />
                   )}
                 </div>

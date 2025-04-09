@@ -4,7 +4,6 @@ import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { useEffect, useState, useCallback, useMemo } from 'react'
 import { NostrProfileHeader } from '../../components/community/profile/NostrProfileHeader'
-import Image from 'next/image'
 import { CORE_NPUBS } from '../../constants/nostr'
 import { useLiteProfiles } from '../../hooks/useLiteProfiles'
 import { useCache } from '../../hooks/useCache'
@@ -62,7 +61,7 @@ export function Navigation() {
               await cache.preloadAndCacheImage(profile.picture)
               // Now profile.name and profile.npub exist on LiteProfile
               console.debug(`Preloaded image for ${profile.name || profile.npub}`)
-            } catch (err) {
+            } catch {
               // Silently fail for image preloading
               console.debug(`Failed to preload image for ${profile.npub}`)
             }

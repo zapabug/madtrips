@@ -14,7 +14,6 @@ interface CommunityFeedProps {
   maxHeight?: number;
   npubs?: string[];
   limit?: number;
-  hashtags?: string[];
 }
 
 export const CommunityFeed: React.FC<CommunityFeedProps> = ({
@@ -23,7 +22,6 @@ export const CommunityFeed: React.FC<CommunityFeedProps> = ({
   maxHeight,
   npubs = [],
   limit = 3,
-  hashtags = [],
 }) => {
   // Step 1: Fetch follows for core npubs to get the full list
   const coreNpubs = npubs.length > 0 ? npubs : CORE_NPUBS.slice(0, 4); // Use provided npubs or fall back to core npubs
@@ -82,7 +80,7 @@ export const CommunityFeed: React.FC<CommunityFeedProps> = ({
   }, [notes, wot, coreNpubs, limit]);
 
   // Open post in njump when clicked
-  const openInNjump = (note: any) => {
+  const openInNjump = (note: { id?: string }) => {
     if (!note.id) return;
     const njumpUrl = `https://njump.me/${note.id}`;
     window.open(njumpUrl, '_blank');
