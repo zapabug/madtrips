@@ -5,7 +5,7 @@ import { useNostr, NostrContextType } from '../lib/contexts/NostrContext';
 import { CORE_NPUBS } from '../constants/nostr';
 import { useCache } from '../hooks/useCache';
 import { NDKEvent, NDKSubscription, NDKFilter, NDKUser } from '@nostr-dev-kit/ndk';
-import { ProfileData } from './useCachedProfiles';
+import { LiteProfile } from '../types/lite-nostr';
 
 // Common NSFW-related keywords to filter out
 const NSFW_KEYWORDS = [
@@ -38,7 +38,7 @@ interface UseImageFeedOptions {
   useCorePubs?: boolean;
   limit?: number;
   onlyWithImages?: boolean;
-  profilesMap?: Map<string, ProfileData>;
+  profilesMap?: Map<string, LiteProfile>;
   filterLinks?: boolean;
   initialFetchCount?: number;
   maxCacheSize?: number;
@@ -229,8 +229,7 @@ export function useImageFeed({
           pubkey: event.pubkey,
           name: '',
           displayName: '',
-          picture: '',
-          nip05: ''
+          picture: ''
         };
         
         // Convert pubkey to npub
@@ -248,8 +247,7 @@ export function useImageFeed({
                   pubkey: event.pubkey,
                   name: profile.name || '',
                   displayName: profile.displayName || profile.name || '',
-                  picture: profile.picture || '',
-                  nip05: profile.nip05 || ''
+                  picture: profile.picture || ''
                 };
               }
             } else {
@@ -260,8 +258,7 @@ export function useImageFeed({
                   pubkey: event.pubkey,
                   name: profile.name || '',
                   displayName: profile.displayName || profile.name || '',
-                  picture: profile.picture || '',
-                  nip05: profile.nip05 || ''
+                  picture: profile.picture || ''
                 };
               }
             }

@@ -6,7 +6,7 @@ import { useEffect, useState, useCallback, useMemo } from 'react'
 import { NostrProfileHeader } from '../../components/community/profile/NostrProfileHeader'
 import Image from 'next/image'
 import { CORE_NPUBS } from '../../constants/nostr'
-import { useCachedProfiles } from '../../hooks/useCachedProfiles'
+import { useLiteProfiles } from '../../hooks/useLiteProfiles'
 import { useCache } from '../../hooks/useCache'
 
 // Extracted constants and reusable styles
@@ -45,10 +45,10 @@ export function Navigation() {
   const [activeSection, setActiveSection] = useState<string | null>(null)
   const cache = useCache()
 
-  // Preload all core profile data for faster access when visiting community page
-  const { profiles } = useCachedProfiles(CORE_NPUBS, {
-    minimalProfile: true, // Only fetch essential profile data
-    batchSize: 2 // Smaller batch size to avoid overloading
+  // Preload all core profile data using useLiteProfiles
+  const { profiles } = useLiteProfiles({
+    npubs: CORE_NPUBS,
+    batchSize: 2
   })
 
   // Preload profile images for faster rendering
@@ -60,6 +60,7 @@ export function Navigation() {
           if (profile.picture) {
             try {
               await cache.preloadAndCacheImage(profile.picture)
+              // Now profile.name and profile.npub exist on LiteProfile
               console.debug(`Preloaded image for ${profile.name || profile.npub}`)
             } catch (err) {
               // Silently fail for image preloading

@@ -106,7 +106,7 @@ export function useLiteNostrData({
               
               const profile = processLiteProfile(event, userNpub);
               if (profile) {
-                profilesMap.set(profile.npub, profile);
+                profilesMap.set(profile.npub || profile.pubkey, profile);
               }
             } catch (e) {
               console.error('Error processing profile:', e);

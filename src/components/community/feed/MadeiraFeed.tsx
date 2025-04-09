@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import Image from 'next/image';
-import { ProfileData } from '../../../hooks/useCachedProfiles';
+import { LiteProfile } from '../../../types/lite-nostr';
 import { useImageFeed } from '../../../hooks/useImageFeed';
 import LoadingAnimation from '../../ui/LoadingAnimation';
 
@@ -21,7 +21,7 @@ interface MadeiraFeedProps {
   /**
    * Map of Nostr profiles to display author information
    */
-  profilesMap: Map<string, ProfileData> | Record<string, ProfileData>;
+  profilesMap: Map<string, LiteProfile> | Record<string, LiteProfile>;
   
   /**
    * Additional CSS classes to apply to the component

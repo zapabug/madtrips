@@ -70,10 +70,11 @@ export function useLiteNostrEvents({
         }
         
         const profile = processLiteProfile(event, userNpub);
-        if (profile) {
+        if (profile && typeof profile.npub === 'string') {
+          const npubKey = profile.npub;
           setProfiles(prev => {
             const newMap = new Map(prev);
-            newMap.set(profile.npub, profile);
+            newMap.set(npubKey, profile);
             return newMap;
           });
         }

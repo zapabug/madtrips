@@ -6,7 +6,7 @@
  */
 
 import { useNostrGraph } from '../../hooks/useNostrGraph';
-import { useCachedProfiles } from '../../hooks/useCachedProfiles';
+import { useLiteProfiles } from '../../hooks/useLiteProfiles';
 import { CommunityFeed, MadeiraFeed } from '../../components/community';
 import { CORE_NPUBS } from '../../constants/nostr';
 import SocialGraph from '../../components/community/graph/SocialGraph';
@@ -33,12 +33,14 @@ export default function CommunityPage() {
     showMutuals: true
   });
   
-  // Fetch profiles for all users in the graph
+  // Fetch profiles for all users in the graph using useLiteProfiles
   const {
-    profiles
-  } = useCachedProfiles(npubsInGraph, {
-    minimalProfile: true,  // Only fetch minimal profile data for graph
-    batchSize: 20          // Increase batch size for faster fetching
+    profiles,
+    loading: profilesLoading,
+    error: profilesError
+  } = useLiteProfiles({
+    npubs: npubsInGraph,
+    batchSize: 20
   });
 
   // Debug log for graph data
@@ -63,11 +65,17 @@ export default function CommunityPage() {
           <div className="bg-gray-100 dark:bg-gray-800 rounded-lg p-4">
             <div className="h-[400px] flex items-center justify-center">
               <div className="w-full max-w-2xl h-full">
-                <MadeiraFeed 
-                  profilesMap={profiles} 
-                  initialCount={30}
-                  maxCached={150}
-                />
+                {(profilesLoading || graphLoading) ? (
+                  <LoadingAnimation category="FEED" size="medium" showText={true} />
+                ) : profilesError ? (
+                  <p className="text-red-500">Error loading profiles.</p>
+                ) : (
+                  <MadeiraFeed 
+                    profilesMap={profiles} 
+                    initialCount={30}
+                    maxCached={150}
+                  />
+                )}
               </div>
             </div>
           </div>
@@ -116,11 +124,17 @@ export default function CommunityPage() {
                 </div>
                 
                 {/* Profile grid - now using the GridGraph component */}
-                <GridGraph
-                  graphData={graphData}
-                  profiles={profiles}
-                  maxNodes={50}
-                />
+                {(profilesLoading || graphLoading) ? (
+                   <LoadingAnimation category="GRAPH" size="medium" showText={true} />
+                ) : profilesError ? (
+                  <p className="text-red-500">Error loading profiles grid.</p>
+                ) : (
+                  <GridGraph
+                    graphData={graphData}
+                    profiles={profiles}
+                    maxNodes={50}
+                  />
+                )}
               </div>
             </div>
           </div>

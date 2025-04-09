@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useNostr } from '../lib/contexts/NostrContext';
-import useCache from './useCache';
+import { useCache } from '../hooks/useCache';
 import { NDKEvent, NDKFilter, NDKSubscription } from '@nostr-dev-kit/ndk';
 import { nip19 } from 'nostr-tools';
 import { extractImageUrls, extractHashtags, handleNostrError } from '../utils/nostrUtils';

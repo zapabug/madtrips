@@ -9,7 +9,7 @@
 
 import React, { useState } from 'react'
 import { GraphData, GraphNode } from '../../../types/graph-types'
-import { ProfileData } from '../../../hooks/useCachedProfiles'
+import { LiteProfile } from '../../../types/lite-nostr'
 import LoadingAnimation from '../../ui/LoadingAnimation'
 import GraphRenderer from './GraphRenderer'
 
@@ -17,7 +17,7 @@ import GraphRenderer from './GraphRenderer'
 interface SocialGraphProps {
   className?: string
   graphData?: GraphData | null
-  profiles?: Map<string, ProfileData>
+  profiles?: Map<string, LiteProfile>
   loading?: boolean
   error?: string | null
   onRefresh?: () => Promise<void>

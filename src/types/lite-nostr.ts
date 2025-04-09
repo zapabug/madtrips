@@ -12,8 +12,9 @@
  */
 export interface LiteProfile {
   pubkey: string;             // hex
-  npub: string;               // bech32 encoded
-  name?: string;              // from profile.name or profile.display_name
+  npub?: string;               // bech32 encoded
+  name?: string;              // from profile.name
+  displayName?: string;       // from profile.display_name or name
   picture?: string;           // profile picture URL
   lastFetched?: number;       // optional for cache
 }
@@ -93,6 +94,7 @@ export const processLiteProfile = (event: any, npub: string): LiteProfile | null
       pubkey: event.pubkey,
       npub,
       name: content.name || content.display_name || content.displayName,
+      displayName: content.display_name || content.name || content.displayName,
       picture: content.picture,
       lastFetched: Date.now()
     };

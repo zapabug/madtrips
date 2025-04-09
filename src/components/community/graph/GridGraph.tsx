@@ -2,11 +2,11 @@
 
 import React from 'react';
 import { GraphData, GraphNode } from '../../../types/graph-types';
-import { ProfileData } from '../../../hooks/useCachedProfiles';
+import { LiteProfile } from '../../../types/lite-nostr';
 
 interface GridGraphProps {
   graphData: GraphData | null;
-  profiles: Map<string, ProfileData>;
+  profiles: Map<string, LiteProfile>;
   maxNodes?: number;
   className?: string;
 }

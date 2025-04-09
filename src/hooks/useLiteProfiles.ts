@@ -23,7 +23,7 @@ export function useLiteProfiles({
   npubs = [],
   batchSize = 10
 }: UseLiteProfilesOptions): UseLiteProfilesResult {
-  const { getUserProfile, ndkReady } = useNostr();
+  const { getUserProfile, ndkReady, ndk } = useNostr();
   
   // State for tracking profiles and loading state
   const [profiles, setProfiles] = useState<Map<string, LiteProfile>>(new Map());
@@ -76,12 +76,17 @@ export function useLiteProfiles({
             // Always fetch from network - no caching
             const profileData = await getUserProfile(npub);
             
-            if (profileData) {
-              // Create a lightweight profile
+            if (profileData && ndk) {
+              // Get the NDKUser object to access the hex pubkey
+              const user = ndk.getUser({ npub });
+              const hexPubkey = user.pubkey;
+
+              // Create a lightweight profile, including displayName
               const profile: LiteProfile = {
-                pubkey: '', // Will be populated from network
+                pubkey: hexPubkey || '', // Use hex pubkey from NDKUser
                 npub,
                 name: profileData.name,
+                displayName: profileData.displayName || profileData.name, // Set displayName
                 picture: profileData.picture,
                 lastFetched: Date.now()
               };
@@ -128,7 +133,7 @@ export function useLiteProfiles({
       }
       fetchInProgress.current = false;
     }
-  }, [uniqueNpubs, getUserProfile, ndkReady, batchSize]);
+  }, [uniqueNpubs, getUserProfile, ndkReady, batchSize, ndk]);
   
   // Fetch profiles when dependencies change
   useEffect(() => {

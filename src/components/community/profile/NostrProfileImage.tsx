@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from 'react'
 import Image from 'next/image'
-import { useNostrProfile } from '../../../hooks/useNostrProfile'
+import { useLiteProfiles } from '../../../hooks/useLiteProfiles'
 
 interface NostrProfileImageProps {
   npub: string
@@ -19,7 +19,12 @@ export function NostrProfileImage({
   className = '', 
   alt = 'Nostr Profile' 
 }: NostrProfileImageProps) {
-  const { profile, loading, error } = useNostrProfile(npub);
+  const { profiles, loading } = useLiteProfiles({ 
+    npubs: [npub],
+    batchSize: 1 // Only fetching one
+  });
+
+  const profile = profiles.get(npub);
   const profilePic = profile?.picture || '/assets/bitcoin.png';
 
   return (

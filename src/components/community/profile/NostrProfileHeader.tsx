@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import Image from 'next/image'
-import { useNostrProfile } from '../../../hooks/useNostrProfile'
+import { useLiteProfiles } from '../../../hooks/useLiteProfiles'
 
 interface NostrProfileHeaderProps {
   npub: string
@@ -11,15 +11,17 @@ interface NostrProfileHeaderProps {
 }
 
 export function NostrProfileHeader({ npub, className = '', showImage = false }: NostrProfileHeaderProps) {
-  const { profile, loading } = useNostrProfile(npub, {
-    skipCache: false,
-    retryAttempts: 1,
-    minimalProfile: true // Only fetch minimal profile data
+  const { profiles, loading } = useLiteProfiles({ 
+    npubs: [npub],
+    batchSize: 1 // Only fetching one
   });
+
+  // Extract single profile
+  const profile = profiles.get(npub);
   
   const [imageLoading, setImageLoading] = useState<boolean>(true);
   
-  // Get name from profile
+  // Get name from profile (use displayName first)
   const name = profile?.displayName || profile?.name || 'MadTrips';
   const picture = profile?.picture || null;
   

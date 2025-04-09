@@ -4,7 +4,7 @@ import React, { useMemo } from 'react';
 import Image from 'next/image';
 import { NostrProfileImage } from './profile/NostrProfileImage';
 import { CORE_NPUBS } from '../../constants/nostr';
-import useCachedProfiles from '../../hooks/useCachedProfiles';
+import { useLiteProfiles } from '../../hooks/useLiteProfiles';
 import useWOTFollows from '../../hooks/useWOTFollows';
 import useImageNotes from '../../hooks/useImageNotes';
 
@@ -49,8 +49,8 @@ export const CommunityFeed: React.FC<CommunityFeedProps> = ({
     return Array.from(followedNpubsSet);
   }, [wot, coreNpubs]);
 
-  // Step 3: Fetch profiles for all npubs
-  const { profiles } = useCachedProfiles(allNpubs);
+  // Step 3: Fetch profiles for all npubs using useLiteProfiles
+  const { profiles } = useLiteProfiles({ npubs: allNpubs });
 
   // Step 4: Fetch notes with images
   const { notes, loading: notesLoading } = useImageNotes(allNpubs);
