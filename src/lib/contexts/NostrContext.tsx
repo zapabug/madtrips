@@ -24,7 +24,11 @@ export interface UserProfile {
   nip05?: string;
   lud16?: string; // Lightning address
   lud06?: string; // LNURL
+  pubkey?: string; // ADDED: Optional pubkey property
 }
+
+// Define a type for the logger function
+export type LoggerFunction = (level: 'log' | 'warn' | 'error', context: string, ...args: any[]) => void;
 
 /**
  * Interface for the Nostr context
@@ -49,6 +53,7 @@ export interface NostrContextType {
   relayCount: number;
   relayStatus: { connected: number; total: number };
   getEvents: (filter: NDKFilter, options?: { closeOnEose?: boolean, forceFresh?: boolean }) => Promise<NDKEvent[]>;
+  logMessage: LoggerFunction; // ADDED: Logger function
 }
 
 // Default context value
@@ -71,7 +76,22 @@ const defaultContextValue: NostrContextType = {
   subscribeToEvents: async () => null,
   relayCount: 0,
   relayStatus: { connected: 0, total: 0 },
-  getEvents: async () => []
+  getEvents: async () => [],
+  logMessage: (level, context, ...args) => {
+    const prefix = `[${new Date().toISOString()}]${context}`;
+    switch (level) {
+      case 'warn':
+        console.warn(prefix, ...args);
+        break;
+      case 'error':
+        console.error(prefix, ...args);
+        break;
+      case 'log':
+      default:
+        console.log(prefix, ...args);
+        break;
+    }
+  }
 };
 
 // Create the context
@@ -106,6 +126,22 @@ export const NostrProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const ndkInitialized = useRef(false);
   const cache = useCache();
   
+  // Centralized logger function
+  const logMessage: LoggerFunction = useCallback((level, context, ...args) => {
+    // Check if ndkReady, allowing certain contexts early
+    if (!ndkReady && context !== '[NostrContext][Init]' && context !== '[NostrContext][RelayStatus]' && context !== '[NostrContext][initNDK]') {
+        console.log(`[${new Date().toLocaleTimeString()}]${context} (NDK not ready, skipping)`, ...args); 
+        return;
+    }
+    const prefix = `[${new Date().toLocaleTimeString()}]${context}`;
+    // Log using console
+    switch (level) {
+      case 'warn': console.warn(prefix, ...args); break;
+      case 'error': console.error(prefix, ...args); break;
+      default: console.log(prefix, ...args); break;
+    }
+  }, [ndkReady]);
+
   // Enhanced relay status tracking function
   const trackRelayStatus = useCallback((ndkInstance: NDK) => {
     if (!ndkInstance || !ndkInstance.pool) return;
@@ -454,7 +490,7 @@ export const NostrProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       const { data } = nip19.decode(npub);
       return data as string;
     } catch (error) {
-      console.error('Error decoding npub:', error);
+      logMessage('error', '[NostrContext][npubToPubkey]', 'Error decoding npub:', error); // Use logMessage
       return '';
     }
   };
@@ -474,7 +510,7 @@ export const NostrProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     // Check persistent cache
     const cachedProfile = cache.getCachedProfile(pubkey);
     if (cachedProfile) {
-      return cachedProfile;
+      return cachedProfile; // Return cached profile which might not have pubkey yet
     }
     
     // Fetch from network
@@ -503,7 +539,8 @@ export const NostrProvider: React.FC<{ children: ReactNode }> = ({ children }) =
           website: user.profile.website || '',
           banner: user.profile.banner || '',
           lud06: user.profile.lud06 || '',
-          lud16: user.profile.lud16 || ''
+          lud16: user.profile.lud16 || '',
+          pubkey: user.pubkey // ADDED: Include pubkey in the returned profile object
         };
         
         // Update cache
@@ -512,7 +549,7 @@ export const NostrProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         return profile;
       }
     } catch (error) {
-      console.error('Error fetching user profile:', error);
+      logMessage('error', '[NostrContext][getUserProfile]', 'Error fetching user profile:', error); // Use logMessage
     }
     
     return null;
@@ -581,8 +618,9 @@ export const NostrProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     subscribeToEvents,
     getEvents,
     relayCount,
-    relayStatus
-  }), [ndk, user, isLoggedIn, login, logout, getUserProfile, shortenNpub, refetchUserProfile, npub, userName, userProfilePicture, ndkReady, reconnect, getConnectedRelays, publishEvent, subscribeToEvents, getEvents, relayCount, relayStatus]);
+    relayStatus,
+    logMessage
+  }), [ndk, user, isLoggedIn, login, logout, getUserProfile, shortenNpub, refetchUserProfile, npub, userName, userProfilePicture, ndkReady, reconnect, getConnectedRelays, publishEvent, subscribeToEvents, getEvents, relayCount, relayStatus, logMessage]);
 
   return (
     <NostrContext.Provider value={contextValue}>

@@ -4,9 +4,11 @@ import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react'
 import Image from 'next/image';
 import { NostrProfileImage } from '../profile/NostrProfileImage';
 import { CORE_NPUBS, POPULAR_HASHTAGS } from '../utils';
-import { useNostrFeed, Note } from '../../../hooks/useNostrFeed';
+import { useNostrFeed, NostrPost } from '../../../hooks/useNostrFeed';
 import { getRandomLoadingMessage } from '../../../constants/loadingMessages';
 import { MCP_CONFIG } from '../../../../mcp/config';
+import { extractImageUrls } from '../../../utils/nostrUtils';
+import { useNostr } from '../../../lib/contexts/NostrContext';
 
 // Define NSFW keywords for content filtering
 const NSFW_KEYWORDS = [
@@ -47,6 +49,7 @@ export const CommunityFeed: React.FC<CommunityFeedProps> = ({
   hideEmpty = false,
   maxHeight,
 }) => {
+  const { logMessage } = useNostr();
   // State for UI
   const [selectedHashtag, setSelectedHashtag] = useState<string | null>(null);
   const [loadingMessage, setLoadingMessage] = useState(INITIAL_LOADING_MESSAGE);
@@ -71,17 +74,16 @@ export const CommunityFeed: React.FC<CommunityFeedProps> = ({
     npub === 'npub1etgqcj9gc6yaxttuwu9eqgs3ynt2dzaudvwnrssrn2zdt2useaasfj8n6e',
   [npub]);
   
-  // Memoize hook parameters to prevent unnecessary fetches
+  // Memoize hook parameters
   const feedParams = useMemo(() => ({
-    npubs: effectiveNpubs,
+    authors: effectiveNpubs,
     limit: isFreeMadeiraNpub ? 50 : limit,
-    requiredHashtags: hashtagsArray,
-    nsfwKeywords: NSFW_KEYWORDS,
-    useWebOfTrust: MCP_CONFIG.defaults.useWebOfTrust && !npub
-  }), [effectiveNpubs, isFreeMadeiraNpub, limit, hashtagsArray, npub]);
+    hashtags: hashtagsArray,
+  }), [effectiveNpubs, isFreeMadeiraNpub, limit, hashtagsArray]);
   
-  // Use the Nostr feed hook with memoized parameters
-  const { notes: allNotes, loading, error, refresh } = useNostrFeed(feedParams);
+  // Use the Nostr feed hook - destructure posts, rename to allPosts
+  const { posts: allPosts, loading, error, refresh } = useNostrFeed(feedParams);
+  logMessage('log', '[CommunityFeed]', `useNostrFeed hook called with limit: ${isFreeMadeiraNpub ? 50 : limit}`);
 
   // Client-side detection effect - runs once after hydration
   useEffect(() => {
@@ -96,15 +98,33 @@ export const CommunityFeed: React.FC<CommunityFeedProps> = ({
     }
   }, [error, errorShown]);
   
-  // Filter notes by active hashtag if set - memoize to prevent recalculation
+  // Filter notes by active hashtag if set - use allPosts, type note as NostrPost
   const filteredNotes = useMemo(() => {
-    if (!selectedHashtag) return allNotes;
-    
-    return allNotes.filter(note => 
-      note.hashtags.includes(selectedHashtag.toLowerCase()) || 
-      note.content.toLowerCase().includes(`#${selectedHashtag.toLowerCase()}`)
-    );
-  }, [allNotes, selectedHashtag]);
+    logMessage('log', '[CommunityFeed]', 'Calculating filteredNotes');
+    if (!Array.isArray(allPosts)) return [];
+
+    // Existing filter logic for image + text
+    const notesWithContentAndImage = allPosts.filter((note: NostrPost) => {
+        const images = extractImageUrls(note.content);
+        if (!images || images.length === 0) return false;
+        let tempContent = note.content;
+        images.forEach(url => {
+            const escapedUrl = url.replace(/[.*+?^${}()|[\]\\]/g, '\\\\$&');
+            tempContent = tempContent.replace(new RegExp(escapedUrl, 'g'), '');
+        });
+        return tempContent.trim().length > 0;
+    });
+
+    // Apply hashtag filter on top
+    const finalFiltered = selectedHashtag
+      ? notesWithContentAndImage.filter((note: NostrPost) =>
+          note.hashtags.includes(selectedHashtag.toLowerCase()) || 
+          note.content.toLowerCase().includes(`#${selectedHashtag.toLowerCase()}`))
+      : notesWithContentAndImage;
+      
+    logMessage('log', '[CommunityFeed]', `Finished calculating filteredNotes: ${finalFiltered.length} notes`);
+    return finalFiltered;
+  }, [allPosts, selectedHashtag, logMessage]);
 
   // Set random loading message - only after client-side rendering is confirmed
   useEffect(() => {
@@ -156,12 +176,15 @@ export const CommunityFeed: React.FC<CommunityFeedProps> = ({
     };
   }, [autoScroll, filteredNotes.length, loading, scrollInterval, autoScrollIndex]);
 
-  // Extract popular hashtags from notes - memoized to prevent recalculation
+  // Extract popular hashtags from notes - use allPosts, type note as NostrPost
   const popularHashtags = useMemo(() => {
+    logMessage('log', '[CommunityFeed]', 'Calculating popularHashtags');
+    if (!Array.isArray(allPosts)) return [];
+    
     const tagCounts: Record<string, number> = {};
     
-    allNotes.forEach(note => {
-      note.hashtags.forEach(tag => {
+    allPosts.forEach((note: NostrPost) => {
+      note.hashtags.forEach((tag: string) => {
         tagCounts[tag] = (tagCounts[tag] || 0) + 1;
       });
     });
@@ -171,20 +194,22 @@ export const CommunityFeed: React.FC<CommunityFeedProps> = ({
       .sort((a, b) => b[1] - a[1])
       .slice(0, 7)
       .map(([tag, count]) => ({ tag, count }));
-  }, [allNotes]);
+  }, [allPosts, logMessage]);
 
-  // Open post in njump when clicked - memoized callback
-  const openInNjump = useCallback((note: Note) => {
+  // Open post in njump when clicked - type note as NostrPost
+  const openInNjump = useCallback((note: NostrPost) => {
+    logMessage('log', '[CommunityFeed]', 'Opening note in njump:', note.id);
     if (!note || !note.id) return;
     const njumpUrl = `https://njump.me/${note.id}`;
     window.open(njumpUrl, '_blank');
-  }, []);
+  }, [logMessage]);
 
   // Memoized handler for refreshing feed
   const handleRefresh = useCallback(() => {
+    logMessage('log', '[CommunityFeed]', 'Manual refresh clicked');
     setSelectedHashtag(null);
     refresh();
-  }, [refresh]);
+  }, [refresh, logMessage]);
 
   return (
     <div className={`w-full ${className}`} style={maxHeight ? { maxHeight: `${maxHeight}px`, overflowY: 'auto' } : {}}>
@@ -264,71 +289,76 @@ export const CommunityFeed: React.FC<CommunityFeedProps> = ({
               </div>
             )
           ) : (
-            // Notes list
-            <div className="space-y-4 overflow-y-auto max-h-[600px] pr-2">
-              {filteredNotes.map(note => (
-                <div 
-                  key={note.id} 
-                  className="note-item bg-white dark:bg-gray-800 p-4 rounded-lg shadow-md hover:shadow-lg transition-shadow cursor-pointer"
-                  onClick={() => openInNjump(note)}
-                >
-                  {/* Author info */}
-                  <div className="flex items-center space-x-2 mb-3">
-                    <NostrProfileImage
-                      npub={note.npub}
-                      width={40}
-                      height={40}
-                      className="rounded-full"
-                    />
-                    <div>
-                      <div className="font-semibold text-sm dark:text-white">
-                        {note.author.displayName || note.author.name || 'Unknown'}
-                      </div>
-                      <div className="text-xs text-gray-500 dark:text-gray-400">
-                        {new Date(note.created_at * 1000).toLocaleDateString()}
-                      </div>
-                    </div>
-                  </div>
-                  
-                  {/* Note content */}
-                  <div className="text-sm dark:text-gray-200 mb-3">
-                    {note.content.split('\n').map((line, i) => (
-                      <React.Fragment key={i}>
-                        {line}
-                        {i < note.content.split('\n').length - 1 && <br />}
-                      </React.Fragment>
-                    ))}
-                  </div>
-                  
-                  {/* Image(s) */}
-                  {note.images && note.images.length > 0 && (
-                    <div className="my-3 rounded-md overflow-hidden">
-                      <Image
-                        src={note.images[0]}
-                        alt="Post image"
-                        width={500}
-                        height={300}
-                        className="object-cover w-full max-h-[300px]"
-                        unoptimized
-                      />
-                    </div>
-                  )}
-                  
-                  {/* Hashtags */}
-                  {note.hashtags && note.hashtags.length > 0 && (
-                    <div className="flex flex-wrap gap-1 mt-2">
-                      {note.hashtags.map(tag => (
-                        <span 
-                          key={tag} 
-                          className="text-xs px-2 py-1 bg-gray-200 dark:bg-gray-700 dark:text-gray-300 rounded"
-                        >
-                          #{tag}
-                        </span>
+            // Notes list - use filteredNotes (now containing NostrPost[])
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 overflow-y-auto max-h-[600px] pr-2">
+              {filteredNotes.map((note: NostrPost) => {
+                 const images = extractImageUrls(note.content);
+
+                 return (
+                  <div 
+                    key={note.id} 
+                    className="note-item flex flex-col p-4 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 shadow-sm cursor-pointer hover:shadow-md transition-shadow duration-200"
+                    onClick={() => openInNjump(note)}
+                  >
+                    {/* Author info - Use note.profile */}
+                    <div className="flex items-center space-x-2 mb-3">
+                      {note.npub && (
+                         <NostrProfileImage
+                           npub={note.npub}
+                           width={40}
+                           height={40}
+                           className="rounded-full"
+                         />
+                      )}
+                       <div>
+                         <div className="font-semibold text-sm dark:text-white">
+                           {note.profile?.displayName || note.profile?.name || 'Unknown'}
+                         </div>
+                         <div className="text-xs text-gray-500 dark:text-gray-400">
+                           {new Date(note.created_at * 1000).toLocaleDateString()}
+                         </div>
+                       </div>
+                     </div>
+                    
+                    {/* Note content */}
+                    <div className="text-sm dark:text-gray-200 mb-3">
+                      {note.content.split('\n').map((line: string, i: number) => (
+                        <React.Fragment key={i}>
+                          {line}
+                          {i < note.content.split('\n').length - 1 && <br />}
+                        </React.Fragment>
                       ))}
                     </div>
-                  )}
-                </div>
-              ))}
+                    
+                    {/* Image(s) - Use extracted images */}
+                    {images && images.length > 0 && (
+                      <div className="my-3 rounded-md overflow-hidden flex-grow flex-shrink-0 relative w-full aspect-video">
+                        <Image
+                          src={images[0]}
+                          alt="Post image"
+                          fill
+                          className="object-cover"
+                          unoptimized
+                        />
+                      </div>
+                    )}
+                    
+                    {/* Hashtags */}
+                    {note.hashtags && note.hashtags.length > 0 && (
+                      <div className="flex flex-wrap gap-1 mt-2">
+                        {note.hashtags.map((tag: string) => (
+                          <span 
+                            key={tag} 
+                            className="text-xs px-2 py-1 bg-gray-200 dark:bg-gray-700 dark:text-gray-300 rounded"
+                          >
+                            #{tag}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                 );
+              })}
             </div>
           )}
           

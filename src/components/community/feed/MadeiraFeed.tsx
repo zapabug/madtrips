@@ -5,6 +5,7 @@ import Image from 'next/image';
 import { ProfileData } from '../../../hooks/useCachedProfiles';
 import { useImageFeed } from '../../../hooks/useImageFeed';
 import LoadingAnimation from '../../ui/LoadingAnimation';
+import { BRAND_COLORS } from '../../../constants/brandColors';
 
 // Madeira-related hashtags to filter by
 export const MADEIRA_HASHTAGS = [
@@ -93,9 +94,9 @@ export default function MadeiraFeed({
     }
   }, []);
   
-  // Create a stable reference to the notes slice 
+  // Use all notes returned by the hook, not just the first 8
   const carouselNotes = useMemo(() => {
-    return notes.slice(0, 8);
+    return notes;
   }, [notes]);
   
   // Reset current index when notes change to avoid out-of-bounds errors
@@ -169,15 +170,27 @@ export default function MadeiraFeed({
       ref={containerRef}
     >
       {loading ? (
-        <div className="flex h-full items-center justify-center bg-gray-100 dark:bg-gray-800">
+        <div 
+          className="flex h-full items-center justify-center"
+          style={{ backgroundColor: BRAND_COLORS.lightSand + '80' }}
+        >
           <LoadingAnimation category="FEED" size="large" showText={true} />
         </div>
       ) : notes.length === 0 ? (
-        <div className="flex flex-col h-full items-center justify-center bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400">
-          <p className="mb-2">No images found</p>
+        <div 
+          className="flex flex-col h-full items-center justify-center text-center p-4"
+          style={{ backgroundColor: BRAND_COLORS.lightSand + '80' }}
+        >
+          <p 
+            className="mb-2"
+            style={{ color: BRAND_COLORS.deepBlue }}
+          >
+            No images found with Madeira hashtags.
+          </p>
           <button 
             onClick={refresh} 
-            className="px-3 py-1 bg-orange-500 text-white rounded hover:bg-orange-600"
+            className="px-3 py-1 text-white rounded hover:opacity-90 transition-opacity"
+            style={{ backgroundColor: BRAND_COLORS.bitcoinOrange }}
           >
             Refresh
           </button>
@@ -200,8 +213,10 @@ export default function MadeiraFeed({
                   className="object-contain w-full h-full"
                 />
                 
-                {/* Caption overlay */}
-                <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/70 to-transparent p-4 text-white">
+                {/* Caption overlay - Using deepBlue for potential contrast */}
+                <div 
+                  className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-4 text-white"
+                >
                   <p className="text-sm truncate">
                     {note.content.slice(0, 100)}{note.content.length > 100 ? '...' : ''}
                   </p>
@@ -227,18 +242,26 @@ export default function MadeiraFeed({
             {carouselNotes.map((_, index) => (
               <button
                 key={index}
-                className={`w-2 h-2 rounded-full ${
-                  index === currentIndex ? 'bg-white' : 'bg-white/50'
+                className={`w-2 h-2 rounded-full transition-colors ${
+                  index === currentIndex 
+                    ? 'opacity-100' 
+                    : 'opacity-50 hover:opacity-75'
                 }`}
+                style={{
+                  backgroundColor: index === currentIndex 
+                    ? BRAND_COLORS.bitcoinOrange
+                    : BRAND_COLORS.lightSand
+                }}
                 onClick={() => handleIndicatorClick(index)}
                 aria-label={`Go to slide ${index + 1}`}
               />
             ))}
           </div>
           
-          {/* Left/Right buttons */}
+          {/* Left/Right buttons - Example using deepBlue */}
           <button
-            className="absolute left-2 top-1/2 transform -translate-y-1/2 p-2 rounded-full bg-black/20 text-white z-20 hover:bg-black/40"
+            className="absolute left-2 top-1/2 transform -translate-y-1/2 p-2 rounded-full text-white z-20 hover:opacity-90 transition-opacity"
+            style={{ backgroundColor: BRAND_COLORS.deepBlue + '80' }}
             onClick={handlePrev}
             aria-label="Previous image"
           >
@@ -248,7 +271,8 @@ export default function MadeiraFeed({
           </button>
           
           <button
-            className="absolute right-2 top-1/2 transform -translate-y-1/2 p-2 rounded-full bg-black/20 text-white z-20 hover:bg-black/40"
+            className="absolute right-2 top-1/2 transform -translate-y-1/2 p-2 rounded-full text-white z-20 hover:opacity-90 transition-opacity"
+            style={{ backgroundColor: BRAND_COLORS.deepBlue + '80' }}
             onClick={handleNext}
             aria-label="Next image"
           >

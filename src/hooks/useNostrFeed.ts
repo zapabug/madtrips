@@ -3,280 +3,318 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useNostr } from '../lib/contexts/NostrContext';
 import useCache from './useCache';
-import { NDKEvent, NDKFilter, NDKSubscription } from '@nostr-dev-kit/ndk';
+import { NDKEvent, NDKFilter, NDKSubscription, NDKKind } from '@nostr-dev-kit/ndk';
 import { nip19 } from 'nostr-tools';
 import { extractImageUrls, extractHashtags, handleNostrError } from '../utils/nostrUtils';
 import RelayService from '../lib/services/RelayService';
+import { ProfileData } from './useCachedProfiles';
+import { npubToHex } from '../utils/profileUtils';
+import { MCP_CONFIG } from '../../mcp/config';
+
+// Define a stable empty map reference outside the hook
+const defaultProfilesMap = new Map<string, ProfileData>();
 
 export interface Note {
   id: string;
-  content: string;
   created_at: number;
+  content: string;
   pubkey: string;
   npub: string;
-  sig: string;
-  kind: number;
-  tags: string[][];
-  hashtags: string[];
-  images: string[];
   author: {
     name?: string;
     displayName?: string;
     picture?: string;
     nip05?: string;
   };
+  images: string[];
+  hashtags: string[];
 }
 
-export interface UseNostrFeedOptions {
-  npubs?: string[];
-  kinds?: number[];
-  limit?: number;
-  since?: number;
-  until?: number;
-  requiredHashtags?: string[];
-  nsfwKeywords?: string[];
-  useWebOfTrust?: boolean;
-  onlyWithImages?: boolean;
+export interface NostrPost {
+  id: string;
+  pubkey: string;
+  created_at: number;
+  content: string;
+  tags: string[][];
+  hashtags: string[];
+  profile?: ProfileData;
+  npub?: string; 
+  reactions?: { [key: string]: number };
+  repostCount?: number;
 }
+
+interface UseNostrFeedOptions {
+  filter?: NDKFilter;
+  authors?: string[];
+  hashtags?: string[];
+  since?: number;
+  limit?: number;
+  initialFetchCount?: number;
+  loadProfiles?: boolean;
+  profilesMap?: Map<string, ProfileData>;
+  excludeKinds?: NDKKind[];
+  includeKinds?: NDKKind[];
+  useWebOfTrustOverride?: boolean;
+}
+
+interface UseNostrFeedResult {
+  posts: NostrPost[];
+  loading: boolean;
+  error: string | null;
+  loadMore: () => void;
+  refresh: () => void;
+  hasMore: boolean;
+}
+
+const DEFAULT_LIMIT = 20;
+const DEFAULT_KINDS = [NDKKind.Text];
 
 export function useNostrFeed({
-  npubs = [],
-  kinds = [1], // Default to text notes
-  limit = 20,
-  since,
-  until,
-  requiredHashtags = [],
-  nsfwKeywords = [],
-  useWebOfTrust = false,
-  onlyWithImages = false
-}: UseNostrFeedOptions) {
-  const { ndk, getEvents, getUserProfile, ndkReady } = useNostr();
+  filter: initialFilter = {},
+  authors = [],
+  hashtags = [],
+  since: initialSince,
+  limit = MCP_CONFIG.feed.defaultLimit || 30,
+  initialFetchCount = limit,
+  loadProfiles = true,
+  profilesMap = defaultProfilesMap,
+  excludeKinds = [],
+  includeKinds = DEFAULT_KINDS,
+  useWebOfTrustOverride,
+}: UseNostrFeedOptions = {}): UseNostrFeedResult {
+  const { ndk, ndkReady, getEvents, getUserProfile, logMessage } = useNostr();
   const cache = useCache();
-  const [notes, setNotes] = useState<Note[]>([]);
+
+  const [posts, setPosts] = useState<NostrPost[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<Error | null>(null);
-  const [socialGraphNpubs, setSocialGraphNpubs] = useState<string[]>([]);
-  const [relayCount, setRelayCount] = useState(0);
+  const [error, setError] = useState<string | null>(null);
+  const [lastCreatedAt, setLastCreatedAt] = useState<number | undefined>(undefined);
+  const [hasMore, setHasMore] = useState(true);
+  
+  const fetchingRef = useRef(false);
+  const postsCacheRef = useRef<NostrPost[]>([]);
 
-  const fetchInProgress = useRef<boolean>(false);
-  const subscriptionRef = useRef<NDKSubscription | null>(null);
-  const isMounted = useRef<boolean>(true);
+  logMessage('log', '[useNostrFeed]', `Hook initialized/re-rendered. Loading: ${loading}, Posts: ${posts.length}`);
+
+  // Stabilize the authors prop internally
+  const stableAuthors = useMemo(() => {
+    // Sort to ensure order doesn't affect stability, then stringify for memo key
+    return [...authors].sort(); 
+  }, [authors]); // Only depends on the authors prop itself
+
+  // Determine if Web of Trust should be used
+  const shouldUseWoT = useWebOfTrustOverride !== undefined 
+                         ? useWebOfTrustOverride 
+                         : MCP_CONFIG.defaults.useWebOfTrust;
   
-  // Cache for already processed events to avoid duplication
-  const processedEventsRef = useRef<Set<string>>(new Set());
-  
-  // Memoize the filter to prevent unnecessary rerenders
-  const filter = useMemo(() => {
+  logMessage('log', '[useNostrFeed]', `WoT Setting: ${shouldUseWoT} (Override: ${useWebOfTrustOverride}, MCP: ${MCP_CONFIG.defaults.useWebOfTrust})`);
+
+  // Derive effective authors, potentially including WoT
+  const effectiveAuthors = useMemo(() => {
+    let baseAuthors = [...new Set(stableAuthors.filter(Boolean))]; // Use stableAuthors
+    
+    if (shouldUseWoT) {
+      logMessage('log', '[useNostrFeed]', 'Web of Trust enabled, should expand authors (logic TBD/external)');
+      if (baseAuthors.length === 0 && MCP_CONFIG.coreNpubs) {
+         baseAuthors = MCP_CONFIG.coreNpubs;
+         logMessage('log', '[useNostrFeed]', 'Using MCP coreNpubs as base for WoT');
+      }
+    }
+    
+    return baseAuthors;
+    // Use stableAuthors as dependency
+  }, [stableAuthors, shouldUseWoT, logMessage]);
+
+  // Filter construction (uses effectiveAuthors)
+  const filter: NDKFilter = useMemo(() => {
+    logMessage('log', '[useNostrFeed]', 'Recalculating filter memo');
+    const kindsToInclude = includeKinds.filter(k => !excludeKinds.includes(k));
     const baseFilter: NDKFilter = {
-      kinds,
-      limit
+      kinds: kindsToInclude.length > 0 ? kindsToInclude : undefined,
+      limit: limit,
+      ...initialFilter,
     };
-    
-    if (npubs && npubs.length > 0) {
-      baseFilter.authors = npubs;
+
+    if (effectiveAuthors.length > 0) {
+       const pubkeys = effectiveAuthors
+                          .filter(npub => typeof npub === 'string' && npub.startsWith('npub1'))
+                          .map(npub => npubToHex(npub))
+                          .filter(Boolean);
+       if (pubkeys.length > 0) {
+          logMessage('log', '[useNostrFeed]', `Using ${pubkeys.length} authors in filter from effectiveAuthors`, { authors: effectiveAuthors });
+          baseFilter.authors = pubkeys as string[];
+       }
     }
-    
-    if (since) {
-      baseFilter.since = since;
+
+    if (hashtags.length > 0) {
+      baseFilter['#t'] = hashtags.map(tag => tag.toLowerCase());
     }
-    
-    if (until) {
-      baseFilter.until = until;
-    }
-    
-    // Add hashtag filtering if required
-    if (requiredHashtags && requiredHashtags.length > 0) {
-      baseFilter['#t'] = requiredHashtags;
-    }
-    
+
     return baseFilter;
-  }, [
-    // Properly list all dependencies to ensure filter is only recreated when needed
-    JSON.stringify(kinds),
-    limit,
-    JSON.stringify(npubs),
-    since,
-    until,
-    JSON.stringify(requiredHashtags)
-  ]);
-  
-  useEffect(() => {
-    isMounted.current = true;
-    const updateRelayCount = () => setRelayCount(RelayService.getConnectedRelays().length);
-    updateRelayCount();
-    const unsubscribe = RelayService.onStatusUpdate((relays) => {
-      setRelayCount(relays.length);
-    });
-    return () => {
-      isMounted.current = false;
-      if (subscriptionRef.current) {
-        subscriptionRef.current.stop();
-        subscriptionRef.current = null;
-      }
-      unsubscribe();
-    };
-  }, []);
+    // Use stableAuthors and effectiveAuthors as dependencies
+  }, [initialFilter, effectiveAuthors, hashtags, limit, excludeKinds, includeKinds, logMessage]);
 
-  useEffect(() => {
-    const loadSocialGraphData = () => {
-      try {
-        const graphData = sessionStorage.getItem('madeira-social-graph');
-        if (graphData) {
-          const parsedData = JSON.parse(graphData);
-          if (parsedData?.npubs?.length) {
-            setSocialGraphNpubs(parsedData.npubs);
-          }
-        }
-      } catch (e) {
-        console.error('Error loading social graph:', e);
-      }
-    };
-    loadSocialGraphData();
-    const handleStorageChange = (event: StorageEvent) => {
-      if (event.key === 'madeira-social-graph' && event.newValue) loadSocialGraphData();
-    };
-    window.addEventListener('storage', handleStorageChange);
-    return () => window.removeEventListener('storage', handleStorageChange);
-  }, []);
-
-  const getCacheKey = useCallback(() => {
-    const npubKey = npubs.length ? npubs.sort().join('-').substring(0, 20) : 'all';
-    return cache.createEventCacheKey([1], npubs, requiredHashtags);
-  }, [npubs, requiredHashtags, cache]);
-
-  const filterNotes = useCallback(
-    (notes: Note[]): Note[] =>
-      notes.filter((note) => {
-        const content = note.content?.toLowerCase() || '';
-        if (!content.trim()) return false;
-        if (nsfwKeywords.some((kw) => content.includes(kw.toLowerCase()) || note.hashtags.includes(kw.toLowerCase())))
-          return false;
-        if (requiredHashtags.length && !requiredHashtags.some((tag) => note.hashtags.includes(tag.toLowerCase()) || content.includes(`#${tag.toLowerCase()}`)))
-          return false;
-        if (onlyWithImages && (!note.images || !note.images.length)) return false;
-        return true;
-      }),
-    [requiredHashtags, nsfwKeywords, onlyWithImages],
-  );
-
-  const processEvent = useCallback(async (event: NDKEvent): Promise<Note | null> => {
-    try {
-      // Skip if event has already been processed
-      if (processedEventsRef.current.has(event.id)) {
-        return null;
-      }
-      
-      // Mark as processed
-      processedEventsRef.current.add(event.id);
-      
-      // Basic properties
-      const content = event.content || '';
-      
-      // Filter out NSFW content if keywords are provided
-      if (nsfwKeywords && nsfwKeywords.length > 0) {
-        const lowerContent = content.toLowerCase();
-        if (nsfwKeywords.some(word => lowerContent.includes(word.toLowerCase()))) {
-          return null;
-        }
-      }
-      
-      // Extract images and hashtags
-      const images = extractImageUrls(content);
-      const hashtags = extractHashtags(content);
-      
-      // If required hashtags are specified and none are found, skip this event
-      if (requiredHashtags && requiredHashtags.length > 0) {
-        const hasRequiredTag = requiredHashtags.some(tag => 
-          hashtags.includes(tag.toLowerCase()) || 
-          content.toLowerCase().includes(`#${tag.toLowerCase()}`)
-        );
-        
-        if (!hasRequiredTag) {
-          return null;
-        }
-      }
-      
-      // Get author profile
-      let authorProfile;
-      try {
-        authorProfile = await getUserProfile(event.pubkey);
-      } catch (err) {
-        // If profile fetch fails, continue with what we have
-        console.error('Error fetching profile:', err);
-        authorProfile = {};
-      }
-      
-      // Convert to Note format
-      return {
-        id: event.id,
-        content: content, // Use content as-is, no parser needed
-        created_at: event.created_at || Math.floor(Date.now() / 1000),
-        pubkey: event.pubkey,
-        npub: event.author?.npub || '',
-        sig: event.sig || '',
-        kind: event.kind || 1,
-        tags: event.tags || [],
-        hashtags,
-        images,
-        author: {
-          name: authorProfile?.name || '',
-          displayName: authorProfile?.displayName || authorProfile?.name || '',
-          picture: authorProfile?.picture || '',
-          nip05: authorProfile?.nip05 || ''
-        }
-      };
-    } catch (error) {
-      console.error('Error processing event:', error);
-      return null;
-    }
-  }, [getUserProfile, nsfwKeywords, requiredHashtags]);
-
-  const fetchNotes = useCallback(async () => {
-    if (!ndk || !ndkReady || fetchInProgress.current) return;
+  const processEvents = useCallback(async (events: NDKEvent[]): Promise<NostrPost[]> => {
+    logMessage('log', '[useNostrFeed]', `Processing ${events.length} events...`, { loadProfiles });
+    if (!events || events.length === 0) return [];
     
-    fetchInProgress.current = true;
+    const newPosts: NostrPost[] = [];
+    const profilesToFetch = new Set<string>();
+    
+    for (const event of events) {
+      try {
+          let npub = '';
+          try {
+             if (ndk) npub = ndk.getUser({ pubkey: event.pubkey }).npub;
+          } catch (npubError) {
+             logMessage('warn', '[useNostrFeed]', `Could not get npub for ${event.pubkey}:`, npubError);
+          }
+
+          let profile: ProfileData | undefined = undefined;
+          if (loadProfiles && npub) {
+             if (profilesMap.has(npub)) {
+                 profile = profilesMap.get(npub);
+             } else {
+                 profilesToFetch.add(npub);
+             }
+          }
+
+          const post: NostrPost = {
+            id: event.id,
+            pubkey: event.pubkey,
+            created_at: event.created_at ?? 0,
+            content: event.content,
+            tags: event.tags,
+            hashtags: event.tags.filter(t => t[0] === 't').map(t => t[1]),
+            profile,
+            npub,
+          };
+          newPosts.push(post);
+      } catch (processingError) {
+          logMessage('error', '[useNostrFeed]', `Error processing event ${event.id}:`, processingError);
+      }
+    }
+
+    if (loadProfiles && profilesToFetch.size > 0) {
+      const fetchedProfiles = new Map<string, ProfileData>();
+      const promises = Array.from(profilesToFetch).map(async (npubToFetch) => {
+        try {
+          const profileData = await getUserProfile(npubToFetch);
+          if (profileData && profileData.pubkey) {
+            fetchedProfiles.set(npubToFetch, profileData as ProfileData);
+          }
+        } catch (profileError) {
+          logMessage('error', '[useNostrFeed]', `Error fetching profile ${npubToFetch}:`, profileError);
+        }
+      });
+      await Promise.all(promises);
+      
+      newPosts.forEach(post => {
+        if (post.npub && !post.profile && fetchedProfiles.has(post.npub)) {
+          post.profile = fetchedProfiles.get(post.npub);
+        }
+      });
+    }
+
+    return newPosts.sort((a, b) => b.created_at - a.created_at);
+  }, [loadProfiles, profilesMap, ndk, getUserProfile, logMessage]);
+
+  const fetchPosts = useCallback(async (pagination = false) => {
+    logMessage('log', '[useNostrFeed]', `fetchPosts called. Pagination: ${pagination}, Fetching: ${fetchingRef.current}, NDKReady: ${ndkReady}`);
+    if (fetchingRef.current || !ndkReady) return;
+    fetchingRef.current = true;
+    logMessage('log', '[useNostrFeed]', 'Setting loading START');
     setLoading(true);
     setError(null);
-    
-    try {
-      // Create a stable filter reference
-      const currentFilter = { ...filter };
-      
-      const events = await getEvents(currentFilter, { 
-        closeOnEose: true,
-        forceFresh: false // Use cache if available for better performance
-      });
-      
-      // Process events in parallel for better performance
-      const processPromises = events.map(event => processEvent(event));
-      const processed = await Promise.all(processPromises);
-      
-      // Filter out null values and sort by created_at (newest first)
-      const validNotes = processed
-        .filter((note): note is Note => note !== null)
-        .sort((a, b) => b.created_at - a.created_at);
-      
-      // Apply additional filtering
-      const filteredNotes = filterNotes(validNotes);
-      
-      if (isMounted.current) {
-        setNotes(filteredNotes);
-        setLoading(false);
-      }
-    } catch (err) {
-      console.error('Error fetching notes:', err);
-      if (isMounted.current) {
-        setError(err instanceof Error ? err : new Error(String(err)));
-        setLoading(false);
-      }
-    } finally {
-      fetchInProgress.current = false;
+
+    const currentFilter = { ...filter };
+    currentFilter.limit = pagination ? limit : initialFetchCount;
+    if (pagination && lastCreatedAt) {
+      currentFilter.until = lastCreatedAt;
+      logMessage('log', '[useNostrFeed]', `Pagination fetch until: ${lastCreatedAt}`);
+    } else if (initialSince) {
+       currentFilter.since = initialSince;
+       logMessage('log', '[useNostrFeed]', `Initial fetch since: ${initialSince}`);
+    } else {
+       logMessage('log', '[useNostrFeed]', 'Fetching latest (no since/until)');
     }
-  }, [ndk, ndkReady, filter, getEvents, processEvent, filterNotes]);
+
+
+    try {
+      logMessage('log', '[useNostrFeed]', 'Fetching events with filter:', currentFilter);
+      const events = await getEvents(currentFilter, { closeOnEose: true, forceFresh: pagination ? false : true });
+      
+      const newPosts = await processEvents(events);
+      logMessage('log', '[useNostrFeed]', `Processed ${newPosts.length} new posts`);
+
+      if (pagination) {
+        const combined = [...postsCacheRef.current, ...newPosts];
+        const uniquePosts = Array.from(new Map(combined.map(p => [p.id, p])).values())
+                             .sort((a, b) => b.created_at - a.created_at);
+        postsCacheRef.current = uniquePosts;
+        logMessage('log', '[useNostrFeed]', `Setting posts (pagination): ${uniquePosts.length} total`);
+        setPosts(uniquePosts);
+        logMessage('log', '[useNostrFeed]', `Setting hasMore (pagination): ${newPosts.length === limit}`);
+        setHasMore(newPosts.length === limit);
+      } else {
+        postsCacheRef.current = newPosts;
+        logMessage('log', '[useNostrFeed]', `Setting posts (initial/refresh): ${newPosts.length} total`);
+        setPosts(newPosts);
+        logMessage('log', '[useNostrFeed]', `Setting hasMore (initial/refresh): ${newPosts.length === initialFetchCount}`);
+        setHasMore(newPosts.length === initialFetchCount);
+      }
+
+      if (newPosts.length > 0) {
+        const newLastCreatedAt = newPosts[newPosts.length - 1].created_at;
+        logMessage('log', '[useNostrFeed]', `Setting lastCreatedAt: ${newLastCreatedAt}`);
+        setLastCreatedAt(newLastCreatedAt);
+      } else {
+         logMessage('log', '[useNostrFeed]', 'No new posts, not updating lastCreatedAt');
+         if (pagination) {
+             logMessage('log', '[useNostrFeed]', 'Setting hasMore to false (pagination empty)');
+             setHasMore(false);
+         }
+      }
+
+    } catch (err: any) {
+      logMessage('error', '[useNostrFeed]', 'Error fetching posts:', err);
+      setError('Failed to fetch posts.');
+    } finally {
+      logMessage('log', '[useNostrFeed]', 'Setting loading END');
+      setLoading(false);
+      fetchingRef.current = false;
+    }
+  }, [ndkReady, filter, limit, initialFetchCount, lastCreatedAt, getEvents, processEvents, initialSince, logMessage]);
 
   useEffect(() => {
-    if (ndkReady) fetchNotes();
-  }, [ndkReady, fetchNotes]);
+    logMessage('log', '[useNostrFeed]', 'Initial fetch useEffect triggered. FetchPosts reference changed?', { fetchPostsStable: fetchPosts === (fetchPostsRef.current || fetchPosts) });
+    fetchPostsRef.current = fetchPosts;
+    fetchPosts(false);
+  }, [fetchPosts, logMessage]);
 
-  return { notes, loading, error, refresh: fetchNotes, relayCount };
+  const fetchPostsRef = useRef(fetchPosts);
+
+
+  const loadMore = useCallback(() => {
+    logMessage('log', '[useNostrFeed]', 'loadMore called.', { hasMore, loading });
+    if (hasMore && !loading) {
+      fetchPosts(true);
+    }
+  }, [hasMore, loading, fetchPosts]);
+
+  const refresh = useCallback(() => {
+    logMessage('log', '[useNostrFeed]', 'Refresh called.');
+    setLastCreatedAt(undefined);
+    setHasMore(true);
+    fetchPosts(false);
+  }, [fetchPosts]);
+
+  return {
+    posts,
+    loading,
+    error,
+    loadMore,
+    refresh,
+    hasMore,
+  };
 }
