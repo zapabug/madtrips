@@ -5,6 +5,9 @@ import { usePathname, useRouter } from 'next/navigation'
 import { useEffect, useState, useCallback, useMemo } from 'react'
 import { NostrProfileHeader } from '../../components/community/profile/NostrProfileHeader'
 import Image from 'next/image'
+import { CORE_NPUBS } from '../../constants/nostr'
+import { useCachedProfiles } from '../../hooks/useCachedProfiles'
+import { useCache } from '../../hooks/useCache'
 
 // Extracted constants and reusable styles
 const MADTRIPS_NPUB = "npub1dxd02kcjhgpkyrx60qnkd6j42kmc72u5lum0rp2ud8x5zfhnk4zscjj6hh"
@@ -40,6 +43,37 @@ export function Navigation() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [openSubmenu, setOpenSubmenu] = useState<string | null>(null)
   const [activeSection, setActiveSection] = useState<string | null>(null)
+  const cache = useCache()
+
+  // Preload all core profile data for faster access when visiting community page
+  const { profiles } = useCachedProfiles(CORE_NPUBS, {
+    minimalProfile: true, // Only fetch essential profile data
+    batchSize: 2 // Smaller batch size to avoid overloading
+  })
+
+  // Preload profile images for faster rendering
+  useEffect(() => {
+    const preloadProfileImages = async () => {
+      // Wait for profiles to be loaded
+      if (profiles.size > 0) {
+        for (const profile of profiles.values()) {
+          if (profile.picture) {
+            try {
+              await cache.preloadAndCacheImage(profile.picture)
+              console.debug(`Preloaded image for ${profile.name || profile.npub}`)
+            } catch (err) {
+              // Silently fail for image preloading
+              console.debug(`Failed to preload image for ${profile.npub}`)
+            }
+          }
+        }
+      }
+    }
+
+    if (mounted) {
+      preloadProfileImages()
+    }
+  }, [profiles, mounted, cache])
 
   // Memoize section IDs to avoid recreating on each render
   const sectionIds = useMemo(() => navigation.map(item => item.sectionId), [])

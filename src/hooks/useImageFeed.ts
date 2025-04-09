@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useNostr, NostrContextType } from '../lib/contexts/NostrContext';
 import { CORE_NPUBS } from '../constants/nostr';
-import useCache from './useCache';
+import { useCache } from '../hooks/useCache';
 import { NDKEvent, NDKSubscription, NDKFilter, NDKUser } from '@nostr-dev-kit/ndk';
 import { ProfileData } from './useCachedProfiles';
 
@@ -307,12 +307,11 @@ export function useImageFeed({
   const fetchNotes = useCallback(async (since?: number) => {
     if (!ndkReady || fetchingRef.current || !ndk) return;
     
-    // Check if we're fetching too frequently (prevent multiple rapid fetches)
+    // *** FIX: Remove setting state at the top level if fetched recently ***
     const now = Date.now();
     if (now - lastFetchTimeRef.current < 5000 && notesCache.current.length > 0) {
-      // If we've fetched very recently and have data, use cache and return
-      setNotes(notesCache.current.slice(0, limit));
-      setLoading(false);
+      // Instead of setting state, just return quietly
+      fetchingRef.current = false;
       return;
     }
     
@@ -472,78 +471,55 @@ export function useImageFeed({
     processNotes, cache, handleCacheLimit, limit, getEvents
   ]);
 
-  // Replace the existing initial fetch useEffect with this improved version
+  // Fix the initial fetch useEffect to prevent rerunning
   useEffect(() => {
     let mounted = true;
     
-    const debouncedFetch = () => {
-      // Clear any pending fetch
-      if (fetchDebounceRef.current) {
-        clearTimeout(fetchDebounceRef.current);
-      }
+    // Only run this once when ndkReady becomes true
+    if (ndkReady && !fetchingRef.current) {
+      // Check centralized cache first
+      const cachedEvents = cache.getCachedEvents(eventCacheKey);
+      const cacheAge = cache.getCacheAge(eventCacheKey);
       
-      // Debounce fetch to prevent rapid successive fetches
-      fetchDebounceRef.current = setTimeout(() => {
-        if (mounted && ndkReady && !fetchingRef.current) {
-          // Check centralized cache first - use immediately if available
-          const cachedEvents = cache.getCachedEvents(eventCacheKey);
-          const cacheAge = cache.getCacheAge(eventCacheKey);
-          
-          if (cachedEvents && cachedEvents.length > 0 && cacheAge && cacheAge < 60000) {
-            // If we have recently cached data, process it
-            processNotes(cachedEvents as NDKEvent[]).then(processed => {
-              if (mounted) {
-                notesCache.current = processed;
-                setNotes(processed.slice(0, limit));
-                setLoading(false);
-                
-                // If cache is older than 30s, refresh in background after a delay
-                if (cacheAge > 30000) {
-                  setTimeout(() => {
-                    if (mounted) {
-                      fetchingRef.current = false; // Reset flag for background fetch
-                      fetchNotes();
-                    }
-                  }, 1000);
-                }
-              }
-            });
-          } else {
-            // No recent cache, do a full fetch
-            fetchNotes();
+      if (cachedEvents && cachedEvents.length > 0 && cacheAge && cacheAge < 60000) {
+        // Process and use cached data
+        processNotes(cachedEvents as NDKEvent[]).then(processed => {
+          if (mounted) {
+            notesCache.current = processed;
+            setNotes(processed.slice(0, limit));
+            setLoading(false);
           }
+        });
+      } else {
+        // Only fetch if no recent fetch has occurred
+        const now = Date.now();
+        if (now - lastFetchTimeRef.current > 5000) {
+          fetchNotes();
         }
-      }, 100); // Short debounce
-    };
-    
-    if (ndkReady) {
-      debouncedFetch();
+      }
     }
     
-    // Clean up subscription and timeouts on unmount
+    // Clean up function
     return () => {
       mounted = false;
-      
-      if (fetchDebounceRef.current) {
-        clearTimeout(fetchDebounceRef.current);
-      }
       
       if (subscriptionRef.current) {
         try {
           subscriptionRef.current.stop();
           subscriptionRef.current = null;
         } catch (e) {
-          // Error handling moved to NostrContext.tsx
+          // Ignore errors during cleanup
         }
       }
     };
-  }, [ndkReady, fetchNotes, cache, eventCacheKey, processNotes, limit]);
+    // Remove any dependencies that change frequently
+  }, [ndkReady, processNotes, cache, eventCacheKey, limit]);
   
-  // Improve refresh with debouncing
+  // Modify the refresh function to be more conservative
   const refresh = useCallback(async () => {
     // Prevent refreshing too frequently
     const now = Date.now();
-    if (now - lastFetchTimeRef.current < 2000) {
+    if (now - lastFetchTimeRef.current < 10000 || fetchingRef.current) {
       return; // Prevent rapid successive refreshes
     }
     
@@ -552,15 +528,8 @@ export function useImageFeed({
     setHasMore(true);
     setLastSince(undefined);
     
-    // Clear any pending fetch
-    if (fetchDebounceRef.current) {
-      clearTimeout(fetchDebounceRef.current);
-    }
-    
-    // Debounce the refresh
-    fetchDebounceRef.current = setTimeout(() => {
-      fetchNotes();
-    }, 100);
+    // Do the actual fetch
+    fetchNotes();
   }, [fetchNotes]);
   
   // Load more notes

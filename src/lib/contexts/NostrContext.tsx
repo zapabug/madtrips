@@ -9,7 +9,6 @@ import { DEFAULT_RELAYS } from '../../constants/relays';
 import RelayService from '../services/RelayService';
 // Import CacheService for centralized caching
 import CacheService from '../services/CacheService';
-import useCache from '../../hooks/useCache';
 
 /**
  * Interface for the user profile data
@@ -104,7 +103,6 @@ export const NostrProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const [relayStatus, setRelayStatus] = useState({ connected: 0, total: 0 });
   
   const ndkInitialized = useRef(false);
-  const cache = useCache();
   
   // Enhanced relay status tracking function
   const trackRelayStatus = useCallback((ndkInstance: NDK) => {
@@ -189,7 +187,7 @@ export const NostrProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     }
 
     // Generate a cache key based on the filter
-    const cacheKey = cache.createEventCacheKey(
+    const cacheKey = CacheService.generateEventCacheKey(
       filter.kinds as number[] || [],
       filter.authors || [],
       filter['#t'] as string[] || []
@@ -197,8 +195,8 @@ export const NostrProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
     // Check cache first unless forceFresh is explicitly set to true
     if (!options.forceFresh) {
-      const cachedEvents = cache.getCachedEvents(cacheKey);
-      const cacheAge = cache.getCacheAge(cacheKey);
+      const cachedEvents = CacheService.eventCache.get(cacheKey);
+      const cacheAge = CacheService.eventCache.getAge(cacheKey);
       
       // Use cache if we have events and they're not too old (< 2 minutes by default)
       // More aggressive for kinds that change less frequently (like profiles)
@@ -241,7 +239,7 @@ export const NostrProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       
       if (events.length > 0) {
         // Cache the events
-        cache.setCachedEvents(cacheKey, events);
+        CacheService.eventCache.set(cacheKey, events);
         console.log(`[NostrContext] Cached ${events.length} events for ${cacheKey}`);
       }
       
@@ -272,7 +270,7 @@ export const NostrProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       
       if (events.length > 0) {
         // Update the cache with fresh events
-        cache.setCachedEvents(cacheKey, events);
+        CacheService.eventCache.set(cacheKey, events);
         console.log(`[NostrContext] Background refresh completed, updated ${events.length} events for ${cacheKey}`);
       }
     } catch (error) {
@@ -472,7 +470,7 @@ export const NostrProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     }
     
     // Check persistent cache
-    const cachedProfile = cache.getCachedProfile(pubkey);
+    const cachedProfile = CacheService.profileCache.get(pubkey);
     if (cachedProfile) {
       return cachedProfile;
     }
@@ -507,7 +505,7 @@ export const NostrProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         };
         
         // Update cache
-        cache.setCachedProfile(pubkey, profile);
+        CacheService.profileCache.set(pubkey, profile);
         
         return profile;
       }
@@ -550,7 +548,7 @@ export const NostrProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       
       // Update cache with the fresh profile if found
       if (profile) {
-        cache.setCachedProfile(user.pubkey, profile);
+        CacheService.profileCache.set(user.pubkey, profile);
       }
     } catch (error) {
       console.error('Error refetching user profile:', error);

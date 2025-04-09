@@ -5,15 +5,17 @@ export * from './feed';
 export * from './profile';
 
 // Export utility functions
-export * from './utils';
+export * from '../../hooks/utils';
 
 // Re-export components from feed directory
-export { CommunityFeed } from './feed/CommunityFeed';
 export { default as MadeiraFeed } from './feed/MadeiraFeed';
 
 // Re-export components from profile directory 
 export { NostrProfileImage } from './profile/NostrProfileImage';
 export { NostrProfileHeader } from './profile/NostrProfileHeader';
+
+// Re-export community components
+export { default as CommunityFeed } from './CommunityFeed';
 
 // Import and re-export specific components from graph directory
 import SocialGraph from './graph/SocialGraph';

@@ -248,6 +248,4 @@ export function useCache() {
     // Stats
     cacheStats
   };
-}
-
-export default useCache; 
+} 

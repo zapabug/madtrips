@@ -3,7 +3,7 @@
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import Image from 'next/image';
 import { NostrProfileImage } from '../profile/NostrProfileImage';
-import { CORE_NPUBS, POPULAR_HASHTAGS } from '../utils';
+import { CORE_NPUBS, POPULAR_HASHTAGS } from '../../../hooks/utils';
 import { useNostrFeed, Note } from '../../../hooks/useNostrFeed';
 import { getRandomLoadingMessage } from '../../../constants/loadingMessages';
 import { MCP_CONFIG } from '../../../../mcp/config';

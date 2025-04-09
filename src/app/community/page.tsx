@@ -10,6 +10,7 @@ import { useCachedProfiles } from '../../hooks/useCachedProfiles';
 import { CommunityFeed, MadeiraFeed } from '../../components/community';
 import { CORE_NPUBS } from '../../constants/nostr';
 import SocialGraph from '../../components/community/graph/SocialGraph';
+import { GridGraph } from '../../components/community/graph';
 import LoadingAnimation from '../../components/ui/LoadingAnimation';
 import Section from '../../components/ui/Section';
 import { useEffect, useState } from 'react';
@@ -114,52 +115,12 @@ export default function CommunityPage() {
                   </div>
                 </div>
                 
-                {/* Profile grid - now smaller with scrolling */}
-                <div className="bg-white dark:bg-gray-700 rounded-lg shadow-sm">
-                  <div className="px-3 py-2 bg-gray-50 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
-                    <h3 className="text-sm font-semibold text-gray-600 dark:text-gray-300">Community Members</h3>
-                  </div>
-                  <div className="max-h-[300px] overflow-y-auto p-4">
-                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
-                      {graphData?.nodes
-                        .sort((a, b) => (b.val || 0) - (a.val || 0))
-                        .slice(0, 50) // Increased from 25 to 50 since we now have scrolling
-                        .map(node => {
-                          const profile = node.npub ? profiles.get(node.npub) : null;
-                          return (
-                            <div 
-                              key={node.id} 
-                              className="bg-gray-50 dark:bg-gray-800 rounded-lg p-3 flex flex-col items-center hover:bg-gray-100 dark:hover:bg-gray-750 transition-colors"
-                            >
-                              <div className="w-12 h-12 rounded-full overflow-hidden mb-2 bg-gray-200 border-2 border-white dark:border-gray-700 shadow-sm">
-                                {node.picture || (profile && profile.picture) ? (
-                                  <img 
-                                    src={node.picture || profile?.picture}
-                                    alt={node.name || 'Profile'} 
-                                    className="w-full h-full object-cover"
-                                  />
-                                ) : (
-                                  <div className="w-full h-full flex items-center justify-center text-sm">
-                                    👤
-                                  </div>
-                                )}
-                              </div>
-                              <div className="text-center w-full">
-                                <div className="font-medium text-xs truncate">
-                                  {node.name || profile?.displayName || profile?.name || 'Unknown'}
-                                </div>
-                                {node.isCoreNode && (
-                                  <span className="bg-orange-100 dark:bg-orange-900 text-orange-800 dark:text-orange-100 text-xs px-1.5 py-0.5 rounded-full inline-block mt-1">
-                                    Core
-                                  </span>
-                                )}
-                              </div>
-                            </div>
-                          );
-                        })}
-                    </div>
-                  </div>
-                </div>
+                {/* Profile grid - now using the GridGraph component */}
+                <GridGraph
+                  graphData={graphData}
+                  profiles={profiles}
+                  maxNodes={50}
+                />
               </div>
             </div>
           </div>
@@ -173,7 +134,6 @@ export default function CommunityPage() {
           <CommunityFeed 
             npubs={npubsInGraph} 
             limit={30}
-            hashtags={[]}
           />
         </Section>
       </div>

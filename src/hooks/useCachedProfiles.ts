@@ -1,234 +1,158 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+'use client';
+
+import { useState, useEffect, useRef } from 'react';
 import { useNostr } from '../lib/contexts/NostrContext';
-import useCache from './useCache';
+import { useCache } from './useCache';
 
-// Define a type for UserProfile to match what's returned from getUserProfile
-interface UserProfile {
-  name?: string;
-  displayName?: string;
-  picture?: string;
-  banner?: string;
-  website?: string;
-  about?: string;
-  nip05?: string;
-  lud06?: string;
-  lud16?: string;
-  pubkey?: string;
-}
-
-export interface ProfileData {
+interface ProfileData {
   pubkey: string;
-  npub: string;
-  name?: string;
-  displayName?: string;
-  picture?: string;
-  nip05?: string;
-  about?: string;
-  website?: string;
-  lud16?: string;
-  lastFetched?: number;
+  displayName: string;
+  picture: string;
 }
 
-interface UseCachedProfilesOptions {
-  skipCache?: boolean;
-  minimalProfile?: boolean; // Only fetch minimal profile data
-  batchSize?: number;
-}
+const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+const MAX_MEMORY_PROFILES = 100; // Based on typical usage
 
-interface UseCachedProfilesResult {
-  profiles: Map<string, ProfileData>;
-  loading: boolean;
-  error: string | null;
-  progress: number; // 0-100 percentage progress
-  refresh: (forceRefresh?: boolean) => Promise<void>;
-}
-
-/**
- * Hook for efficiently fetching and caching multiple Nostr profiles
- */
-export function useCachedProfiles(
-  npubs: string[] = [], 
-  options: UseCachedProfilesOptions = {}
-): UseCachedProfilesResult {
-  const { skipCache = false, minimalProfile = false, batchSize = 10 } = options;
-  const { getUserProfile, ndkReady } = useNostr();
+export const useCachedProfiles = (npubs: string[]) => {
+  const { getUserProfile, ndkReady, reconnect } = useNostr();
   const cache = useCache();
-  
-  // State for profiles and loading status
   const [profiles, setProfiles] = useState<Map<string, ProfileData>>(new Map());
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [progress, setProgress] = useState(0);
-  
-  // Refs for tracking internal state
+
+  // Use refs for tracking internal state
   const isMounted = useRef(true);
+  const retryCountRef = useRef(0);
   const fetchInProgress = useRef(false);
-  
-  // Create a consistent set of npubs without duplicates using useMemo
-  const uniqueNpubs = useMemo(() => 
-    [...new Set(npubs.filter(Boolean))],
-    [npubs]
-  );
-  
-  // Clean up on unmount
+
+  // Constants for performance optimization
+  const BATCH_SIZE = 10;
+  const CONCURRENCY_LIMIT = 3;
+  const MAX_RETRIES = 3;
+  const BASE_RETRY_DELAY = 1000;
+
+  // Cleanup on unmount
   useEffect(() => {
     return () => {
       isMounted.current = false;
     };
   }, []);
-  
-  // Function to fetch profiles in batches
-  const fetchProfiles = useCallback(async (forceRefresh = false): Promise<void> => {
-    if (fetchInProgress.current || !uniqueNpubs.length || !ndkReady) return;
-    
+
+  const fetchProfiles = async (pubkeys: string[]) => {
+    // Prevent concurrent fetches
+    if (fetchInProgress.current) return;
     fetchInProgress.current = true;
-    
-    if (isMounted.current) {
-      setLoading(true);
-      setError(null);
-      setProgress(0);
+
+    const toFetch = pubkeys.filter(pubkey => {
+      // Check if already in state
+      if (profiles.has(pubkey)) return false;
+      
+      // Check cache
+      const cachedProfile = cache.getCachedProfile(pubkey);
+      if (cachedProfile) {
+        // Add from cache to state
+        setProfiles(prev => {
+          const newProfiles = new Map(prev);
+          newProfiles.set(pubkey, {
+            pubkey,
+            displayName: cachedProfile.displayName || cachedProfile.name || 'Unknown',
+            picture: cachedProfile.picture || '',
+          });
+          return newProfiles;
+        });
+        return false;
+      }
+      return true;
+    });
+
+    if (toFetch.length === 0) {
+      fetchInProgress.current = false;
+      return;
     }
-    
-    try {
-      const fetchedProfiles = new Map<string, ProfileData>(profiles);
-      let completedCount = 0;
-      
-      // Process npubs in batches for better performance
-      for (let i = 0; i < uniqueNpubs.length; i += batchSize) {
-        const batch = uniqueNpubs.slice(i, i + batchSize);
-        const batchPromises = batch.map(async (npub) => {
-          try {
-            // Skip invalid npubs
-            if (!npub || !npub.startsWith('npub1')) {
-              return null;
-            }
-            
-            // Check cache first unless forced refresh
-            if (!skipCache && !forceRefresh) {
-              const cachedProfile = cache.getCachedProfile(npub);
-              if (cachedProfile && 'pubkey' in cachedProfile) {
-                return { 
-                  npub, 
-                  ...cachedProfile,
-                  pubkey: cachedProfile.pubkey || '' 
-                } as ProfileData;
+
+    console.time('fetchProfiles');
+    setLoading(true);
+
+    // Create batches for efficient fetching
+    const batches = [];
+    for (let i = 0; i < toFetch.length; i += BATCH_SIZE) {
+      batches.push(toFetch.slice(i, i + BATCH_SIZE));
+    }
+
+    // Process each batch with controlled concurrency
+    const fetchBatch = async (batch: string[], attempt = 1) => {
+      try {
+        const batchProfiles = new Map<string, ProfileData>();
+        const promises = batch.map(pubkey => 
+          new Promise<void>(async (resolve) => {
+            try {
+              const profileData = await getUserProfile(pubkey);
+              if (profileData) {
+                const profile = {
+                  pubkey,
+                  displayName: profileData.displayName || profileData.name || 'Unknown',
+                  picture: profileData.picture || '',
+                };
+                batchProfiles.set(pubkey, profile);
+                
+                // Cache the profile
+                cache.setCachedProfile(pubkey, profileData);
               }
+            } catch (error) {
+              console.error(`Error fetching profile for ${pubkey}:`, error);
             }
-            
-            // Fetch from network
-            const profileData = await getUserProfile(npub) as UserProfile;
-            
-            if (profileData) {
-              // Get pubkey from NDK if needed
-              const pubkey = profileData.pubkey || '';
-              
-              // Create profile data object based on minimalProfile setting
-              const profile: ProfileData = minimalProfile
-                ? {
-                    pubkey,
-                    npub,
-                    name: profileData.name,
-                    displayName: profileData.displayName,
-                    picture: profileData.picture,
-                  }
-                : {
-                    pubkey,
-                    npub,
-                    name: profileData.name,
-                    displayName: profileData.displayName,
-                    picture: profileData.picture,
-                    nip05: profileData.nip05,
-                    about: profileData.about,
-                    website: profileData.website,
-                    lud16: profileData.lud16,
-                    lastFetched: Date.now(),
-                  };
-              
-              // Cache the profile
-              cache.setCachedProfile(npub, profile);
-              
-              return profile;
-            }
-            
-            return null;
-          } catch (err) {
-            console.error(`Error fetching profile for ${npub}:`, err);
-            return null;
-          } finally {
-            completedCount++;
-            if (isMounted.current) {
-              setProgress(Math.floor((completedCount / uniqueNpubs.length) * 100));
-            }
-          }
-        });
-        
-        const batchResults = await Promise.all(batchPromises);
-        
-        // Add valid results to the map
-        batchResults.forEach(profile => {
-          if (profile && profile.npub) {
-            fetchedProfiles.set(profile.npub, profile);
-          }
-        });
-        
-        // NOTE: Remove the incremental profile updates to prevent re-renders during batch processing
+            resolve();
+          })
+        );
+
+        // Process with concurrency control
+        for (let i = 0; i < promises.length; i += CONCURRENCY_LIMIT) {
+          await Promise.all(promises.slice(i, i + CONCURRENCY_LIMIT));
+        }
+
+        return batchProfiles;
+      } catch (error) {
+        if (attempt >= MAX_RETRIES) throw error;
+        const delay = BASE_RETRY_DELAY * Math.pow(2, attempt - 1);
+        await new Promise(resolve => setTimeout(resolve, delay));
+        return fetchBatch(batch, attempt + 1);
       }
-      
-      // Final update - only set profiles once at the end
-      if (isMounted.current) {
-        setProfiles(fetchedProfiles);
-        setProgress(100);
+    };
+
+    try {
+      for (const batch of batches) {
+        if (!isMounted.current) break;
+        
+        const batchResults = await fetchBatch(batch);
+        
+        if (isMounted.current) {
+          setProfiles(prev => {
+            const newProfiles = new Map(prev);
+            batchResults.forEach((profile, pubkey) => {
+              newProfiles.set(pubkey, profile);
+            });
+            return newProfiles;
+          });
+        }
       }
-    } catch (err) {
-      console.error('Error fetching profiles:', err);
-      if (isMounted.current) {
-        setError('Error fetching profiles');
-      }
+    } catch (error) {
+      console.error('Error fetching profiles:', error);
     } finally {
       if (isMounted.current) {
         setLoading(false);
       }
       fetchInProgress.current = false;
+      console.timeEnd('fetchProfiles');
     }
-  }, [uniqueNpubs, getUserProfile, ndkReady, skipCache, minimalProfile, batchSize, cache, profiles]);
-  
-  // Fetch profiles when npubs change and NDK is ready
-  // Use useEffect with a more stable dependency array
-  useEffect(() => {
-    // Only fetch when ndkReady is true and we have npubs to fetch for
-    if (ndkReady && uniqueNpubs.length > 0 && !fetchInProgress.current) {
-      // Check if we need to fetch any new profiles
-      const needsFetch = uniqueNpubs.some(npub => {
-        // Check if we already have this profile in state
-        if (profiles.has(npub)) return false;
-        
-        // Check if it's in cache
-        if (!skipCache) {
-          const cachedProfile = cache.getCachedProfile(npub);
-          if (cachedProfile && 'pubkey' in cachedProfile) return false;
-        }
-        
-        return true;
-      });
-      
-      if (needsFetch) {
-        fetchProfiles();
-      }
-    }
-  }, [ndkReady, uniqueNpubs, fetchProfiles]);
-  
-  // Function to manually refresh profiles
-  const refresh = useCallback(async (forceRefresh = true) => {
-    await fetchProfiles(forceRefresh);
-  }, [fetchProfiles]);
-  
-  return {
-    profiles,
-    loading,
-    error,
-    progress,
-    refresh
   };
-}
+
+  // Fetch profiles when npubs change
+  useEffect(() => {
+    if (npubs.length > 0 && ndkReady) {
+      fetchProfiles(npubs);
+    }
+  }, [npubs, ndkReady]);
+
+  return { profiles, loading };
+};
 
 export default useCachedProfiles; 

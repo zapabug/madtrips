@@ -1,4 +1,4 @@
-import { CORE_NPUBS } from '../src/components/community/utils';
+import { CORE_NPUBS } from '../src/hooks/utils';
 
 /**
  * MCP Configuration

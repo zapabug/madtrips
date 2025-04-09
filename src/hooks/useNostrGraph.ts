@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useNostr } from '../lib/contexts/NostrContext';
 import { GraphNode, GraphLink, GraphData } from '../types/graph-types';
 import { CORE_NPUBS } from '../constants/nostr';
-import useCache from './useCache';
+import CacheService from '../lib/services/CacheService';
 import { NDKSubscription, NDKUser } from '@nostr-dev-kit/ndk';
 
 // Safety utility for limiting arrays
@@ -43,8 +43,8 @@ export function useNostrGraph({
   showMutuals = true,
 }: UseNostrGraphOptions = {}): UseNostrGraphResult {
   const { ndk, getUserProfile, ndkReady, getConnectedRelays } = useNostr();
-  const cache = useCache();
-
+  // Use the CacheService directly since it's exported as a singleton
+  
   // State for graph data and loading status
   const [graphData, setGraphData] = useState<GraphData | null>(null);
   const [npubsInGraph, setNpubsInGraph] = useState<string[]>([]);
@@ -58,8 +58,8 @@ export function useNostrGraph({
 
   // Create a cache key for this specific graph configuration
   const cacheKey = useMemo(() => {
-    return cache.createGraphCacheKey(coreNpubs, showMutuals);
-  }, [coreNpubs, showMutuals, cache]);
+    return `graph:${coreNpubs.sort().join(',')}_${showMutuals ? '2deg' : '1deg'}`;
+  }, [coreNpubs, showMutuals]);
 
   // Update relay count
   useEffect(() => {
@@ -102,7 +102,7 @@ export function useNostrGraph({
     
     try {
       // Check cache first
-      const cachedProfile = cache.getCachedProfile(node.npub);
+      const cachedProfile = CacheService.profileCache.get(node.npub);
       if (cachedProfile) {
         return {
           ...node,
@@ -116,7 +116,7 @@ export function useNostrGraph({
       if (profile) {
         // Cache the profile for future use
         if (node.npub) {
-          cache.setCachedProfile(node.npub, profile);
+          CacheService.profileCache.set(node.npub, profile);
         }
         
         return {
@@ -130,7 +130,7 @@ export function useNostrGraph({
     }
     
     return node;
-  }, [getUserProfile, cache]);
+  }, [getUserProfile]);
 
   // Debounce function to prevent excessive graph updates
   const debounce = (func: Function, wait: number) => {
@@ -161,7 +161,7 @@ export function useNostrGraph({
     
     try {
       // Check cache first - use a more reliable mechanism
-      const cachedGraph = cache.getCachedGraph(cacheKey);
+      const cachedGraph = CacheService.graphCache.get(cacheKey);
       if (cachedGraph && cachedGraph.nodes.length > 0) {
         console.log('Using cached graph data:', cachedGraph.nodes.length, 'nodes');
         debouncedSetGraphData(cachedGraph);
@@ -408,7 +408,7 @@ export function useNostrGraph({
       debouncedSetGraphData(graphData);
       
       // Cache the graph data
-      cache.setCachedGraph(cacheKey, graphData);
+      CacheService.graphCache.set(cacheKey, graphData);
     } catch (error) {
       console.error('Error fetching graph data:', error);
       setError('Failed to fetch graph data');
@@ -416,7 +416,7 @@ export function useNostrGraph({
       setLoading(false);
       fetchInProgress.current = false;
     }
-  }, [ndk, ndkReady, coreNpubs, followsLimit, followersLimit, showMutuals, fetchNodeProfile, cache, cacheKey]);
+  }, [ndk, ndkReady, coreNpubs, followsLimit, followersLimit, showMutuals, fetchNodeProfile, cacheKey]);
 
   // Initial data fetch
   useEffect(() => {
@@ -428,11 +428,11 @@ export function useNostrGraph({
   // Function to manually refresh the data
   const refresh = useCallback(async () => {
     // Clear the cache for this graph
-    cache.clearCache('graph');
+    CacheService.graphCache.clear();
     
     // Fetch fresh data
     await fetchGraphData();
-  }, [cache, fetchGraphData]);
+  }, [fetchGraphData]);
 
   return {
     graphData,

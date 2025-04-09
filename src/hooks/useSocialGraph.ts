@@ -4,7 +4,7 @@ import { GraphNode, GraphLink, GraphData } from '../types/graph-types';
 import { nip19 } from 'nostr-tools';
 import { BRAND_COLORS } from '../constants/brandColors';
 import { getRandomLoadingMessage, getLoadingMessageSequence } from '../constants/loadingMessages';
-import useCache from './useCache';
+import { useCache } from '../hooks/useCache';
 import NDK, { NDKEvent, NDKFilter, NDKSubscription } from '@nostr-dev-kit/ndk';
 
 // Safety utility function to prevent array length errors

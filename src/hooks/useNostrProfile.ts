@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNostr } from '../lib/contexts/NostrContext';
-import { PROFILE_CACHE_TTL } from '../components/community/utils';
+import { PROFILE_CACHE_TTL } from './utils';
 import CacheService from '../lib/services/CacheService';
 
 interface UseNostrProfileOptions {
