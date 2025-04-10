@@ -1,17 +1,21 @@
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
-import ClientLayout from "./ClientLayout";
+// Remove unused ClientLayout import if it was different from the new wrapper
+// import ClientLayout from "./ClientLayout"; 
+import { FloatingLoginButton } from './FloatingLoginButton' // Corrected import path relative to layout.tsx
+import ClientLayoutWrapper from './ClientLayoutWrapper' // Import the new wrapper
 
-// Server component for metadata
+// Determine the base URL first
+const baseUrl = process.env.VERCEL_URL
+  ? `https://${process.env.VERCEL_URL}`
+  : process.env.NEXT_PUBLIC_SITE_URL
+    ? process.env.NEXT_PUBLIC_SITE_URL
+    : 'https://madtrips.com';
+
+// Keep metadata export - this is now allowed as it's a Server Component
 export const metadata: Metadata = {
-  metadataBase: new URL(
-    process.env.VERCEL_URL 
-      ? `https://${process.env.VERCEL_URL}` 
-      : process.env.NEXT_PUBLIC_SITE_URL 
-        ? process.env.NEXT_PUBLIC_SITE_URL 
-        : 'https://madtrips.com'
-  ),
+  metadataBase: new URL(baseUrl),
   title: {
     template: '%s | MadTrips',
     default: 'MadTrips - Your Bitcoin-Powered Adventure in Madeira'
@@ -44,7 +48,7 @@ const inter = Inter({
   preload: false, // Disable preloading for better performance
 });
 
-// Root layout
+// Root layout remains a Server Component
 export default function RootLayout({
   children,
 }: {
@@ -59,7 +63,12 @@ export default function RootLayout({
         <link rel="preconnect" href="https://nostr-pub.wellorder.net" />
       </head>
       <body className={`${inter.className} min-h-screen flex flex-col`}>
-        <ClientLayout>{children}</ClientLayout>
+        {/* Use the Client Wrapper for delayed content */}
+        <ClientLayoutWrapper>
+          {children} 
+        </ClientLayoutWrapper>
+        
+        <FloatingLoginButton/> {/* Floating button renders immediately */}
       </body>
     </html>
   );

@@ -3,13 +3,10 @@
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { useEffect, useState, useCallback, useMemo } from 'react'
-import { NostrProfileHeader } from '../../components/community/profile/NostrProfileHeader'
 import { CORE_NPUBS } from '../../constants/nostr'
-import { useLiteProfiles } from '../../hooks/useLiteProfiles'
 import { useCache } from '../../hooks/useCache'
-
-// Extracted constants and reusable styles
-const MADTRIPS_NPUB = "npub1dxd02kcjhgpkyrx60qnkd6j42kmc72u5lum0rp2ud8x5zfhnk4zscjj6hh"
+import { useNostr } from '../../lib/contexts/NostrContext'
+import Image from 'next/image'
 
 const navigation = [
   { name: 'Home', href: '/', sectionId: 'home' },
@@ -27,10 +24,10 @@ const navigation = [
 
 // Common styles extracted for reuse and consistency
 const styles = {
-  activeDesktopLink: 'border-bitcoin text-ocean dark:text-white',
-  inactiveDesktopLink: 'border-transparent text-forest dark:text-gray-300 hover:border-bitcoin/50 hover:text-bitcoin dark:hover:text-bitcoin',
-  activeMobileLink: 'bg-bitcoin/10 dark:bg-bitcoin/20 text-bitcoin',
-  inactiveMobileLink: 'text-forest dark:text-gray-300 hover:bg-sand/10 dark:hover:bg-gray-700 hover:text-bitcoin',
+  activeDesktopLink: 'border-bitcoin text-bitcoin',
+  inactiveDesktopLink: 'border-transparent text-gray-300 hover:border-bitcoin/50 hover:text-bitcoin',
+  activeMobileLink: 'bg-bitcoin/10 text-bitcoin',
+  inactiveMobileLink: 'text-gray-300 hover:bg-gray-700 hover:text-bitcoin',
   desktopLinkBase: 'inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium transition-colors',
   mobileLinkBase: 'block py-3 px-4 text-base font-medium',
 }
@@ -43,47 +40,17 @@ export function Navigation() {
   const [openSubmenu, setOpenSubmenu] = useState<string | null>(null)
   const [activeSection, setActiveSection] = useState<string | null>(null)
   const cache = useCache()
-
-  // Preload all core profile data using useLiteProfiles
-  const { profiles } = useLiteProfiles({
-    npubs: CORE_NPUBS,
-    batchSize: 2
-  })
-
-  // Preload profile images for faster rendering
-  useEffect(() => {
-    const preloadProfileImages = async () => {
-      // Wait for profiles to be loaded
-      if (profiles.size > 0) {
-        for (const profile of profiles.values()) {
-          if (profile.picture) {
-            try {
-              await cache.preloadAndCacheImage(profile.picture)
-              // Now profile.name and profile.npub exist on LiteProfile
-              console.debug(`Preloaded image for ${profile.name || profile.npub}`)
-            } catch {
-              // Silently fail for image preloading
-              console.debug(`Failed to preload image for ${profile.npub}`)
-            }
-          }
-        }
-      }
-    }
-
-    if (mounted) {
-      preloadProfileImages()
-    }
-  }, [profiles, mounted, cache])
-
-  // Memoize section IDs to avoid recreating on each render
-  const sectionIds = useMemo(() => navigation.map(item => item.sectionId), [])
+  const { isLoggedIn, userName, userProfilePicture } = useNostr()
 
   useEffect(() => {
     setMounted(true)
   }, [])
 
-  // Implement intersection observer to track active sections
+  // Memoize section IDs to avoid recreating on each render
+  const sectionIds = useMemo(() => navigation.map(item => item.sectionId), [])
+
   useEffect(() => {
+    // Implement intersection observer to track active sections
     if (!mounted) return
     
     const observerOptions = {
@@ -157,14 +124,27 @@ export function Navigation() {
   }, [activeSection, pathname])
 
   return (
-    <nav className="bg-white dark:bg-gray-800 shadow-md border-b border-sand dark:border-gray-700 fixed top-0 left-0 right-0 z-30">
+    <nav className="bg-slate-900/90 shadow-md border-b border-sand dark:border-gray-700 fixed top-0 left-0 right-0 z-30">
       <div className="container mx-auto px-4">
         <div className="flex h-auto py-2">
           <div className="flex items-center justify-between w-full">
-            {/* Logo/Profile section - Fixed mobile width issue */}
+            {/* Logo/Profile section - Conditional based on login */}
             <div className="w-auto max-w-[calc(100%-50px)] sm:w-auto overflow-hidden">
-              <Link href="/" className="flex items-center text-xl font-bold text-ocean dark:text-bitcoin hover:text-bitcoin transition-colors group">
-                <NostrProfileHeader npub={MADTRIPS_NPUB} />
+              <Link href={isLoggedIn ? "/profile" : "/"} className="flex items-center text-xl font-bold text-bitcoin hover:text-bitcoin/80 transition-colors group">
+                {/* Show profile pic if logged in AND picture exists */}
+                {isLoggedIn && userProfilePicture && (
+                  <Image 
+                    src={userProfilePicture}
+                    alt={userName || 'User profile picture'}
+                    width={32}
+                    height={32}
+                    className="rounded-full mr-2"
+                  />
+                )}
+                <span className="ml-2">
+                  {/* Show username if logged in, otherwise show brand name */}
+                  {isLoggedIn ? (userName || 'Profile') : 'MAD ⚡ Trips'}
+                </span>
               </Link>
             </div>
 
@@ -178,11 +158,11 @@ export function Navigation() {
                         className={`${styles.desktopLinkBase} ${isActive(item) ? styles.activeDesktopLink : styles.inactiveDesktopLink}`}
                         onClick={(e) => {
                           if (item.name === 'Packages') {
-                            router.push('/packages');
+                            router.push('/packages')
                           } else if (pathname === '/') {
-                            handleSectionNavigation(e, item.sectionId);
+                            handleSectionNavigation(e, item.sectionId)
                           } else {
-                            router.push(item.href);
+                            router.push(item.href)
                           }
                         }}
                       >
@@ -236,7 +216,7 @@ export function Navigation() {
             <div className="sm:hidden w-[40px] flex-shrink-0">
               <button
                 type="button"
-                className="p-2 rounded-md text-forest dark:text-gray-300"
+                className="p-2 rounded-md text-gray-300"
                 aria-controls="mobile-menu"
                 aria-expanded={mobileMenuOpen}
                 onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
@@ -271,7 +251,7 @@ export function Navigation() {
       {/* Mobile menu */}
       {mobileMenuOpen && (
         <div className="sm:hidden border-t border-sand/20 dark:border-gray-700" id="mobile-menu">
-          <div className="py-2 space-y-1 bg-white dark:bg-gray-800">
+          <div className="py-2 space-y-1 bg-slate-900/90">
             {navigation.map((item) => (
               <div key={item.name}>
                 {item.submenu && item.name !== 'Packages' ? (
@@ -281,7 +261,7 @@ export function Navigation() {
                         isActive(item) ? styles.activeMobileLink : styles.inactiveMobileLink
                       }`}
                       onClick={() => {
-                        toggleSubmenu(item.name);
+                        toggleSubmenu(item.name)
                       }}
                     >
                       {item.name}

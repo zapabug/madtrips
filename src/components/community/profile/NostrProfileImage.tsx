@@ -27,6 +27,12 @@ export function NostrProfileImage({
   const profile = profiles.get(npub);
   const profilePic = profile?.picture || '/assets/bitcoin.png';
 
+  // Check if the profilePic URL is from a problematic domain
+  const shouldUseProxy = profilePic.startsWith('https://cdn.satlantis.io/');
+
+  // Use the proxy route if necessary
+  const imageSrc = shouldUseProxy ? `/api/image-proxy?url=${encodeURIComponent(profilePic)}` : profilePic;
+
   return (
     <div className={`relative ${className}`}>
       {loading ? (
@@ -34,7 +40,7 @@ export function NostrProfileImage({
       ) : (
         <div className="rounded-full overflow-hidden" style={{ width, height }}>
           <Image
-            src={profilePic}
+            src={imageSrc}
             alt={alt}
             width={width}
             height={height} 

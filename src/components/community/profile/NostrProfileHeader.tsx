@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import Image from 'next/image'
-import { useLiteProfiles } from '../../../hooks/useLiteProfiles'
+import { useProfile, useNDK } from "@nostr-dev-kit/ndk-hooks"
 
 interface NostrProfileHeaderProps {
   npub: string
@@ -11,16 +11,15 @@ interface NostrProfileHeaderProps {
 }
 
 export function NostrProfileHeader({ npub, className = '', showImage = false }: NostrProfileHeaderProps) {
-  const { profiles, loading } = useLiteProfiles({ 
-    npubs: [npub],
-    batchSize: 1 // Only fetching one
-  });
+  const { ndk } = useNDK();
+  const profile = useProfile(npub);
+  console.log(`[NostrProfileHeader] npub: ${npub}, ndk available: ${!!ndk}, profile:`, profile);
 
-  // Extract single profile
-  const profile = profiles.get(npub);
-  
   const [imageLoading, setImageLoading] = useState<boolean>(true);
   
+  // Determine loading state: loading if NDK isn't ready OR profile hasn't loaded yet
+  const loading = !ndk || profile === undefined;
+
   // Get name from profile (use displayName first)
   const name = profile?.displayName || profile?.name || 'MadTrips';
   const picture = profile?.picture || null;

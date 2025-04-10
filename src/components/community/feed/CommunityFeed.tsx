@@ -191,11 +191,11 @@ export const CommunityFeed: React.FC<CommunityFeedProps> = ({
       {/* Header and controls */}
       {showHeader && (
         <div className="flex justify-between items-center mb-4">
-          <h2 className="text-lg font-semibold dark:text-white">Community</h2>
+          <h2 className="text-lg font-semibold text-[#F7931A] dark:text-[#F7931A]">Community</h2>
           <div className="flex space-x-2">
-            <button 
+            <button
               onClick={handleRefresh}
-              className="p-2 bg-orange-500 text-white rounded-full hover:bg-orange-600"
+              className="p-2 bg-orange-500 text-white rounded-full hover:bg-orange-600 dark:bg-orange-600 dark:hover:bg-orange-700"
               aria-label="Refresh"
             >
               <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -213,10 +213,10 @@ export const CommunityFeed: React.FC<CommunityFeedProps> = ({
             <button
               key={tag}
               onClick={() => setSelectedHashtag(tag)}
-              className={`text-xs px-2 py-1 rounded-full ${
-                selectedHashtag === tag 
-                  ? 'bg-orange-500 text-white' 
-                  : 'bg-gray-200 dark:bg-gray-700 dark:text-gray-300'
+              className={`text-xs px-2 py-1 rounded-full transition-colors ${
+                selectedHashtag === tag
+                  ? 'bg-orange-500 text-white'
+                  : 'bg-gray-200 dark:bg-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600'
               }`}
             >
               #{tag} ({count})
@@ -225,7 +225,7 @@ export const CommunityFeed: React.FC<CommunityFeedProps> = ({
           {selectedHashtag && (
             <button
               onClick={() => setSelectedHashtag(null)}
-              className="text-xs px-2 py-1 bg-gray-200 dark:bg-gray-700 dark:text-gray-300 rounded-full ml-2"
+              className="text-xs px-2 py-1 bg-gray-200 dark:bg-gray-700 dark:text-gray-300 rounded-full ml-2 hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors"
             >
               Clear filter
             </button>
@@ -235,14 +235,14 @@ export const CommunityFeed: React.FC<CommunityFeedProps> = ({
       
       {/* Notes */}
       {loading && showLoadingAnimation ? (
-        <div className="flex flex-col items-center justify-center h-64 w-full bg-gray-100 dark:bg-gray-800 rounded-lg p-4">
+        <div className="flex flex-col items-center justify-center h-64 w-full dark:bg-gray-800 rounded-lg p-4">
           <div className="animate-pulse space-y-4 w-full">
-            <div className="h-4 bg-gray-300 dark:bg-gray-600 rounded w-3/4"></div>
+            <div className="h-4 bg-gray-300 dark:bg-gray-700 rounded w-3/4"></div>
             <div className="space-y-2">
-              <div className="h-4 bg-gray-300 dark:bg-gray-600 rounded"></div>
-              <div className="h-4 bg-gray-300 dark:bg-gray-600 rounded w-5/6"></div>
+              <div className="h-4 bg-gray-300 dark:bg-gray-700 rounded"></div>
+              <div className="h-4 bg-gray-300 dark:bg-gray-700 rounded w-5/6"></div>
             </div>
-            <div className="h-40 bg-gray-300 dark:bg-gray-600 rounded"></div>
+            <div className="h-40 bg-gray-300 dark:bg-gray-700 rounded"></div>
           </div>
           <div className="mt-4 text-sm text-gray-500 dark:text-gray-400">
             {loadingMessage}
@@ -253,11 +253,11 @@ export const CommunityFeed: React.FC<CommunityFeedProps> = ({
           {filteredNotes.length === 0 ? (
             // Empty state
             !hideEmpty && (
-              <div className="flex flex-col items-center justify-center h-40 rounded-lg bg-gray-50 dark:bg-gray-800">
+              <div className="flex flex-col items-center justify-center h-40 rounded-lg dark:bg-gray-900">
                 <p className="text-gray-500 dark:text-gray-400 mb-2">No posts to display</p>
-                <button 
+                <button
                   onClick={handleRefresh}
-                  className="px-4 py-2 bg-orange-500 text-white rounded-lg hover:bg-orange-600"
+                  className="px-4 py-2 bg-orange-500 text-white rounded-lg hover:bg-orange-600 dark:bg-orange-600 dark:hover:bg-orange-700"
                 >
                   Refresh
                 </button>
@@ -267,9 +267,9 @@ export const CommunityFeed: React.FC<CommunityFeedProps> = ({
             // Notes list
             <div className="space-y-4 overflow-y-auto max-h-[600px] pr-2">
               {filteredNotes.map(note => (
-                <div 
-                  key={note.id} 
-                  className="note-item bg-white dark:bg-gray-800 p-4 rounded-lg shadow-md hover:shadow-lg transition-shadow cursor-pointer"
+                <div
+                  key={note.id}
+                  className="note-item bg-white dark:bg-gray-900 p-4 rounded-lg shadow-md hover:shadow-lg transition-shadow cursor-pointer dark:shadow-gray-700"
                   onClick={() => openInNjump(note)}
                 >
                   {/* Author info */}
@@ -280,8 +280,8 @@ export const CommunityFeed: React.FC<CommunityFeedProps> = ({
                       height={40}
                       className="rounded-full"
                     />
-                    <div>
-                      <div className="font-semibold text-sm dark:text-white">
+                    <div className="ml-2">
+                      <div className="font-semibold text-sm text-gray-800 dark:text-gray-100">
                         {note.author.displayName || note.author.name || 'Unknown'}
                       </div>
                       <div className="text-xs text-gray-500 dark:text-gray-400">
@@ -291,7 +291,7 @@ export const CommunityFeed: React.FC<CommunityFeedProps> = ({
                   </div>
                   
                   {/* Note content */}
-                  <div className="text-sm dark:text-gray-200 mb-3">
+                  <div className="text-sm text-gray-700 dark:text-gray-300 mb-3">
                     {note.content.split('\n').map((line, i) => (
                       <React.Fragment key={i}>
                         {line}
@@ -318,9 +318,9 @@ export const CommunityFeed: React.FC<CommunityFeedProps> = ({
                   {note.hashtags && note.hashtags.length > 0 && (
                     <div className="flex flex-wrap gap-1 mt-2">
                       {note.hashtags.map(tag => (
-                        <span 
-                          key={tag} 
-                          className="text-xs px-2 py-1 bg-gray-200 dark:bg-gray-700 dark:text-gray-300 rounded"
+                        <span
+                          key={tag}
+                          className="text-xs px-2 py-1 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded"
                         >
                           #{tag}
                         </span>
@@ -335,9 +335,9 @@ export const CommunityFeed: React.FC<CommunityFeedProps> = ({
           {/* Error message */}
           {error && !loading && (
             <div className="flex items-center justify-center mt-4">
-              <button 
+              <button
                 onClick={handleRefresh}
-                className="p-2 bg-orange-500 text-white rounded-full hover:bg-orange-600"
+                className="p-2 bg-orange-500 text-white rounded-full hover:bg-orange-600 dark:bg-orange-600 dark:hover:bg-orange-700"
               >
                 Refresh
               </button>

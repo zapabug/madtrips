@@ -278,51 +278,6 @@ export const NostrProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     }
   };
   
-  // Initialize NDK using RelayService
-  useEffect(() => {
-    if (ndkInitialized.current) return;
-    ndkInitialized.current = true;
-    
-    const initNDK = async () => {
-      try {
-        // Use RelayService singleton to initialize NDK
-        // This will handle connection retries and relay management
-        const ndkInstance = await RelayService.initialize();
-        
-        // Set up relay tracking
-        const cleanupTracker = trackRelayStatus(ndkInstance);
-        
-        // Update context state
-        setNdk(ndkInstance);
-        
-        // Try to restore user from localStorage
-        const savedUserNpub = localStorage.getItem('nostr-user-npub');
-        if (savedUserNpub) {
-          try {
-            const userObj = ndkInstance.getUser({ npub: savedUserNpub });
-            setUser(userObj);
-            setIsLoggedIn(true);
-            
-            // Fetch user profile
-            getUserProfile(userObj.pubkey);
-          } catch (e) {
-            console.error('Error restoring user session:', e);
-            localStorage.removeItem('nostr-user-npub');
-          }
-        }
-        
-        return () => {
-          if (cleanupTracker) cleanupTracker();
-        };
-      } catch (error) {
-        console.error('Failed to initialize NDK:', error);
-        setNdkReady(false);
-      }
-    };
-    
-    initNDK();
-  }, [trackRelayStatus]);
-  
   // Login function to login with a provided npub
   const login = async (npub: string): Promise<boolean> => {
     try {

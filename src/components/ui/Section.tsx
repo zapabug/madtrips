@@ -9,6 +9,8 @@ interface SectionProps {
   title: string;
   description?: string;
   className?: string;
+  titleClassName?: string;
+  descriptionClassName?: string;
   contentClassName?: string;
   children: ReactNode;
 }
@@ -17,15 +19,17 @@ const Section: React.FC<SectionProps> = ({
   title,
   description,
   className = '',
+  titleClassName = '',
+  descriptionClassName = '',
   contentClassName = '',
   children
 }) => {
   return (
-    <section className={`bg-white dark:bg-gray-800 rounded-lg shadow-md overflow-hidden ${className}`}>
-      <div className="p-6">
-        <h2 className="text-2xl font-bold mb-4">{title}</h2>
+    <section className={`dark:bg-gray-800 rounded-lg shadow-md overflow-hidden ${className}`}>
+      <div className="p-6 text-center">
+        <h2 className={`text-2xl font-bold mb-4 ${titleClassName}`}>{title}</h2>
         {description && (
-          <p className="mb-6 text-gray-600 dark:text-gray-300">
+          <p className={`mb-6 text-gray-600 dark:text-gray-300 ${descriptionClassName}`}>
             {description}
           </p>
         )}

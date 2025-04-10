@@ -12,13 +12,13 @@ export function Hero() {
           </div>
           
           {/* Main heading */}
-          <h1 className="text-5xl md:text-7xl font-bold text-white mb-6">
+          <h1 className="text-4xl sm:text-5xl md:text-6xl lg:text-7xl font-bold text-white mb-6">
             Discover Madeira
             <span className="block mt-2 text-bitcoin">with Bitcoin</span>
           </h1>
           
           {/* Description */}
-          <p className="text-xl text-sand mb-8">
+          <p className="text-lg md:text-xl text-sand mb-8">
             Experience the perfect blend of natural beauty and digital innovation
           </p>
           

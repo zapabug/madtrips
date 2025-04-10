@@ -18,9 +18,22 @@ export default function HomePage() {
       <section id="packages">
         <FeaturedPackages />
       </section>
-      <section id="map">
-        <FunchalMap />
+
+      {/* New Title Section */}
+      <div className="bg-[#666666] py-4 border-t-[3px] border-b-[3px] border-[#666666]">
+        <h2 className="text-3xl font-bold text-center text-bitcoin">
+          Explore bitcoin businesses Madeira
+        </h2>
+      </div>
+
+      {/* Map Section - Borders removed */}
+      <section 
+        id="map" 
+        className="bg-[#003366]" // Removed borders
+      >
+         <FunchalMap />
       </section>
+
       <CallToAction />
     </main>
   )

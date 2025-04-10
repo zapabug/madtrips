@@ -106,15 +106,15 @@ export default function MadeiraFeed({
       className={`w-full h-full relative overflow-hidden rounded-lg ${className}`}
     >
       {loading ? (
-        <div className="flex h-full items-center justify-center bg-gray-100 dark:bg-gray-800">
-          <LoadingAnimation category="FEED" size="large" showText={true} />
+        <div className="flex h-full items-center justify-center dark:bg-gray-800 rounded-lg">
+          <LoadingAnimation category="FEED" size="large" showText={true} className="text-gray-300 dark:text-gray-300" />
         </div>
       ) : notes.length === 0 ? (
-        <div className="flex flex-col h-full items-center justify-center bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400">
+        <div className="flex flex-col h-full items-center justify-center dark:bg-gray-800 rounded-lg text-gray-500 dark:text-gray-400">
           <p className="mb-2">No images found</p>
           <button 
             onClick={refresh} 
-            className="px-3 py-1 bg-orange-500 text-white rounded hover:bg-orange-600"
+            className="px-3 py-1 bg-orange-500 text-white rounded hover:bg-orange-600 dark:bg-orange-600 dark:hover:bg-orange-700"
           >
             Refresh
           </button>
@@ -140,7 +140,7 @@ export default function MadeiraFeed({
                 />
                 
                 {/* Profile image overlay */}
-                <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/70 to-transparent p-4 text-white">
+                <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/70 to-transparent p-4 text-white flex items-center">
                   {note.author.picture && (
                     <Image
                       src={note.author.picture}
@@ -159,7 +159,7 @@ export default function MadeiraFeed({
           <div className="absolute bottom-16 left-0 right-0 flex justify-center items-center gap-2 z-20">
             {notes.map((_, index) => (
               <button
-                key={index}
+                key={`nav-${index}`}
                 className={`w-2 h-2 rounded-full ${
                   index === currentIndex ? 'bg-white' : 'bg-white/50'
                 }`}

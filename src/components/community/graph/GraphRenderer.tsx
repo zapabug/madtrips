@@ -150,10 +150,10 @@ const GraphRenderer = memo(
       return (
         <div
           style={{ height, width }}
-          className="flex items-center justify-center bg-gray-100 dark:bg-gray-800 rounded-md"
+          className="flex items-center justify-center bg-gray-100 dark:bg-gray-900 rounded-md"
         >
           <div className="text-center p-4">
-            <div className="mb-2 text-gray-500 dark:text-gray-400">
+            <div className="mb-2 text-gray-500 dark:text-gray-500">
               <svg
                 className="animate-spin h-10 w-10 mx-auto"
                 xmlns="http://www.w3.org/2000/svg"
@@ -168,7 +168,7 @@ const GraphRenderer = memo(
                 />
               </svg>
             </div>
-            <p>{getRandomLoadingMessage('GRAPH')}</p>
+            <p className="text-gray-600 dark:text-gray-400">{getRandomLoadingMessage('GRAPH')}</p>
           </div>
         </div>
       );
@@ -181,8 +181,8 @@ const GraphRenderer = memo(
           graphData={graphData}
           nodeCanvasObject={paintNode}
           nodeLabel={(node: any) => node.name || node.npub?.slice(0, 6) + '...' || 'Unknown'} // Name on hover
-          linkColor={(link: any) => link.color || 'rgba(0,0,0,0.05)'}
-          linkWidth={(link: any) => link.value}
+          linkColor={(link: any) => link.color || 'rgba(100, 100, 100, 0.1)'}
+          linkWidth={1}
           linkDirectionalArrowLength={0}
           linkCurvature={0.2}
           linkDirectionalParticles={0}

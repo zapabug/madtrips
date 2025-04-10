@@ -11,11 +11,11 @@ export function FeaturedPackages() {
   const [packages] = useState<Package[]>(FEATURED_PACKAGES);
 
   return (
-    <div className="bg-white dark:bg-gray-900 py-12 sm:py-16 md:py-24">
+    <div className="bg-gradient-to-b from-[#003366] via-[#14857C] to-[#003366] py-12 sm:py-16 md:py-24">
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
         <div className="mx-auto max-w-2xl text-center">
-          <h2 className="text-3xl font-bold tracking-tight text-ocean dark:text-[#F7931A] sm:text-4xl md:text-5xl">Featured Packages</h2>
-          <p className="mt-2 text-lg leading-8 text-forest/80 dark:text-gray-400">
+          <h2 className="text-3xl font-bold tracking-tight text-white sm:text-4xl md:text-5xl">Featured Packages</h2>
+          <p className="mt-2 text-lg leading-8 text-gray-300">
             Discover our curated Bitcoin travel experiences
           </p>
         </div>
@@ -39,15 +39,15 @@ export function FeaturedPackages() {
                   <span className="text-forest/70 dark:text-gray-400">{pkg.duration}</span>
                 </div>
                 <div className="group relative">
-                  <h3 className="mt-3 text-lg font-semibold leading-6 text-ocean dark:text-white group-hover:text-[#F7931A] transition-colors">
+                  <h3 className="mt-3 text-lg font-semibold leading-6 text-white group-hover:text-[#F7931A] transition-colors">
                     <Link href={`/packages/${pkg.id}`} aria-label={`View details for ${pkg.title}`} className="focus:outline-none focus:ring-2 focus:ring-[#F7931A] focus:ring-offset-2 rounded-sm">
                       {pkg.title}
                     </Link>
                   </h3>
-                  <p className="mt-5 text-sm leading-6 text-forest/80 dark:text-gray-300">{pkg.description}</p>
+                  <p className="mt-5 text-sm leading-6 text-gray-300">{pkg.description}</p>
                   <ul className="mt-4 space-y-2" aria-label={`Features of ${pkg.title}`}>
                     {pkg.includes.map((feature, index) => (
-                      <li key={index} className="text-sm text-forest/60 dark:text-gray-400 flex items-center">
+                      <li key={index} className="text-sm text-gray-300 flex items-center">
                         <span className="text-[#F7931A] mr-2" aria-hidden="true">•</span>
                         {feature}
                       </li>

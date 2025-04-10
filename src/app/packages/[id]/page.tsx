@@ -30,7 +30,6 @@ export default function PackageDetailPage() {
   
   // Add eslint-disable for these variables
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const { user: _user, loginMethod: _loginMethod } = useNostr();
   
   // Check if package is already in cart
   const isInCart = items.some(item => item.packageId === packageId);
